@@ -74,8 +74,13 @@ object FrameCodec {
 }
 
 /**
- * A live, writable view of one pane via `herdr terminal session control`.
- * Frames are applied to [emulator]; [revision] ticks after each one.
+ * A live, writable view of one pane. Frames are applied to [emulator]; [revision] ticks after each one.
+ *
+ * With [typeInto] null it runs `herdr terminal session control --takeover`: the pane takes the
+ * phone's size (and keeps it while attached), and input, resizes and scrolls go down the stream.
+ * With [typeInto] set it only observes (`herdr terminal session observe`): the pane keeps the
+ * computer's size, the desktop window is left alone, and typed bytes go to [typeInto] (the API's
+ * `pane.send_text`); resizes and scrolls are ignored.
  */
 class TerminalStream(
     private val connection: MachineConnection,
@@ -84,7 +89,11 @@ class TerminalStream(
     cols: Int,
     rows: Int,
     private val scope: CoroutineScope,
+    private val typeInto: (suspend (ByteArray) -> Unit)? = null,
 ) : LiveTerminal {
+    /** True when the stream only watches the pane: see [typeInto]. */
+    val observing: Boolean get() = typeInto != null
+
     sealed interface Status {
         data object Opening : Status
         data object Live : Status
@@ -100,6 +109,7 @@ class TerminalStream(
     private var process: RemoteProcess? = null
     private var job: Job? = null
     private val outbound = Channel<String>(Channel.UNLIMITED)
+    private val typed = Channel<ByteArray>(Channel.UNLIMITED)
     private var writerJob: Job? = null
     private var requestedCols = cols
     private var requestedRows = rows
@@ -108,9 +118,19 @@ class TerminalStream(
         if (job != null) return
         job = scope.launch(Dispatchers.IO) {
             try {
-                val p = connection.start(HerdrCommands.terminalControl(machine, target, requestedCols, requestedRows))
+                val p = connection.start(
+                    if (observing) HerdrCommands.terminalObserve(machine, target, requestedCols, requestedRows)
+                    else HerdrCommands.terminalControl(machine, target, requestedCols, requestedRows),
+                )
                 process = p
-                writerJob = scope.launch(Dispatchers.IO) {
+                writerJob = if (observing) scope.launch(Dispatchers.IO) {
+                    // Typed bytes, in order, through the API: the observer's stream takes no input.
+                    val type = typeInto!!
+                    try {
+                        for (bytes in typed) runCatching { type(bytes) }
+                    } catch (_: Throwable) {
+                    }
+                } else scope.launch(Dispatchers.IO) {
                     try {
                         for (msg in outbound) {
                             p.stdin.write((msg + "\n").toByteArray(Charsets.UTF_8))
@@ -155,12 +175,13 @@ class TerminalStream(
     }
 
     override fun send(bytes: ByteArray) {
-        write(FrameCodec.input(bytes))
+        if (observing) typed.trySend(bytes) else write(FrameCodec.input(bytes))
     }
 
     override fun send(text: String) = send(text.toByteArray(Charsets.UTF_8))
 
     override fun resize(cols: Int, rows: Int) {
+        if (observing) return
         if (cols == requestedCols && rows == requestedRows) return
         requestedCols = cols
         requestedRows = rows
@@ -168,6 +189,7 @@ class TerminalStream(
     }
 
     override fun scroll(up: Boolean, lines: Int) {
+        if (observing) return
         write(FrameCodec.scroll(up, lines))
     }
 
@@ -179,13 +201,14 @@ class TerminalStream(
         writerJob?.cancel()
         writerJob = null
         outbound.close()
+        typed.close()
         val p = process
         process = null
         job?.cancel()
         job = null
         if (p != null) {
             scope.launch(Dispatchers.IO) {
-                runCatching {
+                if (!observing) runCatching {
                     p.stdin.write((FrameCodec.release() + "\n").toByteArray(Charsets.UTF_8))
                     p.stdin.flush()
                 }

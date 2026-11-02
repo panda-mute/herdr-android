@@ -806,6 +806,8 @@ fun scenes(): List<Scene> = listOf(
 
     // A pane as a live terminal.
     Scene("terminal", route = Routes.terminal(DEVBOX, APP_SHELL)),
+    // A swipe back: the phone's own copy of the history, the computer's window left where it is.
+    Scene("terminal-history", route = Routes.terminal(DEVBOX, APP_SHELL), actions = { scrollBack() }),
     // sudo asks: a masked field over the keys; its own text size.
     Scene("terminal-password", route = Routes.terminal(DEVBOX, APP_SHELL), setup = { host(DEVBOX).screens += APP_SHELL to Demo.shellAsking() }),
     Scene("terminal-large-text", route = Routes.terminal(DEVBOX, APP_SHELL), setup = { textSizes = com.makefunstuff.herdr.data.TextSizeStore.Sizes(terminal = 15f) }),

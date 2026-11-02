@@ -80,6 +80,7 @@ import com.makefunstuff.herdr.core.terminal.TerminalQuote
 import com.makefunstuff.herdr.core.api.AgentInfo
 import com.makefunstuff.herdr.data.DraftStore
 import com.makefunstuff.herdr.core.terminal.TerminalEmulator
+import com.makefunstuff.herdr.core.terminal.PhoneHistory
 import com.makefunstuff.herdr.core.terminal.TerminalStream
 import com.makefunstuff.herdr.ui.common.EmptyState
 import com.makefunstuff.herdr.ui.common.LocalContainer
@@ -114,6 +115,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 private const val SILENT_MS = 15_000L
+private const val RESIZE_SETTLE_MS = 300L
 
 private val NO_REVISION: StateFlow<Long> = MutableStateFlow(0L)
 private val NO_STATUS: StateFlow<TerminalStream.Status> = MutableStateFlow(TerminalStream.Status.Opening)
@@ -147,8 +149,15 @@ fun TerminalScreen(nav: NavController, machineId: String, paneId: String) {
 
     // Its text size, its own (Settings → Text size), which pinching the terminal changes too.
     val sizes by container.textSizes.state.collectAsStateWithLifecycle()
-    // The pane is resized to fit the phone; "Desktop size" keeps the host's size and pans instead.
+    // The pane is resized to fit the phone; "Desktop size" only watches it (the computer keeps its
+    // size and nothing is taken over) and pans instead.
     var keepHost by remember(paneId) { mutableStateOf(false) }
+    // Swipes scroll the phone's own copy of the history ([PhoneHistory]), not the pane: herdr's
+    // viewport is shared, and a full-screen agent scrolls its own view, so the computer would scroll
+    // along. "Scroll on the computer" sends them to the pane as before.
+    var scrollHost by remember(paneId) { mutableStateOf(false) }
+    var history by remember(paneId) { mutableStateOf<TerminalEmulator?>(null) }
+    var loadingHistory by remember(paneId) { mutableStateOf(false) }
     var grid by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var stream by remember { mutableStateOf<LiveTerminal?>(null) }
     var generation by remember { mutableIntStateOf(0) }
@@ -176,7 +185,7 @@ fun TerminalScreen(nav: NavController, machineId: String, paneId: String) {
 
     val keep = keepHost
     val ready = (keep && hostSize != null) || grid != null
-    LaunchedEffect(generation, ready) {
+    LaunchedEffect(generation, ready, keep) {
         if (!ready) return@LaunchedEffect
         var retryAttempt = 0
         while (true) {
@@ -188,7 +197,11 @@ fun TerminalScreen(nav: NavController, machineId: String, paneId: String) {
                     grid ?: (80 to 24)
                 }
                 val live: LiveTerminal = if (core != null) HcTerminalStream(session.awaitHerdrCore(30_000, paneId), core, cols, rows, container.scope)
-                else TerminalStream(conn, session.state.value.herdrMachine, paneId, cols, rows, container.scope)
+                else TerminalStream(
+                    conn, session.state.value.herdrMachine, paneId, cols, rows, container.scope,
+                    // Desktop size: watch, and type through the API, so the pane stays the computer's.
+                    typeInto = if (keep) { bytes -> session.awaitApi().sendText(paneId, String(bytes, Charsets.UTF_8)) } else null,
+                )
                 live.also { it.open() }
             }
             val s = opened.getOrNull()
@@ -226,6 +239,9 @@ fun TerminalScreen(nav: NavController, machineId: String, paneId: String) {
     // In fit mode, follow the view's grid; switching back to host size restores the host's.
     LaunchedEffect(stream, grid, keepHost) {
         val s = stream ?: return@LaunchedEffect
+        // Let the grid settle (the keyboard sliding in, a pinch): each resize makes the program on
+        // the computer redraw, and an inline agent reprints its whole conversation.
+        delay(RESIZE_SETTLE_MS)
         if (!keepHost) grid?.let { (c, r) -> s.resize(c, r) }
         else if (hostSize != null && hostSize.first > 0) s.resize(hostSize.first, hostSize.second)
     }
@@ -269,6 +285,7 @@ fun TerminalScreen(nav: NavController, machineId: String, paneId: String) {
     }
     LaunchedEffect(finding) { if (finding) searchFocus.requestFocus() }
     DisposableEffect(Unit) { onDispose { stream?.close() } }
+    BackHandler(enabled = history != null) { history = null }
     BackHandler(enabled = selecting || finding) {
         if (selecting) {
             view?.clearSelection()
@@ -415,6 +432,22 @@ fun TerminalScreen(nav: NavController, machineId: String, paneId: String) {
         }
     }
 
+    /** Opens the phone's own copy of the pane's recent output, at its last line. */
+    fun openHistory() {
+        if (loadingHistory || history != null) return
+        loadingHistory = true
+        scope.launch {
+            try {
+                val text = session.awaitApi().readPane(paneId, source = "recent", lines = PhoneHistory.LINES, ansi = true).text
+                val cols = stream?.emulator?.cols ?: grid?.first ?: 80
+                history = withContext(Dispatchers.Default) { PhoneHistory.build(text, cols) }
+            } catch (e: Throwable) {
+                context.toast(plain(e))
+            }
+            loadingHistory = false
+        }
+    }
+
     fun resize(direction: ResizeDirection) {
         scope.launch {
             try {
@@ -435,7 +468,7 @@ fun TerminalScreen(nav: NavController, machineId: String, paneId: String) {
                 subtitle = buildString {
                     append(session.machine.label)
                     stream?.emulator?.let { append(" · ${it.cols}×${it.rows}") }
-                    if (keepHost) append(" · desktop size")
+                    if (keepHost) append(" · watching, desktop size")
                 },
                 onBack = { nav.popBackStack() },
             ) {
@@ -463,6 +496,11 @@ fun TerminalScreen(nav: NavController, machineId: String, paneId: String) {
                     MenuRow(if (bar.keepScreenOn) "Let the screen sleep" else "Keep screen on", HerdrIcons.Sun, { menu = false; container.keyBar.setKeepScreenOn(!bar.keepScreenOn) })
                     // herdr-core's size is the last active viewer's, the phone's own once it attached: no desktop size to keep.
                     if (core == null) MenuRow(if (keepHost) "Fit to phone" else "Desktop size", if (keepHost) HerdrIcons.Smartphone else HerdrIcons.Monitor, { menu = false; keepHost = !keepHost })
+                    if (core == null) MenuRow(
+                        if (scrollHost) "Scroll on this phone" else "Scroll on the computer",
+                        if (scrollHost) HerdrIcons.Smartphone else HerdrIcons.Monitor,
+                        { menu = false; scrollHost = !scrollHost },
+                    )
                     MenuRow("Reconnect", HerdrIcons.RefreshCcw, { menu = false; generation++ })
                 }
             }
@@ -535,13 +573,33 @@ fun TerminalScreen(nav: NavController, machineId: String, paneId: String) {
                     update = { v ->
                         v.setColors(termPalette, hc.termSelection.toArgb())
                         v.onInput = { text -> if (!autoReconnecting) stream?.send(text) }
-                        v.onScroll = { lines -> if (!autoReconnecting && lines != 0) stream?.scroll(lines > 0, kotlin.math.abs(lines)) }
+                        v.onScroll = { lines ->
+                            when {
+                                autoReconnecting || lines == 0 -> Unit
+                                // herdr-core has no pane.read; its terminals scroll as before.
+                                scrollHost || core != null -> stream?.scroll(lines > 0, kotlin.math.abs(lines))
+                                lines > 0 -> openHistory()
+                            }
+                        }
                         if (v.fitToView != !keepHost) v.fitToView = !keepHost
                         v.keepScreenOn = bar.keepScreenOn
                         if (kotlin.math.abs(v.fontSizeSp - sizes.terminal) > 0.01f) v.setFontSizeSp(sizes.terminal)
                     },
                     modifier = Modifier.fillMaxSize(),
                 )
+                history?.let { h ->
+                    HistoryOverlay(
+                        history = h,
+                        // An agent with no more history than its screen draws full screen and keeps the rest itself.
+                        ownHistory = pane?.agent != null && h.rows <= (stream?.emulator?.rows ?: 0),
+                        fontSp = sizes.terminal,
+                        palette = termPalette,
+                        selectionColor = hc.termSelection.toArgb(),
+                        onChat = pane?.agent?.let { { history = null; nav.navigate(Routes.agent(machineId, paneId)) } },
+                        onClose = { history = null },
+                        modifier = Modifier.matchParentSize(),
+                    )
+                }
                 // What classic herdr's version says about a pane that won't draw; herdr-core's terminals have none of it.
                 val herdr = state.herdr?.takeIf { core == null }
                 val message = if (autoReconnecting) null else failure ?: when (val st = status) {
@@ -722,5 +780,76 @@ internal fun selectedText(e: TerminalEmulator, a: CellPoint, b: CellPoint): Stri
         val start = if (row == from.row) from.col.coerceIn(0, line.length) else 0
         val end = if (row == to.row) (to.col + 1).coerceIn(start, line.length) else line.length
         line.substring(start, end).trimEnd()
+    }
+}
+
+/**
+ * The phone's own copy of the pane's recent output, scrolled here and nowhere else: the computer's
+ * window stays where it is. Opens at the last line.
+ */
+@Composable
+private fun HistoryOverlay(
+    history: TerminalEmulator,
+    ownHistory: Boolean,
+    fontSp: Float,
+    palette: com.makefunstuff.herdr.core.terminal.TerminalPalette,
+    selectionColor: Int,
+    onChat: (() -> Unit)?,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val c = Herdr.colors
+    Column(modifier.background(c.panel)) {
+        Row(
+            Modifier.fillMaxWidth().background(c.ground).padding(start = Space.m),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Space.xs),
+        ) {
+            Icon(HerdrIcons.History, null, Modifier.size(16.dp), tint = c.muted)
+            Text(
+                "History, on this phone only",
+                style = MaterialTheme.typography.labelMedium,
+                color = c.muted,
+                modifier = Modifier.weight(1f),
+            )
+            BarIcon(HerdrIcons.ArrowDown, "Back to live", onClose)
+        }
+        // A full-screen agent (Claude Code) keeps its history to itself: herdr has only its screen.
+        if (ownHistory) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = Space.m, vertical = Space.xs),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Space.s),
+            ) {
+                Text(
+                    "This agent keeps its own history: its chat has all of it. More → Scroll on the computer scrolls the agent itself.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = c.muted,
+                    modifier = Modifier.weight(1f),
+                )
+                if (onChat != null) QuietButton(onClick = onChat) { Text("Chat") }
+            }
+        }
+        AndroidView(
+            factory = { ctx ->
+                TerminalView(ctx).also { v ->
+                    androidx.core.content.res.ResourcesCompat.getFont(ctx, com.makefunstuff.herdr.R.font.jetbrains_mono_regular)?.let(v::setTypeface)
+                    v.isFocusable = false
+                    v.isFocusableInTouchMode = false
+                    v.fitToView = false
+                    v.setFontSizeSp(fontSp)
+                    v.emulator = history
+                    v.panToBottom()
+                }
+            },
+            update = { v ->
+                v.setColors(palette, selectionColor)
+                if (v.emulator !== history) {
+                    v.emulator = history
+                    v.panToBottom()
+                }
+            },
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+        )
     }
 }

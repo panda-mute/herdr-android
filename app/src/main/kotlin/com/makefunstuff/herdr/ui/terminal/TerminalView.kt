@@ -142,6 +142,12 @@ class TerminalView(context: Context) : View(context) {
         selection = cell to cell
     }
 
+    /** Pans to the grid's last line, for a grid taller than the view (the phone's own history). */
+    fun panToBottom() {
+        panY = Float.MAX_VALUE
+        invalidate()
+    }
+
     fun clearSelection() {
         selecting = false
         selection = null

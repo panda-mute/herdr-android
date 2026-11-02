@@ -139,6 +139,13 @@ object HerdrCommands {
         return herdr(machine, *args.toTypedArray())
     }
 
+    /**
+     * Watches a pane without taking it over: the pane keeps the computer's size and nothing is
+     * locked, so the desktop window draws on undisturbed. Typing goes through the API instead.
+     */
+    fun terminalObserve(machine: Machine, target: String, cols: Int, rows: Int): String =
+        herdr(machine, "terminal", "session", "observe", target, "--cols", cols.toString(), "--rows", rows.toString())
+
     /** `ssh -G` prints the effective config for an alias, so the phone can resolve ~/.ssh/config names. */
     fun resolveSshAlias(alias: String) = "ssh -G ${quote(alias)}"
 

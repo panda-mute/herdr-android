@@ -8,6 +8,7 @@ import android.view.View
 import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import com.makefunstuff.herdr.core.terminal.TerminalCanvas
@@ -55,7 +56,11 @@ class TerminalView(context: Context) : View(context) {
 
     val fontSizeSp: Float get() = fontSizePx / density
 
-    init { updateMetrics() }
+    init {
+        updateMetrics()
+        // The newest terminal: the screen's live one until a swipe opens its history.
+        preview.PreviewTerminal.live = this
+    }
 
     fun setTypeface(face: Typeface) {
         val bytes = Thread.currentThread().contextClassLoader.getResourceAsStream(face.file)?.readBytes() ?: return
@@ -97,6 +102,10 @@ class TerminalView(context: Context) : View(context) {
         selection = preview.PreviewTerminal.selection ?: (cell to cell)
     }
 
+    /** Shows the grid's last line when it is taller than the view (the phone's own history). */
+    private var atBottom = false
+    fun panToBottom() { atBottom = true; invalidate() }
+
     fun clearSelection() {
         selecting = false
         selection = null
@@ -108,7 +117,7 @@ class TerminalView(context: Context) : View(context) {
 
     @Composable
     override fun Content(modifier: Modifier) {
-        Canvas(modifier) {
+        Canvas(modifier.clipToBounds()) {
             drawRevision.longValue // redraw on invalidate()
             drawIntoCanvas { c ->
                 val canvas = c.nativeCanvas
@@ -117,7 +126,8 @@ class TerminalView(context: Context) : View(context) {
                 val pad = PAD * density
                 synchronized(emu.lock) {
                     canvas.save()
-                    canvas.translate(pad, pad)
+                    val panY = if (atBottom) max(0f, emu.rows * cellH + 2 * pad - size.height) else 0f
+                    canvas.translate(pad, pad - panY)
                     painter.paint(emu, Surface(canvas), cellW, cellH, baseline) { drawSelection(canvas, emu) }
                     canvas.restore()
                 }

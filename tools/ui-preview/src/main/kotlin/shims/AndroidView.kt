@@ -21,6 +21,8 @@ open class View(val context: Context) {
     fun performHapticFeedback(constant: Int): Boolean = true
     /** Keeps the screen on while the view shows (the terminal's Keep screen on). */
     var keepScreenOn = false
+    var isFocusable = true
+    var isFocusableInTouchMode = true
 
     @androidx.compose.runtime.Composable
     open fun Content(modifier: androidx.compose.ui.Modifier) {}
