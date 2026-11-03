@@ -23,6 +23,8 @@ sealed interface ChatItem {
      * A tool call or action: [summary] is the one line worth showing (a command, a path, a query).
      * [diffs]: what an edit changes, read from its arguments ([EditCalls]); empty for any other call,
      * or an edit in a shape the app doesn't know, which shows its raw [input] instead.
+     * [subagent]: the id of the subagent the call started (Claude's Agent tool), whose own steps
+     * are in a transcript of their own ([TranscriptFollower.follow] with it).
      */
     data class Tool(
         override val id: String,
@@ -32,6 +34,7 @@ sealed interface ChatItem {
         val output: String? = null,
         val state: ToolState = ToolState.Running,
         val diffs: List<FileDiff> = emptyList(),
+        val subagent: String? = null,
     ) : ChatItem
 
     /** A quiet marker in the timeline: interrupted, compacted, a slash command. */

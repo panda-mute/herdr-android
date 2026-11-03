@@ -140,6 +140,8 @@ object Routes {
     const val MACHINE = "machine/{id}"
     const val EDIT = "edit?id={id}"
     const val AGENT = "agent/{mid}/{pane}"
+    /** The steps of subagent [agent] that the agent in [pane] started; [title] says what it was asked. */
+    const val SUBAGENT = "subagent/{mid}/{pane}/{agent}?title={title}"
     const val TERMINAL = "terminal/{mid}/{pane}"
     const val LAYOUT = "layout/{mid}/{pane}"
     /** A machine's Coordinator; on Shepherdr 2, [space]'s (its id), else its home space's. */
@@ -185,6 +187,8 @@ object Routes {
     fun machine(id: String) = "machine/$id"
     fun edit(id: String? = null) = if (id == null) "edit" else "edit?id=$id"
     fun agent(mid: String, pane: String) = "agent/$mid/${Uri.encode(pane)}"
+    fun subagent(mid: String, pane: String, agent: String, title: String) =
+        "subagent/$mid/${Uri.encode(pane)}/${Uri.encode(agent)}?title=" + Uri.encode(title)
     fun terminal(mid: String, pane: String) = "terminal/$mid/${Uri.encode(pane)}"
     fun layout(mid: String, pane: String) = "layout/$mid/${Uri.encode(pane)}"
     fun coordinator(mid: String, space: String? = null) = "coordinator/$mid" + (space?.let { "?space=" + Uri.encode(it) } ?: "")
@@ -355,6 +359,15 @@ internal fun NavGraphBuilder.screens(nav: NavHostController, agents: @Composable
     composable(Routes.EDIT) { EditMachineScreen(nav, it.arguments?.getString("id")) }
     composable(Routes.AGENT) {
         AgentScreen(nav, it.arguments?.getString("mid").orEmpty(), Uri.decode(it.arguments?.getString("pane").orEmpty()))
+    }
+    composable(Routes.SUBAGENT) {
+        com.makefunstuff.herdr.ui.agents.SubagentScreen(
+            nav,
+            it.arguments?.getString("mid").orEmpty(),
+            Uri.decode(it.arguments?.getString("pane").orEmpty()),
+            Uri.decode(it.arguments?.getString("agent").orEmpty()),
+            it.arguments?.getString("title")?.let(Uri::decode).orEmpty(),
+        )
     }
     composable(Routes.ADMIN) {
         AdminScreen(nav, it.arguments?.getString("mid").orEmpty(), it.arguments?.getString("tab")?.toIntOrNull() ?: 0)

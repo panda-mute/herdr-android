@@ -407,6 +407,9 @@ private fun ToolGroup(tools: List<ChatItem.Tool>, lines: Map<String, ToolLine>) 
     }
 }
 
+/** Opens a subagent's own steps ([ChatItem.Tool.subagent]); none where the chat can't. */
+val LocalOpenSubagent = androidx.compose.runtime.staticCompositionLocalOf<((ChatItem.Tool) -> Unit)?> { null }
+
 @Composable
 private fun ToolRow(tool: ChatItem.Tool, line: ToolLine?) {
     var open by rememberSaveable(tool.id) { mutableStateOf(false) }
@@ -453,6 +456,13 @@ private fun ToolRow(tool: ChatItem.Tool, line: ToolLine?) {
                 Spacer(Modifier.size(6.dp))
                 EditDiff(f, "${tool.id}/$i")
             }
+            val openSubagent = LocalOpenSubagent.current
+            if (tool.subagent != null && openSubagent != null) {
+                Spacer(Modifier.size(6.dp))
+                QuietButton(onClick = { openSubagent(tool) }) {
+                    Text(if (tool.state == ToolState.Running) "Follow its steps" else "See its steps")
+                }
+            }
             // An edit's result only says it was made; a failed one says why.
             if (!onlyDiff || tool.state == ToolState.Failed) {
                 Spacer(Modifier.size(6.dp))
@@ -486,6 +496,7 @@ private fun displayName(name: String): String = when (name.lowercase()) {
     "task", "agent" -> "Agent"
     "todowrite", "todo", "update_plan" -> "Plan"
     "askuserquestion" -> "Ask"
+    "subagenthandback" -> "Report"
     else -> name.substringAfterLast("__").substringAfterLast('.').replaceFirstChar { it.uppercase() }.take(18)
 }
 

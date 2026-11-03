@@ -9,6 +9,7 @@ import com.makefunstuff.herdr.core.chat.ChatItem
 import com.makefunstuff.herdr.core.chat.ClaudeTranscript
 import com.makefunstuff.herdr.core.chat.CodexTranscript
 import com.makefunstuff.herdr.core.chat.PiTranscript
+import com.makefunstuff.herdr.core.chat.Subagents
 import com.makefunstuff.herdr.core.chat.ToolState
 import com.makefunstuff.herdr.core.chat.TranscriptFollower
 import kotlinx.coroutines.cancel
@@ -17,6 +18,7 @@ import java.io.File
 import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -409,9 +411,51 @@ class TranscriptTest {
     }
 }
 
+class SubagentTest {
+    private val call = """{"type":"assistant","uuid":"a1","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Agent","input":{"description":"Look around","subagent_type":"Explore","prompt":"List the files"}}]}}"""
+
+    @Test
+    fun anAgentCallNamesItsSubagent() {
+        val t = ClaudeTranscript()
+        t.feed(call)
+        t.feed("""{"type":"user","uuid":"u2","toolUseResult":{"status":"completed","agentId":"ac0858c9f3c996ee4"},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":[{"type":"text","text":"Done."}]}]}}""")
+        assertEquals("ac0858c9f3c996ee4", (t.items().single() as ChatItem.Tool).subagent)
+    }
+
+    @Test
+    fun anOlderResultNamesItInItsText() {
+        val t = ClaudeTranscript()
+        t.feed(call)
+        t.feed("""{"type":"user","uuid":"u2","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"Async agent launched.\nagentId: abc123 (internal)"}]}}""")
+        val tool = t.items().single() as ChatItem.Tool
+        assertEquals("abc123", tool.subagent)
+        assertEquals("Async agent launched.", tool.output)
+    }
+
+    @Test
+    fun otherCallsAndOddIdsNameNone() {
+        val t = ClaudeTranscript()
+        t.feed("""{"type":"assistant","uuid":"a1","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"ls"}}]}}""")
+        t.feed("""{"type":"user","uuid":"u2","toolUseResult":{"agentId":"x1"},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"agentId: x1"}]}}""")
+        assertEquals(null, (t.items().single() as ChatItem.Tool).subagent)
+        assertEquals(null, Subagents.id("../../etc", null))
+    }
+
+    @Test
+    fun aSubagentsOwnFileReadsAsAChat() {
+        val lines = listOf(
+            """{"isSidechain":true,"agentId":"x1","type":"user","uuid":"s1","message":{"role":"user","content":"List the files"}}""",
+            """{"isSidechain":true,"agentId":"x1","type":"assistant","uuid":"s2","message":{"role":"assistant","content":[{"type":"text","text":"Three files."}]}}""",
+        )
+        assertEquals(emptyList(), ClaudeTranscript().also { t -> lines.forEach(t::feed) }.items())
+        val items = ClaudeTranscript(sidechain = true).also { t -> lines.forEach(t::feed) }.items()
+        assertEquals(listOf("List the files", "Three files."), items.map { (it as? ChatItem.User)?.text ?: (it as ChatItem.Agent).text })
+    }
+}
+
 class TranscriptFollowerTest {
-    private fun run(home: File, ref: AgentSessionRef, bytes: Int = 1_000_000): List<String> {
-        val pb = ProcessBuilder("sh", "-c", TranscriptFollower.command(ref, bytes))
+    private fun run(home: File, ref: AgentSessionRef, bytes: Int = 1_000_000, subagent: String? = null): List<String> {
+        val pb = ProcessBuilder("sh", "-c", TranscriptFollower.command(ref, bytes, subagent))
         pb.environment()["HOME"] = home.absolutePath
         pb.environment().remove("CLAUDE_CONFIG_DIR")
         pb.environment().remove("CODEX_HOME")
@@ -448,6 +492,21 @@ class TranscriptFollowerTest {
         assertEquals(listOf("p", "q"), run(home, AgentSessionRef("pi", "path", piFile.absolutePath)).drop(1))
 
         assertEquals(listOf("@@missing"), run(home, AgentSessionRef("claude", "id", "nope")))
+    }
+
+    @Test
+    fun findsASubagentBesideItsSession() {
+        val home = kotlin.io.path.createTempDirectory("home").toFile()
+        val project = File(home, ".claude/projects/-data-x").apply { mkdirs() }
+        File(project, "s1.jsonl").writeText("main\nmain\n")
+        File(project, "s1/subagents").mkdirs()
+        File(project, "s1/subagents/agent-a1.jsonl").writeText("new\nlayout\n")
+        File(project, "agent-b2.jsonl").writeText("old\nlayout\n")
+        val ref = AgentSessionRef("claude", "id", "s1")
+        assertEquals(listOf("new", "layout"), run(home, ref, subagent = "a1").drop(1))
+        assertEquals(listOf("old", "layout"), run(home, ref, subagent = "b2").drop(1))
+        assertEquals(listOf("@@missing"), run(home, ref, subagent = "c3"))
+        assertFailsWith<IllegalArgumentException> { TranscriptFollower.command(ref, subagent = "../x") }
     }
 }
 

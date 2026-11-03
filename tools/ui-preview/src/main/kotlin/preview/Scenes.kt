@@ -34,6 +34,11 @@ private const val CARD = "app/src/main/kotlin/demo/herdr/ui/machines/MachineCard
 private const val SHOT_1 = "Screenshot_20261018_101204.png"
 
 /** Two screenshots waiting in the app agent's composer, with words for them. */
+private fun SceneData.subagent() {
+    host(DEVBOX).transcripts = host(DEVBOX).transcripts +
+        (Demo.APP_SESSION to Demo.appTranscriptSubagent()) + ("${Demo.APP_SESSION}/agent-${Demo.APP_SUBAGENT}" to Demo.appSubagentSteps())
+}
+
 private fun SceneData.pictures() {
     images[com.makefunstuff.herdr.data.DraftStore.agent(DEVBOX, APP_AGENT)] = listOf(
         SHOT_1 to Demo.picture("board"),
@@ -400,6 +405,9 @@ fun scenes(): List<Scene> = listOf(
     Scene("chat-thinking", route = Routes.agent(DEVBOX, APP_AGENT), setup = {
         host(DEVBOX).transcripts = host(DEVBOX).transcripts + (Demo.APP_SESSION to Demo.appTranscriptThinking())
     }),
+    // Claude handed part of the work to a subagent: its call offers the subagent's own steps.
+    Scene("chat-subagent", route = Routes.agent(DEVBOX, APP_AGENT), setup = { subagent() }, actions = { settle(); tapText("Find what reads the snapshot time"); settle() }),
+    Scene("subagent", route = Routes.subagent(DEVBOX, APP_AGENT, Demo.APP_SUBAGENT, "Find what reads the snapshot time"), setup = { subagent() }),
     Scene("chat-thinking-wait", route = Routes.agent(DEVBOX, APP_AGENT), setup = {
         host(DEVBOX).transcripts = host(DEVBOX).transcripts + (Demo.APP_SESSION to Demo.appTranscriptWaiting())
     }),

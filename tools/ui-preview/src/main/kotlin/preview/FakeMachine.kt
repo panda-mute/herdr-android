@@ -200,9 +200,10 @@ class FakeMachine(
         logins?.events(command)?.let { events -> return stream { _, out -> events.forEach { out.println(it) }; out.flush() } }
         return when {
             "@@missing" in command -> stream { _, out ->
-                // TranscriptFollower: kind, value, agent, bytes after "follow".
+                // TranscriptFollower: kind, value, agent, bytes and a subagent id (or nothing) after "follow".
+                // A subagent's own steps are kept as "<session>/agent-<id>".
                 val args = w.drop(w.indexOf("follow") + 1)
-                val session = args.getOrNull(1).orEmpty()
+                val session = args.getOrNull(1).orEmpty() + (args.getOrNull(4)?.takeIf { it.isNotEmpty() }?.let { "/agent-$it" } ?: "")
                 val text = transcripts[session]
                 if (text == null) out.println("@@missing") else {
                     out.println("@@file ${text.toByteArray().size} /home/demo/transcript.jsonl")

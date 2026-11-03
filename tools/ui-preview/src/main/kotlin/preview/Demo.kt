@@ -317,6 +317,15 @@ object Demo {
         return resource("claude-app.jsonl").trimEnd() + "\n" + lines.joinToString("\n") + "\n"
     }
 
+    /** The subagent devbox's app agent sent to check its change (`claude-app-subagent.jsonl`). */
+    const val APP_SUBAGENT = "a7f3c2e10b9d4e58"
+
+    /** devbox's app agent after a second ask it handed to a subagent, whose own steps are [appSubagentSteps]. */
+    fun appTranscriptSubagent(): String = appTranscriptDone().trimEnd() + "\n" + resource("claude-app-subagent.jsonl")
+
+    /** What that subagent did, as Claude keeps it in `<session>/subagents/agent-<id>.jsonl`. */
+    fun appSubagentSteps(): String = resource("claude-app-subagent-steps.jsonl")
+
     /** devbox's app agent once its edit came back, before it wrote anything more: the model is at work. */
     fun appTranscriptWaiting(): String = resource("claude-app.jsonl").trimEnd() + "\n" + appMore(1)
 

@@ -156,12 +156,15 @@ internal fun JsonObject.num(key: String): Double? = (this[key] as? JsonPrimitive
 internal fun JsonObject.int(key: String): Int? = (this[key] as? JsonPrimitive)?.takeIf { !it.isString && it !is JsonNull }?.intOrNull
 internal fun JsonObject.long(key: String): Long? = (this[key] as? JsonPrimitive)?.takeIf { !it.isString && it !is JsonNull }?.longOrNull
 
-/** Claude Code's session file (`~/.claude/projects/<cwd>/<session>.jsonl`). */
-class ClaudeActivity(prefix: String = "") : ActivityLog(prefix) {
+/**
+ * Claude Code's session file (`~/.claude/projects/<cwd>/<session>.jsonl`). [sidechain]: a subagent's
+ * own file, whose every line is marked as a side chain; a session file skips those.
+ */
+class ClaudeActivity(prefix: String = "", private val sidechain: Boolean = false) : ActivityLog(prefix) {
     private val inputs = HashMap<String, JsonObject>()
 
     override fun read(o: JsonObject) {
-        if (o.bool("isSidechain")) return
+        if (o.bool("isSidechain") && !sidechain) return
         val at = time(o.str("timestamp"))
         o.str("cwd")?.let { cwd = it }
         val uuid = o.str("uuid") ?: return

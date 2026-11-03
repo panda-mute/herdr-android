@@ -44,11 +44,20 @@ object TranscriptFollower {
         fi
     """.trimIndent()
 
-    // $1 kind (path|id), $2 value, $3 agent kind, $4 bytes. The trailing `cat` waits for the app to
-    // close the channel, then stops tail, so no tail outlives the chat screen.
+    /** With a subagent id in `sub`, moves `f` from the session's file to that subagent's own. */
+    internal val SUBAGENT = """
+        if [ -n "${'$'}sub" ] && [ -n "${'$'}f" ]; then
+          s="${'$'}{f%.jsonl}/subagents/agent-${'$'}sub.jsonl"
+          [ -f "${'$'}s" ] || s="${'$'}{f%/*}/agent-${'$'}sub.jsonl"
+          f="${'$'}s"
+        fi
+    """.trimIndent()
+
+    // $1 kind (path|id), $2 value, $3 agent kind, $4 bytes, $5 subagent id or empty. The trailing
+    // `cat` waits for the app to close the channel, then stops tail, so no tail outlives the chat screen.
     private val SCRIPT = """
-        kind="${'$'}1"; value="${'$'}2"; agent="${'$'}3"; bytes="${'$'}4"; f=""
-    """.trimIndent() + "\n" + FIND + "\n" + """
+        kind="${'$'}1"; value="${'$'}2"; agent="${'$'}3"; bytes="${'$'}4"; sub="${'$'}5"; f=""
+    """.trimIndent() + "\n" + FIND + "\n" + SUBAGENT + "\n" + """
         if [ -z "${'$'}f" ] || [ ! -f "${'$'}f" ]; then echo "$MISSING"; exit 0; fi
         size=${'$'}(wc -c < "${'$'}f" | tr -d ' ')
         echo "$FILE${'$'}size ${'$'}f"
@@ -58,9 +67,12 @@ object TranscriptFollower {
         kill "${'$'}t" 2>/dev/null
     """.trimIndent()
 
-    fun command(ref: AgentSessionRef, bytes: Int = TAIL_BYTES): String =
-        "sh -c ${HerdrCommands.quote(SCRIPT)} follow " +
-            listOf(ref.kind, ref.value, ref.agent, bytes.toString()).joinToString(" ") { HerdrCommands.quote(it) }
+    /** Follows [ref]'s transcript, or with [subagent] that subagent's own ([Subagents]). */
+    fun command(ref: AgentSessionRef, bytes: Int = TAIL_BYTES, subagent: String? = null): String {
+        require(subagent == null || Subagents.valid(subagent)) { "not a subagent id: $subagent" }
+        return "sh -c ${HerdrCommands.quote(SCRIPT)} follow " +
+            listOf(ref.kind, ref.value, ref.agent, bytes.toString(), subagent.orEmpty()).joinToString(" ") { HerdrCommands.quote(it) }
+    }
 
     sealed interface Result {
         /** No transcript the app can find for this session. */
@@ -79,17 +91,19 @@ object TranscriptFollower {
         connection: MachineConnection,
         ref: AgentSessionRef,
         transcript: Transcript,
+        subagent: String? = null,
         onUpdate: (truncated: Boolean) -> Unit,
-    ): Result = follow({ connection.start(it) }, ref, transcript, onUpdate)
+    ): Result = follow({ connection.start(it) }, ref, transcript, subagent, onUpdate)
 
     /** [follow] with any way to start the remote command, so tests can run it locally. */
     suspend fun follow(
         start: suspend (command: String) -> Duplex,
         ref: AgentSessionRef,
         transcript: Transcript,
+        subagent: String? = null,
         onUpdate: (truncated: Boolean) -> Unit,
     ): Result = coroutineScope {
-        val process = start(command(ref))
+        val process = start(command(ref, subagent = subagent))
         try {
             val reader = process.input.bufferedReader(Charsets.UTF_8)
             val header = withContext(Dispatchers.IO) { reader.readLine() } ?: throw IOException("transcript stream closed")

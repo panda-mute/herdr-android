@@ -71,6 +71,14 @@ abstract class Transcript {
         version++
     }
 
+    /** Notes that tool call [id] started subagent [agent], when it is a call that can. */
+    protected fun linkSubagent(id: String, agent: String?) {
+        val tool = entries[id] as? ChatItem.Tool ?: return
+        if (agent == null || !Subagents.isAgentTool(tool.name) || tool.subagent == agent) return
+        entries[id] = tool.copy(subagent = agent, output = tool.output?.let(Subagents::withoutId)?.ifEmpty { null })
+        version++
+    }
+
     /** Marks every tool still running as done: the turn moved on, so it is no longer waiting. */
     protected fun settleTools() {
         for ((id, item) in entries) {
@@ -133,13 +141,16 @@ internal fun isInjected(text: String): Boolean {
 
 private val TAG = Regex("<([a-z-]+)>([\\s\\S]*?)</\\1>")
 
-/** Claude Code's transcript (`~/.claude/projects/<cwd>/<session>.jsonl`). */
-class ClaudeTranscript : Transcript() {
+/**
+ * Claude Code's transcript (`~/.claude/projects/<cwd>/<session>.jsonl`). [sidechain]: a subagent's
+ * own file (`<session>/subagents/agent-<id>.jsonl`), whose every line is marked as a side chain.
+ */
+class ClaudeTranscript(private val sidechain: Boolean = false) : Transcript() {
     override fun read(obj: JsonObject) {
-        if (obj.bool("isSidechain") || obj.bool("isMeta")) return
+        if ((obj.bool("isSidechain") && !sidechain) || obj.bool("isMeta")) return
         val uuid = obj.str("uuid") ?: return
         when (obj.str("type")) {
-            "user" -> user(uuid, obj.obj("message") ?: return)
+            "user" -> user(uuid, obj.obj("message") ?: return, obj.obj("toolUseResult"))
             "assistant" -> {
                 val message = obj.obj("message") ?: return
                 meter(obj, message)
@@ -157,7 +168,8 @@ class ClaudeTranscript : Transcript() {
         filled(usage.count("input_tokens") + usage.count("cache_creation_input_tokens") + usage.count("cache_read_input_tokens"))
     }
 
-    private fun user(uuid: String, message: JsonObject) {
+    /** [result]: the line's `toolUseResult`, which names the subagent an Agent call started. */
+    private fun user(uuid: String, message: JsonObject, result: JsonObject?) {
         when (val content = message["content"]) {
             is JsonPrimitive -> userText(uuid, content.contentOrNull.orEmpty(), 0)
             is JsonArray -> {
@@ -167,11 +179,12 @@ class ClaudeTranscript : Transcript() {
                     when (block.str("type")) {
                         "text" -> texts += block.str("text").orEmpty()
                         "image" -> images++
-                        "tool_result" -> finishTool(
-                            block.str("tool_use_id") ?: continue,
-                            textOf(block["content"]).ifBlank { null },
-                            block.bool("is_error"),
-                        )
+                        "tool_result" -> {
+                            val id = block.str("tool_use_id") ?: continue
+                            val output = textOf(block["content"]).ifBlank { null }
+                            finishTool(id, output, block.bool("is_error"))
+                            linkSubagent(id, Subagents.id(result?.str("agentId"), output))
+                        }
                     }
                 }
                 if (texts.isNotEmpty() || images > 0) userText(uuid, texts.joinToString("\n"), images)

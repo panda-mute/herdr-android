@@ -591,7 +591,11 @@ fun AgentScreen(nav: NavController, machineId: String, paneId: String) {
                     rows.isEmpty() -> Box(Modifier.padding(bottom = bottom)) {
                         EmptyState("No messages yet", "Send a prompt to get started.", icon = HerdrIcons.MessagesSquare)
                     }
-                    else -> CompositionLocalProvider(LocalChatImages provides ChatImages(machineId, session, container.images, host.online), LocalVoiceMessages provides voice) { LazyColumn(
+                    else -> CompositionLocalProvider(
+                        LocalChatImages provides ChatImages(machineId, session, container.images, host.online),
+                        LocalVoiceMessages provides voice,
+                        LocalOpenSubagent provides { tool -> tool.subagent?.let { nav.navigate(Routes.subagent(machineId, paneId, it, tool.summary)) } },
+                    ) { LazyColumn(
                         state = listState,
                         reverseLayout = true,
                         // The composer floats over the list's end: its height stays free under the newest entry.
@@ -664,7 +668,7 @@ private fun command(p: BlockedPrompt): String =
         ?: p.question
 
 /** When a turn started: `10:05` today, `Oct 16, 09:12` before, on the phone's clock. */
-private fun clock(at: Long, now: Long, zone: ZoneId): String {
+internal fun clock(at: Long, now: Long, zone: ZoneId): String {
     val day = Instant.ofEpochMilli(at).atZone(zone).toLocalDate() != Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
     return DateTimeFormatter.ofPattern(if (day) "MMM d, HH:mm" else "HH:mm", Locale.getDefault()).withZone(zone).format(Instant.ofEpochMilli(at))
 }
