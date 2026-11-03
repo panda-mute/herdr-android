@@ -556,8 +556,10 @@ fun AgentActionsSheet(
     triage: (@Composable () -> Unit)? = null,
     /** The board task it works on, which names it in the title. */
     task: BoardTask? = null,
-    /** Quits the agent and opens the same conversation again ([com.makefunstuff.herdr.core.chat.AgentRestart]). */
+    /** Quits the agent and opens the same conversation again ([com.makefunstuff.herdr.core.chat.AgentRestart]), asked first. */
     onRestart: (() -> Unit)? = null,
+    /** The same in one tap, then tells it to continue. */
+    onRestartContinue: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -584,7 +586,8 @@ fun AgentActionsSheet(
         if (onActivity != null) ManageRow("Activity timeline", detail = "What it did, step by step: commands, edits, tests, reviews", icon = HerdrIcons.Activity, chevron = true) { onActivity() }
         if (onCode != null) ManageRow("Browse the code", detail = "Its files and changes, to read and comment on", icon = HerdrIcons.Code, chevron = true) { onCode() }
         if (onQuick != null) ManageRow("Quick commands", detail = "Run a script or an AI command where it works", icon = HerdrIcons.Zap, chevron = true) { onQuick() }
-        if (onRestart != null) ManageRow("Restart and continue", detail = "Quit it and open the same conversation again", icon = HerdrIcons.RotateCcw, chevron = true) { onRestart() }
+        if (onRestart != null) ManageRow("Restart", detail = "Quit it and open the same conversation again", icon = HerdrIcons.RotateCcw, chevron = true) { onRestart() }
+        if (onRestartContinue != null) ManageRow("Restart and continue", detail = "The same, then tell it “${com.makefunstuff.herdr.core.chat.AgentRestart.CONTINUE}”", icon = HerdrIcons.RefreshCw) { onRestartContinue() }
         if (onFloat != null) ManageRow("Float over other apps", icon = HerdrIcons.PictureInPicture2) { onFloat() }
         if (onOpenApp != null) ManageRow("Open in the app", icon = HerdrIcons.Maximize2) { onOpenApp() }
         if (onToggleKeys != null) {

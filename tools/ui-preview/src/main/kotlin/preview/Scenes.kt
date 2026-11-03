@@ -445,8 +445,10 @@ fun scenes(): List<Scene> = listOf(
     Scene("chat-commands", route = Routes.agent(DEVBOX, APP_AGENT), setup = { held(); replies() }, actions = { type("/") }),
     Scene("chat-files", route = Routes.agent(DEVBOX, APP_AGENT), actions = { type("Look at @mach") }),
     Scene("chat-model", route = Routes.agent(DEVBOX, APP_AGENT), actions = { tapLabel("Model Opus 5.5, context 62% full") }),
-    // The menu offers to restart it on the same conversation; asked first, with words to send once it's back.
-    Scene("chat-restart", route = Routes.agent(DEVBOX, APP_AGENT), actions = { tapLabel("More"); tapText("Restart and continue") }),
+    // The menu offers to restart it on the same conversation: asked first, with words to send once it's back,
+    // or in one tap that then tells it to continue (its steps over the chat).
+    Scene("chat-restart", route = Routes.agent(DEVBOX, APP_AGENT), actions = { tapLabel("More"); tapText("Quit it and open the same"); settle() }),
+    Scene("chat-restarting", route = Routes.agent(DEVBOX, APP_AGENT), actions = { tapLabel("More"); tapText("Restart and continue") }),
     Scene("quick-replies", route = Routes.COMPOSER, setup = { replies() }),
     // Voice messages: the mic held while you speak (the time, how loud, slide to cancel), slid away far enough
     // that letting go cancels, tapped to go on hands-free; sent (copied to the machine, then to the agent as its

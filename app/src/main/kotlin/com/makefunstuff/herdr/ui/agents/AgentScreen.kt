@@ -205,6 +205,30 @@ fun AgentScreen(nav: NavController, machineId: String, paneId: String) {
     var restartPhase by remember { mutableStateOf<com.makefunstuff.herdr.core.chat.AgentRestart.Phase?>(null) }
     // Its kind, kept: herdr reports no agent in the pane while it is between quitting and coming back.
     var restarting by remember { mutableStateOf("") }
+    // Only on classic herdr, whose API reads the agent's command line and starts it again.
+    // And once its conversation has a turn: before that the agent has saved nothing to open again.
+    val canRestart = !inBubble && !onCore && restartPhase == null && state.items.isNotEmpty() &&
+        com.makefunstuff.herdr.core.chat.AgentRestart.canRestart(agent?.agent, agent?.agentSession)
+    // Restarts the agent ([then]: words to send once it's back), as Alma's desktop app does.
+    fun restart(then: String?) {
+        val ref = agent?.agentSession
+        val k = agent?.agent?.takeIf { it.isNotBlank() }
+        if (ref == null || k == null || restartPhase != null) return
+        restarting = k
+        restartPhase = com.makefunstuff.herdr.core.chat.AgentRestart.Phase.Stopping
+        scope.launch {
+            runCatching {
+                val port = com.makefunstuff.herdr.core.chat.AgentRestart.HerdrPort(session.awaitApi()) { cmd -> session.awaitConnection().run(cmd, 15) }
+                val kept = com.makefunstuff.herdr.core.chat.AgentRestart.preview(port, paneId, k)
+                com.makefunstuff.herdr.core.chat.AgentRestart.run(port, paneId, k, ref, then, { restartPhase = it })
+                kept
+            }.onSuccess { kept ->
+                val left = kept.dropped.takeIf { it.isNotEmpty() }?.joinToString(", ", prefix = ", without ").orEmpty()
+                context.toast((if (then.isNullOrBlank()) "Restarted" else "Restarted, and sent “$then”") + left)
+            }.onFailure { context.toast(it.message ?: "The restart didn't work") }
+            restartPhase = null
+        }
+    }
     val kind = agent?.agent?.takeIf { it.isNotBlank() }
     // An agent whose model can be switched from here gets the pill before its first answer says which.
     val pill = remember(agent?.tokens, state.use, kind) {
@@ -640,8 +664,8 @@ fun AgentScreen(nav: NavController, machineId: String, paneId: String) {
 
     if (menu) {
         AgentActionsSheet(
-            onRestart = if (inBubble || com.makefunstuff.herdr.core.chat.AgentRestart.resumeCommand(kind, agent?.agentSession) == null || restartPhase != null) null
-            else ({ menu = false; restartAsk = true }),
+            onRestart = if (!canRestart) null else ({ menu = false; restartAsk = true }),
+            onRestartContinue = if (!canRestart) null else ({ menu = false; restart(com.makefunstuff.herdr.core.chat.AgentRestart.CONTINUE) }),
             task = task,
             session = session,
             agent = agent,
@@ -695,24 +719,23 @@ fun AgentScreen(nav: NavController, machineId: String, paneId: String) {
         )
     }
     if (restartAsk) {
-        val ref = agent?.agentSession
+        // Its options as it runs now: kept on the restart, but for any that skip its permission prompts.
+        var kept by remember { mutableStateOf<com.makefunstuff.herdr.core.chat.AgentFlags.Kept?>(null) }
+        LaunchedEffect(paneId, kind) {
+            kept = runCatching {
+                com.makefunstuff.herdr.core.chat.AgentRestart.preview(
+                    com.makefunstuff.herdr.core.chat.AgentRestart.HerdrPort(session.awaitApi()) { cmd -> session.awaitConnection().run(cmd, 15) }, paneId, kind.orEmpty(),
+                )
+            }.getOrElse { com.makefunstuff.herdr.core.chat.AgentFlags.Kept(emptyList(), emptyList()) }
+        }
         RestartDialog(
             agent = kind ?: "the agent",
-            command = com.makefunstuff.herdr.core.chat.AgentRestart.resumeCommand(kind, ref).orEmpty(),
+            kept = kept,
             working = status == AgentStatus.Working || status == AgentStatus.Blocked,
             onDismiss = { restartAsk = false },
         ) { then ->
             restartAsk = false
-            if (ref == null || kind == null) return@RestartDialog
-            restarting = kind
-            restartPhase = com.makefunstuff.herdr.core.chat.AgentRestart.Phase.Stopping
-            scope.launch {
-                runCatching {
-                    com.makefunstuff.herdr.core.chat.AgentRestart.run(session.awaitAgent(paneId), paneId, kind, ref, then, { restartPhase = it })
-                }.onSuccess { context.toast(if (then.isNullOrBlank()) "Restarted" else "Restarted, and sent your message") }
-                    .onFailure { context.toast(it.message ?: "The restart didn't work") }
-                restartPhase = null
-            }
+            restart(then)
         }
     }
     restartPhase?.let { RestartProgress(it, restarting) }

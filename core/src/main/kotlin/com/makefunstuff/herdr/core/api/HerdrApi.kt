@@ -82,13 +82,18 @@ class HerdrApi(private val connection: ApiCaller) {
 
     /**
      * Starts an agent of [kind] (claude, codex, pi…) named [name] in [paneId], which must be at its
-     * shell's prompt. No arguments go to the agent: the phone never starts one that skips its permission prompts.
+     * shell's prompt. [args] only from a restart, which keeps an agent's own options
+     * ([com.makefunstuff.herdr.core.chat.AgentFlags]): the phone never starts one that skips its permission prompts.
      */
-    suspend fun startAgent(name: String, kind: String, paneId: String) {
+    suspend fun startAgent(name: String, kind: String, paneId: String, args: List<String> = emptyList(), timeoutMs: Long = 60_000) {
         connection.call(
             "agent.start",
-            params("name" to name, "kind" to kind, "pane_id" to paneId),
-            timeoutMs = 60_000,
+            params(
+                "name" to name, "kind" to kind, "pane_id" to paneId,
+                "args" to JsonArray(args.map(::JsonPrimitive)).takeIf { args.isNotEmpty() },
+                "timeout_ms" to timeoutMs.takeIf { args.isNotEmpty() },
+            ),
+            timeoutMs = timeoutMs + 10_000,
         )
     }
 

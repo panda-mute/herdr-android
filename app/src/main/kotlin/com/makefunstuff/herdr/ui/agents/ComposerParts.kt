@@ -414,11 +414,11 @@ private fun SwitchModel(use: com.makefunstuff.herdr.core.chat.ModelUse?, note: S
 }
 
 /**
- * Asks before a restart: what stops, the command it comes back with, and words to send it once it
- * is back (empty sends nothing).
+ * Asks before a restart: what stops, the options it comes back with ([kept], null while they are
+ * read), and words to send it once it is back (empty sends nothing).
  */
 @Composable
-fun RestartDialog(agent: String, command: String, working: Boolean, onDismiss: () -> Unit, onRestart: (then: String?) -> Unit) {
+fun RestartDialog(agent: String, kept: com.makefunstuff.herdr.core.chat.AgentFlags.Kept?, working: Boolean, onDismiss: () -> Unit, onRestart: (then: String?) -> Unit) {
     var then by remember { mutableStateOf("") }
     com.makefunstuff.herdr.ui.design.HerdrDialog(
         onDismissRequest = onDismiss,
@@ -426,20 +426,32 @@ fun RestartDialog(agent: String, command: String, working: Boolean, onDismiss: (
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(Space.s)) {
                 Text(
-                    (if (working) "What it's doing now stops. " else "") +
-                        "It quits, then opens the same conversation again (${command.substringBeforeLast(' ')}), without any options it was first started with.",
+                    (if (working) "What it's doing now stops. " else "") + "It quits, then opens the same conversation again in the same folder.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                when {
+                    kept == null -> Text("Reading its options…", style = MaterialTheme.typography.bodySmall, color = Herdr.colors.muted)
+                    else -> {
+                        if (kept.flags.isNotEmpty()) Text(
+                            "With its options: " + kept.flags.joinToString(" "),
+                            style = MaterialTheme.typography.bodySmall, color = Herdr.colors.muted,
+                        )
+                        if (kept.dropped.isNotEmpty()) Text(
+                            "Without " + kept.dropped.joinToString(", ") + ": the phone never starts an agent that skips its permission prompts.",
+                            style = MaterialTheme.typography.bodySmall, color = Herdr.colors.notice,
+                        )
+                    }
+                }
                 com.makefunstuff.herdr.ui.design.HerdrTextField(
                     value = then,
                     onValueChange = { then = it },
                     label = "Then tell it",
-                    hint = "Optional: sent once it's back, such as \"carry on\"",
+                    hint = "Optional: sent once it's back, such as \"continue\"",
                     singleLine = false,
                 )
             }
         },
-        confirmButton = { com.makefunstuff.herdr.ui.design.DangerButton("Restart") { onRestart(then.trim().ifEmpty { null }) } },
+        confirmButton = { com.makefunstuff.herdr.ui.design.DangerButton("Restart", enabled = kept != null) { onRestart(then.trim().ifEmpty { null }) } },
         dismissButton = { QuietButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
