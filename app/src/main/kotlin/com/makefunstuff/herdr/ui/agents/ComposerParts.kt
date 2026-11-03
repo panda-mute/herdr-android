@@ -28,6 +28,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -49,6 +53,7 @@ import com.makefunstuff.herdr.core.chat.HeldMessage
 import com.makefunstuff.herdr.core.chat.ModelPill
 import com.makefunstuff.herdr.core.chat.ModelUse
 import com.makefunstuff.herdr.ui.design.HerdrIcons
+import com.makefunstuff.herdr.ui.design.HerdrChip
 import com.makefunstuff.herdr.ui.design.HerdrSheet
 import com.makefunstuff.herdr.ui.design.HerdrShapes
 import com.makefunstuff.herdr.ui.design.InfoLine
@@ -304,12 +309,19 @@ fun ModelSheet(
     limit: String?,
     onUsage: (() -> Unit)?,
     onDismiss: () -> Unit,
+    /**
+     * Switches the model or the effort with the agent's own command (`/model opus`); null where it
+     * can't be switched from the phone. [switchNote] says why it can't right now.
+     */
+    onSwitch: ((command: String) -> Unit)? = null,
+    switchNote: String? = null,
 ) {
     val c = Herdr.colors
     val use = pill.use
     val percent = pill.percent
     HerdrSheet(onDismissRequest = onDismiss) {
         SheetTitle(pill.title, subtitle = agent)
+        if (onSwitch != null) SwitchModel(use, switchNote, onSwitch)
         Column(Modifier.padding(horizontal = Space.xl), verticalArrangement = Arrangement.spacedBy(Space.xs)) {
             if (percent != null) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -361,4 +373,91 @@ fun ModelSheet(
         }
         Spacer(Modifier.height(Space.m))
     }
+}
+
+/**
+ * Claude's model and effort as chips, the ones it runs at now picked: a tap sends its `/model` or
+ * `/effort` command, which it takes even while it works. A model picked so also becomes its
+ * default for new sessions, as on the computer.
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun SwitchModel(use: com.makefunstuff.herdr.core.chat.ModelUse?, note: String?, onSwitch: (String) -> Unit) {
+    val c = Herdr.colors
+    val family = com.makefunstuff.herdr.core.chat.AgentSettings.family(use?.model)
+    val effort = use?.effort
+    val enabled = note == null
+    Column(Modifier.fillMaxWidth().padding(horizontal = Space.xl).padding(bottom = Space.m), verticalArrangement = Arrangement.spacedBy(Space.xs)) {
+        Text("Model", style = MaterialTheme.typography.labelLarge, color = c.muted)
+        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(Space.xs), verticalArrangement = Arrangement.spacedBy(Space.xs)) {
+            com.makefunstuff.herdr.core.chat.AgentSettings.CLAUDE_MODELS.forEach { m ->
+                HerdrChip(m.label, selected = m.value == family, onClick = {
+                    if (enabled && m.value != family) onSwitch(com.makefunstuff.herdr.core.chat.AgentSettings.modelCommand(m.value))
+                })
+            }
+        }
+        Text("Effort", style = MaterialTheme.typography.labelLarge, color = c.muted, modifier = Modifier.padding(top = Space.xs))
+        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(Space.xs), verticalArrangement = Arrangement.spacedBy(Space.xs)) {
+            com.makefunstuff.herdr.core.chat.AgentSettings.CLAUDE_EFFORTS.forEach { e ->
+                HerdrChip(e.label, selected = e.value == effort, onClick = {
+                    if (enabled && e.value != effort) onSwitch(com.makefunstuff.herdr.core.chat.AgentSettings.effortCommand(e.value))
+                })
+            }
+        }
+        Text(
+            note ?: "A model picked here also becomes Claude's default for new sessions. A level the model doesn't take is lowered to its highest.",
+            style = MaterialTheme.typography.bodySmall,
+            color = if (note != null) c.notice else c.muted,
+            modifier = Modifier.padding(top = Space.xxs),
+        )
+    }
+}
+
+/**
+ * Asks before a restart: what stops, the command it comes back with, and words to send it once it
+ * is back (empty sends nothing).
+ */
+@Composable
+fun RestartDialog(agent: String, command: String, working: Boolean, onDismiss: () -> Unit, onRestart: (then: String?) -> Unit) {
+    var then by remember { mutableStateOf("") }
+    com.makefunstuff.herdr.ui.design.HerdrDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Restart $agent?") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(Space.s)) {
+                Text(
+                    (if (working) "What it's doing now stops. " else "") +
+                        "It quits, then opens the same conversation again (${command.substringBeforeLast(' ')}), without any options it was first started with.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                com.makefunstuff.herdr.ui.design.HerdrTextField(
+                    value = then,
+                    onValueChange = { then = it },
+                    label = "Then tell it",
+                    hint = "Optional: sent once it's back, such as \"carry on\"",
+                    singleLine = false,
+                )
+            }
+        },
+        confirmButton = { com.makefunstuff.herdr.ui.design.DangerButton("Restart") { onRestart(then.trim().ifEmpty { null }) } },
+        dismissButton = { QuietButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+/** The restart's steps while it runs, over the chat. */
+@Composable
+fun RestartProgress(phase: com.makefunstuff.herdr.core.chat.AgentRestart.Phase, agent: String) {
+    val words = when (phase) {
+        com.makefunstuff.herdr.core.chat.AgentRestart.Phase.Stopping -> "Quitting $agent"
+        com.makefunstuff.herdr.core.chat.AgentRestart.Phase.Starting -> "Opening the conversation again"
+        com.makefunstuff.herdr.core.chat.AgentRestart.Phase.Waiting -> "Waiting for $agent to be ready"
+        com.makefunstuff.herdr.core.chat.AgentRestart.Phase.Sending -> "Sending your message"
+        com.makefunstuff.herdr.core.chat.AgentRestart.Phase.Done -> "Restarted"
+    }
+    com.makefunstuff.herdr.ui.design.HerdrDialog(
+        onDismissRequest = {},
+        title = { Text("Restarting") },
+        text = { com.makefunstuff.herdr.ui.design.LoadingState(words) },
+        confirmButton = {},
+    )
 }

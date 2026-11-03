@@ -200,8 +200,17 @@ fun AgentScreen(nav: NavController, machineId: String, paneId: String) {
     var heldSending by remember { mutableStateOf(false) }
     var heldOpen by remember { mutableStateOf(false) }
     var modelSheet by remember { mutableStateOf(false) }
+    // Restart and continue: asked, then each step while it runs.
+    var restartAsk by remember { mutableStateOf(false) }
+    var restartPhase by remember { mutableStateOf<com.makefunstuff.herdr.core.chat.AgentRestart.Phase?>(null) }
+    // Its kind, kept: herdr reports no agent in the pane while it is between quitting and coming back.
+    var restarting by remember { mutableStateOf("") }
     val kind = agent?.agent?.takeIf { it.isNotBlank() }
-    val pill = remember(agent?.tokens, state.use) { ModelPill.of(agent?.tokens.orEmpty(), state.use) }
+    // An agent whose model can be switched from here gets the pill before its first answer says which.
+    val pill = remember(agent?.tokens, state.use, kind) {
+        ModelPill.of(agent?.tokens.orEmpty(), state.use)
+            ?: ModelPill("Model", null, null).takeIf { com.makefunstuff.herdr.core.chat.AgentSettings.canSwitch(kind) && !onCore }
+    }
     // Its folder, for `@` files; its own `/` commands. Read over SSH the first time each is asked for.
     val cwd = (agent?.cwd ?: pane?.foregroundCwd ?: pane?.cwd)?.ifBlank { null }
     var commands by remember(machineId, kind, cwd) { mutableStateOf<List<AgentCommand>?>(null) }
@@ -631,6 +640,8 @@ fun AgentScreen(nav: NavController, machineId: String, paneId: String) {
 
     if (menu) {
         AgentActionsSheet(
+            onRestart = if (inBubble || com.makefunstuff.herdr.core.chat.AgentRestart.resumeCommand(kind, agent?.agentSession) == null || restartPhase != null) null
+            else ({ menu = false; restartAsk = true }),
             task = task,
             session = session,
             agent = agent,
@@ -668,8 +679,43 @@ fun AgentScreen(nav: NavController, machineId: String, paneId: String) {
             limit = left?.let { "${it.provider.name}: ${it.words}" },
             onUsage = if (inBubble) null else ({ modelSheet = false; nav.navigate(Routes.usage(machineId)) }),
             onDismiss = { modelSheet = false },
+            onSwitch = if (com.makefunstuff.herdr.core.chat.AgentSettings.canSwitch(kind) && !onCore) ({ command ->
+                modelSheet = false
+                scope.launch {
+                    runCatching { session.awaitAgent(paneId).type(paneId, command) }
+                        .onSuccess { context.toast("Sent $command") }
+                        .onFailure { context.toast(it.message ?: "Couldn't send $command") }
+                }
+            }) else null,
+            switchNote = when {
+                !host.online -> "Not connected"
+                status == AgentStatus.Blocked -> "It's asking something: answer it first."
+                else -> null
+            },
         )
     }
+    if (restartAsk) {
+        val ref = agent?.agentSession
+        RestartDialog(
+            agent = kind ?: "the agent",
+            command = com.makefunstuff.herdr.core.chat.AgentRestart.resumeCommand(kind, ref).orEmpty(),
+            working = status == AgentStatus.Working || status == AgentStatus.Blocked,
+            onDismiss = { restartAsk = false },
+        ) { then ->
+            restartAsk = false
+            if (ref == null || kind == null) return@RestartDialog
+            restarting = kind
+            restartPhase = com.makefunstuff.herdr.core.chat.AgentRestart.Phase.Stopping
+            scope.launch {
+                runCatching {
+                    com.makefunstuff.herdr.core.chat.AgentRestart.run(session.awaitAgent(paneId), paneId, kind, ref, then, { restartPhase = it })
+                }.onSuccess { context.toast(if (then.isNullOrBlank()) "Restarted" else "Restarted, and sent your message") }
+                    .onFailure { context.toast(it.message ?: "The restart didn't work") }
+                restartPhase = null
+            }
+        }
+    }
+    restartPhase?.let { RestartProgress(it, restarting) }
     if (attachMenu) AttachMenu(attach, tray, online = host.online, onDismiss = { attachMenu = false })
 }
 
