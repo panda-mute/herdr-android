@@ -178,6 +178,7 @@ class TerminalView(context: Context) : View(context) {
             surface.canvas = canvas
             // The selection on the grid's ground, under the text (the painter fills the ground first).
             painter.paint(emu, surface, cellW, cellH, baseline) { drawSelection(canvas, emu) }
+            drawComposing(canvas, emu)
             surface.canvas = null
             canvas.restore()
         }
@@ -308,29 +309,38 @@ class TerminalView(context: Context) : View(context) {
     override fun onCheckIsTextEditor(): Boolean = true
 
     override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection {
-        // Visible-password keeps keyboards from autocorrecting or holding text in composition.
-        outAttrs.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+        // Plain text without suggestions: a password field would switch Chinese, Japanese and other
+        // keyboards to English only.
+        outAttrs.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
         outAttrs.imeOptions = EditorInfo.IME_FLAG_NO_EXTRACT_UI or EditorInfo.IME_FLAG_NO_FULLSCREEN or EditorInfo.IME_ACTION_NONE
+        setComposing("")
         return object : BaseInputConnection(this, false) {
-            private var composing = ""
-
+            // Text the keyboard is still composing (pinyin before it becomes 你好) stays on the
+            // phone, drawn at the cursor; only what it commits goes to the pane.
             override fun commitText(text: CharSequence, newCursorPosition: Int): Boolean {
-                replaceComposing("")
+                setComposing("")
                 typeText(text.toString())
                 return true
             }
 
             override fun setComposingText(text: CharSequence, newCursorPosition: Int): Boolean {
-                replaceComposing(text.toString())
+                setComposing(text.toString())
                 return true
             }
 
             override fun finishComposingText(): Boolean {
-                composing = ""
+                // The keyboard keeps what it composed as it is.
+                val text = composing
+                setComposing("")
+                typeText(text)
                 return true
             }
 
             override fun deleteSurroundingText(beforeLength: Int, afterLength: Int): Boolean {
+                if (composing.isNotEmpty()) {
+                    setComposing(composing.dropLast(beforeLength))
+                    return true
+                }
                 repeat(max(1, beforeLength)) { onInput(Keys.BACKSPACE) }
                 return true
             }
@@ -339,15 +349,32 @@ class TerminalView(context: Context) : View(context) {
                 if (event.action == KeyEvent.ACTION_DOWN) onKeyDown(event.keyCode, event)
                 return true
             }
-
-            /** Some keyboards compose even in password fields; send only the difference. */
-            private fun replaceComposing(next: String) {
-                val common = composing.commonPrefixWith(next).length
-                repeat(composing.length - common) { onInput(Keys.BACKSPACE) }
-                if (next.length > common) typeText(next.substring(common))
-                composing = next
-            }
         }
+    }
+
+    /** What the keyboard is composing, not yet sent; drawn over the grid at the cursor. */
+    private var composing = ""
+
+    private fun setComposing(text: String) {
+        if (text == composing) return
+        composing = text
+        invalidate()
+    }
+
+    private val composingPaint = Paint()
+
+    /** [composing] on the theme's ground at the pane's cursor, underlined, kept inside the grid. */
+    private fun drawComposing(canvas: Canvas, emu: TerminalEmulator) {
+        if (composing.isEmpty()) return
+        val w = textPaint.measureText(composing)
+        val x = (emu.cursorX * cellW).coerceAtMost(emu.cols * cellW - w).coerceAtLeast(0f)
+        val y = emu.cursorY * cellH
+        composingPaint.color = painter.palette.background
+        canvas.drawRect(x, y, x + w, y + cellH, composingPaint)
+        textPaint.color = painter.palette.foreground
+        canvas.drawText(composing, x, y + baseline, textPaint)
+        composingPaint.color = painter.palette.cursor
+        canvas.drawRect(x, y + cellH - 2 * density, x + w, y + cellH, composingPaint)
     }
 
     private fun typeText(text: String) {
