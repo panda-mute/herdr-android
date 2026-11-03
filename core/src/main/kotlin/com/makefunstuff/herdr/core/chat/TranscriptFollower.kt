@@ -27,10 +27,11 @@ object TranscriptFollower {
     private const val FILE = "@@file "
 
     /**
-     * The `case` line that sets `f` to a Codex session's newest rollout file. A session resumed later
-     * goes on in a new file, `rollout-…-<id>_<new id>.jsonl`, so the one ending in the id is its oldest.
+     * The `case` line for a Codex session: `all` gets its rollout files, oldest first, and `f` the
+     * newest, the one it writes to. A session resumed later goes on in a new file,
+     * `rollout-…-<id>_<new id>.jsonl`; the names start with the time, so they sort in order.
      */
-    internal val CODEX = """codex) f=${'$'}(find "${'$'}{CODEX_HOME:-${'$'}HOME/.codex}/sessions" \( -name "*${'$'}value.jsonl" -o -name "*${'$'}{value}_*.jsonl" \) -exec ls -t {} + 2>/dev/null | head -n 1) ;;"""
+    internal val CODEX = """codex) all=${'$'}(find "${'$'}{CODEX_HOME:-${'$'}HOME/.codex}/sessions" \( -name "*${'$'}value.jsonl" -o -name "*${'$'}{value}_*.jsonl" \) 2>/dev/null | LC_ALL=C sort); f=${'$'}(printf '%s\n' "${'$'}all" | tail -n 1) ;;"""
 
     /**
      * Sets `f` to the transcript of the session in `kind` (path|id), `value` and `agent`, or leaves it
@@ -62,11 +63,28 @@ object TranscriptFollower {
     // $1 kind (path|id), $2 value, $3 agent kind, $4 bytes, $5 subagent id or empty. The trailing
     // `cat` waits for the app to close the channel, then stops tail, so no tail outlives the chat screen.
     private val SCRIPT = """
-        kind="${'$'}1"; value="${'$'}2"; agent="${'$'}3"; bytes="${'$'}4"; sub="${'$'}5"; f=""
+        kind="${'$'}1"; value="${'$'}2"; agent="${'$'}3"; bytes="${'$'}4"; sub="${'$'}5"; f=""; all=""
     """.trimIndent() + "\n" + FIND + "\n" + SUBAGENT + "\n" + """
         if [ -z "${'$'}f" ] || [ ! -f "${'$'}f" ]; then echo "$MISSING"; exit 0; fi
         size=${'$'}(wc -c < "${'$'}f" | tr -d ' ')
-        echo "$FILE${'$'}size ${'$'}f"
+        total=${'$'}size; earlier=""; nl='
+        '; ifs=${'$'}IFS; set -f
+        # A session kept in several files: the earlier ones go first, as many as fit in the bytes.
+        if [ -z "${'$'}sub" ] && [ -n "${'$'}all" ]; then
+          IFS=${'$'}nl
+          for p in ${'$'}(printf '%s\n' "${'$'}all" | sed '${'$'}d' | sed -n '1!G;h;${'$'}p'); do
+            [ "${'$'}total" -lt "${'$'}bytes" ] || break
+            earlier="${'$'}p${'$'}nl${'$'}earlier"
+            total=${'$'}((total + ${'$'}(wc -c < "${'$'}p" | tr -d ' ')))
+          done
+          IFS=${'$'}ifs
+        fi
+        echo "$FILE${'$'}total ${'$'}f"
+        if [ -n "${'$'}earlier" ]; then
+          IFS=${'$'}nl
+          for p in ${'$'}earlier; do cat "${'$'}p"; [ -z "${'$'}(tail -c 1 "${'$'}p")" ] || echo; done | tail -c "${'$'}((bytes - size))"
+          IFS=${'$'}ifs
+        fi
         tail -c "${'$'}bytes" -F "${'$'}f" 2>/dev/null &
         t=${'$'}!
         cat > /dev/null

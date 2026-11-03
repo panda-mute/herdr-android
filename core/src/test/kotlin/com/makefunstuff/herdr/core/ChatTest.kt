@@ -487,18 +487,19 @@ class QueueTest {
 }
 
 class TranscriptFollowerTest {
-    private fun run(home: File, ref: AgentSessionRef, bytes: Int = 1_000_000, subagent: String? = null): List<String> {
+    private fun run(home: File, ref: AgentSessionRef, bytes: Int = 1_000_000, subagent: String? = null, lines: Int = 2): List<String> {
         val pb = ProcessBuilder("sh", "-c", TranscriptFollower.command(ref, bytes, subagent))
         pb.environment()["HOME"] = home.absolutePath
         pb.environment().remove("CLAUDE_CONFIG_DIR")
         pb.environment().remove("CODEX_HOME")
         val p = pb.start()
         val reader = p.inputStream.bufferedReader()
+        val count = lines
         val lines = mutableListOf<String>()
         val header = reader.readLine()
         lines += header
         if (!header.startsWith("@@missing")) {
-            repeat(2) { lines += reader.readLine() }
+            repeat(count) { lines += reader.readLine() }
         }
         // Closing stdin is how the app ends the stream; tail must stop with it.
         p.outputStream.close()
@@ -518,10 +519,14 @@ class TranscriptFollowerTest {
         val codex = File(home, ".codex/sessions/2026/10/16").apply { mkdirs() }
         File(codex, "rollout-2026-10-16T08-00-00-0199-aaa.jsonl").writeText("1\n2\n")
         assertEquals(listOf("1", "2"), run(home, AgentSessionRef("codex", "id", "0199-aaa")).drop(1))
-        // Resumed later, it goes on in a newer file named after both ids.
+        // Resumed later, it goes on in a newer file named after both ids; the chat reads them in order,
+        // the earlier ones only as far as they fit.
         val later = File(home, ".codex/sessions/2026/10/18").apply { mkdirs() }
-        File(later, "rollout-2026-10-18T08-00-00-0199-aaa_0199-ccc.jsonl").apply { writeText("3\n4\n"); setLastModified(System.currentTimeMillis() + 60_000) }
-        assertEquals(listOf("3", "4"), run(home, AgentSessionRef("codex", "id", "0199-aaa")).drop(1))
+        val newest = File(later, "rollout-2026-10-18T08-00-00-0199-aaa_0199-ccc.jsonl").apply { writeText("3\n4\n") }
+        val resumed = run(home, AgentSessionRef("codex", "id", "0199-aaa"), lines = 4)
+        assertEquals("@@file 8 ${newest.absolutePath}", resumed[0])
+        assertEquals(listOf("1", "2", "3", "4"), resumed.drop(1))
+        assertEquals(listOf("2", "3", "4"), run(home, AgentSessionRef("codex", "id", "0199-aaa"), bytes = 6, lines = 3).drop(1))
 
         val pi = File(home, ".pi/agent/sessions/--x--").apply { mkdirs() }
         val piFile = File(pi, "2026-10-13T08-18-43-915Z_0199-bbb.jsonl").apply { writeText("p\nq\n") }
