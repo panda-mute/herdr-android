@@ -453,6 +453,39 @@ class SubagentTest {
     }
 }
 
+class QueueTest {
+    private fun q(op: String, content: String? = null, reason: String? = null) =
+        """{"type":"queue-operation","operation":"$op","sessionId":"s"""" +
+            (content?.let { ""","content":"$it"""" } ?: "") + (reason?.let { ""","reason":"$it"""" } ?: "") + "}"
+
+    @Test
+    fun followsClaudesQueue() {
+        val t = ClaudeTranscript()
+        t.feed(q("enqueue", "first"))
+        t.feed(q("enqueue"))
+        t.feed(q("enqueue", "second"))
+        assertEquals(listOf("first", "second"), t.queued)
+        // The oldest, as the next turn.
+        t.feed(q("dequeue"))
+        assertEquals(listOf("second"), t.queued)
+        // Its own word-less entry, then the last one read mid-turn.
+        t.feed(q("dequeue"))
+        t.feed(q("remove", "second", "absorbed_mid_turn"))
+        assertEquals(emptyList(), t.queued)
+        // A tail-only read can start past an enqueue.
+        t.feed(q("dequeue"))
+        assertEquals(emptyList(), t.queued)
+    }
+
+    @Test
+    fun aMessageReadMidTurnShowsAsYours() {
+        val t = ClaudeTranscript()
+        t.feed("""{"type":"attachment","uuid":"x1","attachment":{"type":"queued_command","prompt":"try the other host","commandMode":"prompt","origin":{"kind":"human"}}}""")
+        t.feed("""{"type":"attachment","uuid":"x2","attachment":{"type":"queued_command","prompt":"<task-notification>done</task-notification>","commandMode":"task-notification"}}""")
+        assertEquals(listOf(ChatItem.User("x1", "try the other host")), t.items())
+    }
+}
+
 class TranscriptFollowerTest {
     private fun run(home: File, ref: AgentSessionRef, bytes: Int = 1_000_000, subagent: String? = null): List<String> {
         val pb = ProcessBuilder("sh", "-c", TranscriptFollower.command(ref, bytes, subagent))

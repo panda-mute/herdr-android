@@ -406,9 +406,20 @@ fun AgentScreen(nav: NavController, machineId: String, paneId: String) {
     var ahead by remember(machineId) { mutableLongStateOf(0L) }
     LaunchedEffect(state.turns) { ahead = maxOf(ahead, ChatTurns.ahead(state.turns, container.clock())) }
     val machineNow = now + ahead
+    // Messages the agent queued while it works (none once it stops: it takes them at once then).
+    val queued = if (state.source == AgentChat.Source.Transcript && (status == AgentStatus.Working || status == AgentStatus.Blocked)) state.queued else emptyList()
+    // One sent from here that it has queued shows as queued, once: no longer on its way.
+    val onTheWay = remember(state.pending, queued) {
+        val left = queued.toMutableList()
+        state.pending.filter { p ->
+            val i = left.indexOfFirst { com.makefunstuff.herdr.core.chat.SentMatch.same(p.text, it) }
+            if (i >= 0) left.removeAt(i)
+            i < 0
+        }
+    }
     // The newest turn runs while the agent works or asks; not once a message was sent over it and the transcript hasn't shown it yet.
     val live = when {
-        state.pending.isNotEmpty() -> null
+        onTheWay.isNotEmpty() -> null
         status == AgentStatus.Working -> ChatRow.Live.Working
         status == AgentStatus.Blocked -> ChatRow.Live.Blocked
         else -> null
@@ -416,7 +427,7 @@ fun AgentScreen(nav: NavController, machineId: String, paneId: String) {
     // Voice messages still on the phone (on their way, or not sent) come after what the agent has.
     // One whose `@path` is on its way already shows as that.
     val waitingVoice = voice.notes.filter { n -> !n.sent && state.pending.none { p -> n.remote != null && VoiceNotes.mentioned(p.text) == n.remote } }
-    val rows = remember(turns, steps, live, opened.toMap(), machineNow, state.pending, state.source, state.screen, state.truncated, state.thinking, waitingVoice) {
+    val rows = remember(turns, steps, live, opened.toMap(), machineNow, onTheWay, queued, state.source, state.screen, state.truncated, state.thinking, waitingVoice) {
         buildList {
             if (state.truncated) add(ChatRow.Info("truncated", "Earlier messages aren't loaded"))
             when (state.source) {
@@ -431,7 +442,8 @@ fun AgentScreen(nav: NavController, machineId: String, paneId: String) {
                 }
                 AgentChat.Source.Loading -> {}
             }
-            state.pending.forEachIndexed { i, p ->
+            queued.forEachIndexed { i, text -> add(ChatRow.User(ChatItem.User("$i", text), queued = true)) }
+            onTheWay.forEachIndexed { i, p ->
                 add(ChatRow.User(ChatItem.User("$i", p.text), pending = true))
             }
             waitingVoice.forEach { add(ChatRow.Voice(it)) }

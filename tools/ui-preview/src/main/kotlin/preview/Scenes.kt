@@ -408,6 +408,12 @@ fun scenes(): List<Scene> = listOf(
     // Claude handed part of the work to a subagent: its call offers the subagent's own steps.
     Scene("chat-subagent", route = Routes.agent(DEVBOX, APP_AGENT), setup = { subagent() }, actions = { settle(); tapText("Find what reads the snapshot time"); settle() }),
     Scene("subagent", route = Routes.subagent(DEVBOX, APP_AGENT, Demo.APP_SUBAGENT, "Find what reads the snapshot time"), setup = { subagent() }),
+    // Two messages sent while it works: it queued them, and takes them once done with this step.
+    Scene("chat-queued", route = Routes.agent(DEVBOX, APP_AGENT), setup = {
+        host(DEVBOX).transcripts = host(DEVBOX).transcripts + (Demo.APP_SESSION to Demo.appTranscriptWaiting().trimEnd() + "\n" +
+            """{"type":"queue-operation","operation":"enqueue","timestamp":"2026-10-17T07:40:01.000Z","sessionId":"${Demo.APP_SESSION}","content":"Also show it on the machine's own screen"}""" + "\n" +
+            """{"type":"queue-operation","operation":"enqueue","timestamp":"2026-10-17T07:40:09.000Z","sessionId":"${Demo.APP_SESSION}","content":"And keep the wording short"}""" + "\n")
+    }),
     Scene("chat-thinking-wait", route = Routes.agent(DEVBOX, APP_AGENT), setup = {
         host(DEVBOX).transcripts = host(DEVBOX).transcripts + (Demo.APP_SESSION to Demo.appTranscriptWaiting())
     }),

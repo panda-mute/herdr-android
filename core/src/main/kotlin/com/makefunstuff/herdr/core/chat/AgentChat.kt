@@ -52,6 +52,8 @@ class AgentChat(private val host: HostSession, val paneId: String, private val s
          * as it streams but write it to the transcript only with the call or words it led to ([Thinking.onScreen]).
          */
         val thinking: String? = null,
+        /** Messages the agent queued while it works, oldest first ([Transcript.queued]). */
+        val queued: List<String> = emptyList(),
     )
 
     private val _state = MutableStateFlow(State())
@@ -124,7 +126,7 @@ class AgentChat(private val host: HostSession, val paneId: String, private val s
                     val items = transcript.items()
                     val turns = transcript.activity?.turns().orEmpty()
                     _state.update { s ->
-                        s.copy(source = Source.Transcript, items = items, truncated = truncated, pending = unseen(s.pending, items), turns = turns, use = transcript.use)
+                        s.copy(source = Source.Transcript, items = items, truncated = truncated, pending = unseen(s.pending, items), turns = turns, use = transcript.use, queued = transcript.queued)
                     }
                     failures = 0
                 }

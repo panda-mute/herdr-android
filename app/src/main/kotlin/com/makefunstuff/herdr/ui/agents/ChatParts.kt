@@ -80,9 +80,16 @@ import com.makefunstuff.herdr.ui.theme.Space
 sealed interface ChatRow {
     val key: String
 
-    /** What you said; a voice message ([VoiceNotes.mentioned]) shows as one. */
-    data class User(val item: ChatItem.User, val pending: Boolean = false) : ChatRow {
-        override val key get() = if (pending) "pending/${item.id}" else item.id
+    /**
+     * What you said; a voice message ([VoiceNotes.mentioned]) shows as one. [pending]: sent from the
+     * app and not yet seen; [queued]: the agent has it, and takes it once it is done with what it does.
+     */
+    data class User(val item: ChatItem.User, val pending: Boolean = false, val queued: Boolean = false) : ChatRow {
+        override val key get() = when {
+            queued -> "queued/${item.id}"
+            pending -> "pending/${item.id}"
+            else -> item.id
+        }
     }
     /** A voice message of yours still on the phone: on its way to the agent, or not sent. */
     data class Voice(val note: VoiceNote) : ChatRow { override val key get() = "voice/${note.id}" }
@@ -118,7 +125,7 @@ sealed interface ChatRow {
     enum class Live { Working, Blocked }
 
     /** A row that counts as a new message while the reader is scrolled up. */
-    val isMessage: Boolean get() = (this is User && !pending) || (this is Agent && !quiet)
+    val isMessage: Boolean get() = (this is User && !pending && !queued) || (this is Agent && !quiet)
 }
 
 /**
@@ -212,7 +219,7 @@ fun ChatRowView(row: ChatRow, onToggle: (ChatRow.Head) -> Unit = {}, onThought: 
         is ChatRow.User -> {
             val path = VoiceNotes.mentioned(row.item.text)
             if (path != null) VoiceMessage(path, VoiceNotes.millis(path) ?: 0, you = true, note = LocalVoiceMessages.current?.note(path))
-            else UserBubble(row.item, row.pending)
+            else UserBubble(row.item, row.pending, row.queued)
         }
         is ChatRow.Voice -> VoiceMessage(row.note.remote, row.note.millis, you = true, note = row.note)
         is ChatRow.Agent ->
@@ -320,7 +327,7 @@ private fun ThinkingLine() {
 }
 
 @Composable
-private fun UserBubble(item: ChatItem.User, pending: Boolean) {
+private fun UserBubble(item: ChatItem.User, pending: Boolean, queued: Boolean = false) {
     var expanded by rememberSaveable(item.id) { mutableStateOf(false) }
     // The pictures it names show as pictures, over the words.
     val split = remember(item.text) { Images.split(item.text) }
@@ -333,7 +340,7 @@ private fun UserBubble(item: ChatItem.User, pending: Boolean) {
             contentColor = Herdr.colors.text,
             shape = BubbleShape,
             border = if (Herdr.colors.bubbleBorder.alpha > 0f) androidx.compose.foundation.BorderStroke(1.dp, Herdr.colors.bubbleBorder) else null,
-            modifier = Modifier.alpha(if (pending) 0.6f else 1f).animateContentSize(),
+            modifier = Modifier.alpha(if (pending || queued) 0.6f else 1f).animateContentSize(),
         ) {
             Column(Modifier.padding(horizontal = Space.l, vertical = Space.m)) {
                 if (split.paths.isNotEmpty()) MessageImages(split.paths, Modifier.padding(bottom = if (text.isEmpty()) 0.dp else Space.s))
@@ -361,6 +368,7 @@ private fun UserBubble(item: ChatItem.User, pending: Boolean) {
                     )
                 }
                 if (pending) Text("Sending…", style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp))
+                if (queued) Text("Queued", style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp))
             }
         }
     }

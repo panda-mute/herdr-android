@@ -40,6 +40,18 @@ abstract class Transcript {
         if (next != use) { use = next; version++ }
     }
 
+    /**
+     * Messages sent while the agent works, waiting for it to take them, oldest first: Claude Code
+     * queues them and logs each as it goes in and out ([ClaudeTranscript]).
+     */
+    var queued: List<String> = emptyList()
+        private set
+
+    /** The agent's queue changed to [next]. */
+    protected fun queue(next: List<String>) {
+        if (next != queued) { queued = next; version++ }
+    }
+
     /** A request filled [used] tokens of the context ([window] when the transcript states it). */
     protected fun filled(used: Long, window: Long? = null) {
         val next = ModelUse.filled(used, use?.model, window, use)
@@ -148,6 +160,7 @@ private val TAG = Regex("<([a-z-]+)>([\\s\\S]*?)</\\1>")
 class ClaudeTranscript(private val sidechain: Boolean = false) : Transcript() {
     override fun read(obj: JsonObject) {
         if ((obj.bool("isSidechain") && !sidechain) || obj.bool("isMeta")) return
+        if (obj.str("type") == "queue-operation") return queueOp(obj)
         val uuid = obj.str("uuid") ?: return
         when (obj.str("type")) {
             "user" -> user(uuid, obj.obj("message") ?: return, obj.obj("toolUseResult"))
@@ -157,7 +170,32 @@ class ClaudeTranscript(private val sidechain: Boolean = false) : Transcript() {
                 assistant(uuid, message)
             }
             "system" -> if (obj.str("subtype") == "compact_boundary") put(ChatItem.Notice(uuid, "Conversation compacted"))
+            // A message queued while it worked and read in the middle of its turn: said only here.
+            "attachment" -> obj.obj("attachment")?.takeIf { it.str("type") == "queued_command" && it.str("commandMode") == "prompt" }?.let { a ->
+                userText(uuid, textOf(a["prompt"]), 0)
+            }
         }
+    }
+
+    /**
+     * Claude Code's queue, as its `queue-operation` lines log it: `enqueue` with the message,
+     * `dequeue` when it takes the oldest as its next turn, `remove` when it read one mid-turn. Its
+     * own entries (task notifications) come without words and are kept only to keep the count.
+     */
+    private val waiting = ArrayList<String?>()
+
+    private fun queueOp(obj: JsonObject) {
+        when (obj.str("operation")) {
+            "enqueue" -> waiting += obj.str("content")?.trim()?.takeIf { it.isNotEmpty() && !isInjected(it) }
+            "dequeue" -> if (waiting.isNotEmpty()) waiting.removeAt(0)
+            "remove" -> {
+                val text = obj.str("content")?.trim()
+                val i = waiting.indexOf(text)
+                if (i >= 0) waiting.removeAt(i) else if (text == null && waiting.isNotEmpty()) waiting.removeAt(0)
+            }
+            else -> return
+        }
+        queue(waiting.filterNotNull())
     }
 
     /** Claude Code records the model and its usage on each answer, and the effort it ran at (newer versions). */
