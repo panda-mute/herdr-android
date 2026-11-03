@@ -1,5 +1,6 @@
 package com.makefunstuff.herdr.core.activity
 
+import com.makefunstuff.herdr.core.chat.TranscriptFollower
 import com.makefunstuff.herdr.core.board.BoardCommands
 import com.makefunstuff.herdr.core.ssh.HerdrCommands.quote
 import com.makefunstuff.herdr.core.ssh.Machine
@@ -84,7 +85,7 @@ object ActivityCommands {
           else
             case "${'$'}agent" in
               claude) for c in "${'$'}{CLAUDE_CONFIG_DIR:-${'$'}HOME/.claude}"/projects/*/"${'$'}value".jsonl; do [ -f "${'$'}c" ] && f="${'$'}c" && break; done ;;
-              codex) f=${'$'}(find "${'$'}{CODEX_HOME:-${'$'}HOME/.codex}/sessions" -name "*${'$'}value.jsonl" 2>/dev/null | head -n 1) ;;
+              ${TranscriptFollower.CODEX}
               pi) for c in "${'$'}HOME"/.pi/agent/sessions/*/*_"${'$'}value".jsonl; do [ -f "${'$'}c" ] && f="${'$'}c" && break; done ;;
               omp) for c in "${'$'}HOME"/.omp/agent/sessions/*/*_"${'$'}value".jsonl; do [ -f "${'$'}c" ] && f="${'$'}c" && break; done ;;
             esac

@@ -27,6 +27,12 @@ object TranscriptFollower {
     private const val FILE = "@@file "
 
     /**
+     * The `case` line that sets `f` to a Codex session's newest rollout file. A session resumed later
+     * goes on in a new file, `rollout-…-<id>_<new id>.jsonl`, so the one ending in the id is its oldest.
+     */
+    internal val CODEX = """codex) f=${'$'}(find "${'$'}{CODEX_HOME:-${'$'}HOME/.codex}/sessions" \( -name "*${'$'}value.jsonl" -o -name "*${'$'}{value}_*.jsonl" \) -exec ls -t {} + 2>/dev/null | head -n 1) ;;"""
+
+    /**
      * Sets `f` to the transcript of the session in `kind` (path|id), `value` and `agent`, or leaves it
      * empty; the chat search ([ChatSearch]) finds its files the same way.
      */
@@ -37,7 +43,7 @@ object TranscriptFollower {
         else
           case "${'$'}agent" in
             claude) for c in "${'$'}{CLAUDE_CONFIG_DIR:-${'$'}HOME/.claude}"/projects/*/"${'$'}value".jsonl; do [ -f "${'$'}c" ] && f="${'$'}c" && break; done ;;
-            codex) f=${'$'}(find "${'$'}{CODEX_HOME:-${'$'}HOME/.codex}/sessions" -name "*${'$'}value.jsonl" 2>/dev/null | head -n 1) ;;
+            ${CODEX}
             pi) for c in "${'$'}HOME"/.pi/agent/sessions/*/*_"${'$'}value".jsonl; do [ -f "${'$'}c" ] && f="${'$'}c" && break; done ;;
             omp) for c in "${'$'}HOME"/.omp/agent/sessions/*/*_"${'$'}value".jsonl; do [ -f "${'$'}c" ] && f="${'$'}c" && break; done ;;
           esac

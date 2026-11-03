@@ -518,6 +518,10 @@ class TranscriptFollowerTest {
         val codex = File(home, ".codex/sessions/2026/10/16").apply { mkdirs() }
         File(codex, "rollout-2026-10-16T08-00-00-0199-aaa.jsonl").writeText("1\n2\n")
         assertEquals(listOf("1", "2"), run(home, AgentSessionRef("codex", "id", "0199-aaa")).drop(1))
+        // Resumed later, it goes on in a newer file named after both ids.
+        val later = File(home, ".codex/sessions/2026/10/18").apply { mkdirs() }
+        File(later, "rollout-2026-10-18T08-00-00-0199-aaa_0199-ccc.jsonl").apply { writeText("3\n4\n"); setLastModified(System.currentTimeMillis() + 60_000) }
+        assertEquals(listOf("3", "4"), run(home, AgentSessionRef("codex", "id", "0199-aaa")).drop(1))
 
         val pi = File(home, ".pi/agent/sessions/--x--").apply { mkdirs() }
         val piFile = File(pi, "2026-10-13T08-18-43-915Z_0199-bbb.jsonl").apply { writeText("p\nq\n") }
