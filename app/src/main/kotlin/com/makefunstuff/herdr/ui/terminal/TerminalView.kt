@@ -166,6 +166,8 @@ class TerminalView(context: Context) : View(context) {
     // ---- Drawing ------------------------------------------------------------------------
 
     override fun onDraw(canvas: Canvas) {
+        // Compose draws this view unclipped: the fill and a panned grid would paint over what's above it.
+        canvas.clipRect(0, 0, width, height)
         canvas.drawColor(painter.palette.background)
         val emu = emulator ?: return
         val pad = PAD * density
@@ -268,11 +270,12 @@ class TerminalView(context: Context) : View(context) {
             val horizontal = abs(dx) > abs(dy)
             if (!fitToView && emu != null) {
                 panX += dx
-                // Pan vertically while the host grid is taller than the view; past that, scroll back.
-                val canPanY = emu.rows * cellH + 2 * PAD * density > height
-                if (canPanY && !horizontal) panY += dy
+                // Pan vertically while the host grid is taller than the view; pulled past its top, scroll back.
+                val maxY = max(0f, emu.rows * cellH + 2 * PAD * density - height)
+                val panning = maxY > 0f && !(panY <= 0f && dy < 0f)
+                if (panning && !horizontal) panY = (panY + dy).coerceIn(0f, maxY)
                 invalidate()
-                if (canPanY || horizontal) return true
+                if (panning || horizontal) return true
             }
             if (!horizontal) {
                 scrollAccum += dy
