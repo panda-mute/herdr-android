@@ -11,8 +11,8 @@ import java.io.IOException
 
 /**
  * The model and reasoning effort an agent can be switched to from the phone, as its own `/`
- * commands take them. Only Claude Code takes both as words (`/model opus`, `/effort high`); the
- * others open a picker, which a phone can't drive.
+ * commands take them as words: Claude Code's `/model opus` and `/effort high`, and Codex's
+ * `/model <slug> --reasoning=high` ([CodexModels]). The others open a picker, which a phone can't drive.
  */
 object AgentSettings {
     data class Choice(val value: String, val label: String)
@@ -26,7 +26,7 @@ object AgentSettings {
         Choice("high", "High"), Choice("xhigh", "Extra high"), Choice("max", "Max"),
     )
 
-    fun canSwitch(agent: String?): Boolean = agent == "claude"
+    fun canSwitch(agent: String?): Boolean = agent == "claude" || agent == "codex"
 
     fun modelCommand(model: String): String {
         require(CLAUDE_MODELS.any { it.value == model }) { "not a model: $model" }

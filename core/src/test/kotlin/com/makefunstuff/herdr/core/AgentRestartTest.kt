@@ -129,3 +129,29 @@ class AgentRestartTest {
         assertEquals("opus", AgentSettings.family("claude-opus-5-5"))
     }
 }
+
+class CodexModelsTest {
+    @Test
+    fun readsTheCatalogAndBuildsItsCommand() {
+        val models = com.makefunstuff.herdr.core.chat.CodexModels.parse(
+            """{"models":[
+              {"slug":"remote-magpie/pipio/gpt-6.1-sol","display_name":"GPT-6.1 Sol · Pipio","visibility":"list",
+               "supported_reasoning_levels":[{"effort":"low"},{"effort":"xhigh"}],"default_reasoning_level":"high","base_instructions":"…"},
+              {"slug":"hidden","visibility":"hide"},
+              {"slug":"bad slug; rm"},
+              {"slug":"gpt-5.5"}]}""",
+        )
+        assertEquals(listOf("remote-magpie/pipio/gpt-6.1-sol", "gpt-5.5"), models.map { it.slug })
+        assertEquals(listOf("low", "xhigh"), models[0].efforts)
+        assertEquals("GPT-6.1 Sol · Pipio", models[0].name)
+        assertEquals("gpt-5.5", models[1].name)
+        assertEquals(emptyList(), com.makefunstuff.herdr.core.chat.CodexModels.parse("codex not found"))
+
+        val c = com.makefunstuff.herdr.core.chat.CodexModels
+        assertEquals("/model gpt-5.5 --reasoning=high", c.command("gpt-5.5", "high"))
+        assertEquals("/model --reasoning=low", c.command(null, "low"))
+        assertEquals("/model gpt-5.5", c.command("gpt-5.5", null))
+        assertFailsWith<IllegalArgumentException> { c.command("gpt-5.5 --yolo", null) }
+        assertTrue(AgentSettings.canSwitch("codex"))
+    }
+}

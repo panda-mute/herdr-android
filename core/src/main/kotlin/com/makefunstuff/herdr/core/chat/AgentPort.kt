@@ -1,5 +1,6 @@
 package com.makefunstuff.herdr.core.chat
 
+import kotlinx.coroutines.delay
 import com.makefunstuff.herdr.core.api.AgentStatus
 import com.makefunstuff.herdr.core.api.HerdrApi
 import com.makefunstuff.herdr.core.api.HerdrApiException
@@ -46,7 +47,13 @@ class ClassicAgentPort(val api: HerdrApi) : AgentPort {
 
     override suspend fun type(paneId: String, text: String) {
         api.sendText(paneId, text)
+        // Codex takes text and Enter that arrive together as a paste, and Enter stays in it.
+        delay(ENTER_AFTER_MS)
         api.sendKeys(paneId, listOf("enter"))
+    }
+
+    private companion object {
+        const val ENTER_AFTER_MS = 150L
     }
 
     override suspend fun prompt(paneId: String, text: String): Boolean = try {

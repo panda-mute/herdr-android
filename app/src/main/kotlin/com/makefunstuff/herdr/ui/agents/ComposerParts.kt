@@ -315,13 +315,18 @@ fun ModelSheet(
      */
     onSwitch: ((command: String) -> Unit)? = null,
     switchNote: String? = null,
+    /** For Codex: its catalog's models, null while they are read. */
+    codexModels: List<com.makefunstuff.herdr.core.chat.CodexModels.Model>? = null,
+    codex: Boolean = false,
 ) {
     val c = Herdr.colors
     val use = pill.use
     val percent = pill.percent
     HerdrSheet(onDismissRequest = onDismiss) {
         SheetTitle(pill.title, subtitle = agent)
-        if (onSwitch != null) SwitchModel(use, switchNote, onSwitch)
+        if (onSwitch != null) {
+            if (codex) SwitchCodexModel(use, codexModels, switchNote, onSwitch) else SwitchModel(use, switchNote, onSwitch)
+        }
         Column(Modifier.padding(horizontal = Space.xl), verticalArrangement = Arrangement.spacedBy(Space.xs)) {
             if (percent != null) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -406,6 +411,59 @@ private fun SwitchModel(use: com.makefunstuff.herdr.core.chat.ModelUse?, note: S
         }
         Text(
             note ?: "A model picked here also becomes Claude's default for new sessions. A level the model doesn't take is lowered to its highest.",
+            style = MaterialTheme.typography.bodySmall,
+            color = if (note != null) c.notice else c.muted,
+            modifier = Modifier.padding(top = Space.xxs),
+        )
+    }
+}
+
+/**
+ * Codex's models from its catalog on the machine, and the reasoning levels the one it runs now
+ * takes: a tap sends `/model <slug> --reasoning=<level>`, which it takes between turns and keeps
+ * for this session only.
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun SwitchCodexModel(
+    use: com.makefunstuff.herdr.core.chat.ModelUse?,
+    models: List<com.makefunstuff.herdr.core.chat.CodexModels.Model>?,
+    note: String?,
+    onSwitch: (String) -> Unit,
+) {
+    val c = Herdr.colors
+    val codex = com.makefunstuff.herdr.core.chat.CodexModels
+    val current = models?.firstOrNull { it.slug == use?.model }
+    val effort = use?.effort
+    val enabled = note == null
+    Column(Modifier.fillMaxWidth().padding(horizontal = Space.xl).padding(bottom = Space.m), verticalArrangement = Arrangement.spacedBy(Space.xs)) {
+        Text("Model", style = MaterialTheme.typography.labelLarge, color = c.muted)
+        when {
+            models == null -> Text("Reading its models…", style = MaterialTheme.typography.bodySmall, color = c.muted)
+            models.isEmpty() -> Text("Couldn't read Codex's models on this machine.", style = MaterialTheme.typography.bodySmall, color = c.muted)
+            else -> androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(Space.xs), verticalArrangement = Arrangement.spacedBy(Space.xs)) {
+                models.forEach { m ->
+                    HerdrChip(m.name, selected = m.slug == use?.model, onClick = {
+                        // Its level goes along when the new model takes it; otherwise Codex picks its default.
+                        val keep = effort?.takeIf { it in m.efforts }
+                        if (enabled && m.slug != use?.model) onSwitch(codex.command(m.slug, keep))
+                    })
+                }
+            }
+        }
+        val levels = current?.efforts.orEmpty()
+        if (levels.isNotEmpty()) {
+            Text("Reasoning", style = MaterialTheme.typography.labelLarge, color = c.muted, modifier = Modifier.padding(top = Space.xs))
+            androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(Space.xs), verticalArrangement = Arrangement.spacedBy(Space.xs)) {
+                levels.forEach { e ->
+                    HerdrChip(e.replaceFirstChar { it.uppercase() }, selected = e == effort, onClick = {
+                        if (enabled && e != effort) onSwitch(codex.command(null, e))
+                    })
+                }
+            }
+        }
+        Text(
+            note ?: "For this session only; Codex's default stays as set on the computer.",
             style = MaterialTheme.typography.bodySmall,
             color = if (note != null) c.notice else c.muted,
             modifier = Modifier.padding(top = Space.xxs),

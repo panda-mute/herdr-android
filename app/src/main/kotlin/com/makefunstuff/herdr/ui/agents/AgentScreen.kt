@@ -695,6 +695,13 @@ fun AgentScreen(nav: NavController, machineId: String, paneId: String) {
     quick?.let { place -> QuickSheets(nav, place, onDismiss = { quick = null }) }
     if (modelSheet) pill?.let { p ->
         val latest by container.usage.latest.collectAsStateWithLifecycle()
+        // Codex's catalog, read from the machine once the sheet opens (empty when it can't be read).
+        var codexModels by remember(machineId) { mutableStateOf<List<com.makefunstuff.herdr.core.chat.CodexModels.Model>?>(null) }
+        if (kind == "codex") LaunchedEffect(machineId) {
+            if (codexModels.isNullOrEmpty()) codexModels = runCatching {
+                com.makefunstuff.herdr.core.chat.CodexModels.parse(session.awaitConnection().run(com.makefunstuff.herdr.core.chat.CodexModels.COMMAND, 20).stdout)
+            }.getOrElse { emptyList() }
+        }
         val left = kind?.let { UsageRules.leftFor(it, latest[machineId]?.report, container.usage.nowSeconds(), container.usage.zone()) }
         ModelSheet(
             p, agent = listOfNotNull(kind ?: name, host.machine.label).joinToString(" on "),
@@ -714,8 +721,11 @@ fun AgentScreen(nav: NavController, machineId: String, paneId: String) {
             switchNote = when {
                 !host.online -> "Not connected"
                 status == AgentStatus.Blocked -> "It's asking something: answer it first."
+                kind == "codex" && status == AgentStatus.Working -> "Codex switches between turns: wait until it's done."
                 else -> null
             },
+            codexModels = codexModels,
+            codex = kind == "codex",
         )
     }
     if (restartAsk) {
