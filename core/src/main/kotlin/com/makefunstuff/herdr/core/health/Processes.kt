@@ -1,5 +1,6 @@
 package com.makefunstuff.herdr.core.health
 
+import com.makefunstuff.herdr.core.agents.AgentKinds
 import com.makefunstuff.herdr.core.api.SessionSnapshot
 import com.makefunstuff.herdr.core.api.WorkspaceInfo
 import com.makefunstuff.herdr.core.board.BoardStatus
@@ -71,13 +72,16 @@ data class Leftover(
 object ProcLabels {
     private val WORKTREE = Regex("""^(.*/\.herdr/worktrees/[^/]+/[^/]+)(/.*)?$""")
     private val TASK_DIR = Regex("""^work-(\d+)(-|$)""")
-    private val AGENTS = setOf("claude", "codex", "gemini", "opencode", "aider", "amp", "droid", "copilot", "cursor-agent", "goose", "grok", "pi", "omp", "crush", "qwen")
     private val DEV = listOf(
         "vite", "next dev", "next-server", "webpack-dev-server", "webpack serve", "react-scripts start", "nuxt", "astro dev",
         "remix dev", "parcel", "storybook", "expo start", "metro", "ng serve", "svelte-kit dev", "turbo dev", "wrangler dev",
         "manage.py runserver", "flask run", "uvicorn", "gunicorn", "http.server", "rails server", "rails s", "hugo server",
         "jekyll serve", "npm run dev", "pnpm dev", "yarn dev", "bun dev", "bun run dev", "npm start", "live-server", "serve -",
     )
+
+    /** The agent a process runs ([AgentKinds]): by its program, or by its command line [a]. */
+    private fun agentOf(exe: String, c: String, a: String): String? =
+        AgentKinds.normalize(exe) ?: AgentKinds.normalize(c) ?: AgentKinds.fromArgv(a.split(' ').filter { it.isNotEmpty() })
 
     /** The worktree folder [path] is in (`…/.herdr/worktrees/<repo>/<folder>`), or null. */
     fun worktreeOf(path: String): String? = WORKTREE.find(path)?.groupValues?.get(1)
@@ -113,10 +117,7 @@ object ProcLabels {
             "GradleWorkerMain" in a || "GradleWrapperMain" in a || "org.gradle.launcher.GradleMain" in a ->
                 ProcKind.GradleWorker to if ("Worker" in a) "Gradle worker" else "Gradle build"
             "KotlinCompileDaemon" in a -> ProcKind.KotlinDaemon to "Kotlin daemon"
-            exe in AGENTS || c in AGENTS || AGENTS.any { a.contains("/$it ") || a.endsWith("/$it") || a.contains("@anthropic-ai/claude-code") && it == "claude" } -> {
-                val name = AGENTS.firstOrNull { it == exe || it == c } ?: AGENTS.first { a.contains("/$it") || (it == "claude" && "claude-code" in a) }
-                ProcKind.Agent to name
-            }
+            agentOf(exe, c, a) != null -> ProcKind.Agent to agentOf(exe, c, a)!!
             DEV.any { it in a } -> {
                 val tool = DEV.first { it in a }.substringBefore(' ').substringBefore('-').removeSuffix(".py")
                 ProcKind.DevServer to "Dev server · $tool"

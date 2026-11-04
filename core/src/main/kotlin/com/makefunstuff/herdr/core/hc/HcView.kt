@@ -1,5 +1,6 @@
 package com.makefunstuff.herdr.core.hc
 
+import com.makefunstuff.herdr.core.agents.AgentKinds
 import com.makefunstuff.herdr.core.api.AgentInfo
 import com.makefunstuff.herdr.core.api.AgentStatus
 import com.makefunstuff.herdr.core.api.PaneInfo
@@ -102,11 +103,6 @@ object HcMapping {
     private const val SHEPHERDR_CHAT = "shepherdr.chat"
     private const val SHEPHERDR_SPACE = "shepherdr.space"
 
-    /** Agents people start in a terminal, by program name: shown before they report a status. */
-    private val KNOWN = setOf(
-        "claude", "codex", "pi", "omp", "opencode", "gemini", "amp", "droid", "copilot", "cursor-agent", "goose", "grok", "aider", "crush", "qwen",
-    )
-
     /**
      * The hc address of a pane id from [snapshot], or null when it isn't one of herdr-core's: `t7`
      * for `hc:t7` (the default session's) and for `hc:@shepherdr:t7` (another session's, [session]).
@@ -128,15 +124,10 @@ object HcMapping {
     /** The agent name the app knows (`claude` for Claude Code's `claude-code`), from its 7501 app or its program. */
     fun agentName(t: HcTerminal): String? {
         val app = t.status?.app?.trim()?.lowercase().orEmpty()
-        if (app.isNotEmpty()) {
-            return when (app) {
-                "claude-code", "claude" -> "claude"
-                "pi-coding-agent" -> "pi"
-                else -> app.removeSuffix("-cli")
-            }
-        }
-        val program = (t.foreground?.name ?: t.argv.firstOrNull()?.substringAfterLast('/')).orEmpty()
-        return program.takeIf { it in KNOWN }
+        // A program that reports a status is an agent even when the app doesn't know its name.
+        if (app.isNotEmpty()) return AgentKinds.fromApp(app) ?: app.removeSuffix("-cli")
+        val argv = t.foreground?.argv?.takeIf { it.isNotEmpty() } ?: t.argv
+        return AgentKinds.fromArgv(argv) ?: AgentKinds.normalize(t.foreground?.name)
     }
 
     /** It reports a status now, or a known agent runs in it ([HcTerminal.reported] stays true after the agent quit). */
