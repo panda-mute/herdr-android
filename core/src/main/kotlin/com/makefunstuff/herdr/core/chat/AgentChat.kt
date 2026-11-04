@@ -10,6 +10,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -32,6 +33,37 @@ import kotlinx.coroutines.launch
 class AgentChat(private val host: HostSession, val paneId: String, private val scope: CoroutineScope) {
 
     enum class Source { Loading, Transcript, Screen }
+
+    /** One read of the transcript, as the chat shows it. */
+    private class Read(val items: List<ChatItem>, val truncated: Boolean, val turns: List<Turn>, val use: ModelUse?, val queued: List<String>)
+
+    companion object {
+        /** The agents that draw their reasoning on screen as it streams, in italics over the editor. */
+        private val STREAMS_THINKING = setOf("pi", "omp")
+
+        /** How long a new read may take to catch up with what is on screen before it is shown anyway. */
+        const val CATCH_UP_MS = 2_000L
+
+        /** How long a chat showing a transcript waits for the agent's session to be listed again. */
+        const val SESSION_GRACE_MS = 5_000L
+
+        /**
+         * Whether a new read of the transcript ([now]) has reached what [shown] ended with: the same
+         * last item, by id or, for ids counted from where the read began, by what it says.
+         */
+        fun caughtUp(shown: List<ChatItem>, now: List<ChatItem>): Boolean {
+            val last = shown.lastOrNull() ?: return true
+            return now.any { it.id == last.id || sameContent(it, last) }
+        }
+
+        private fun sameContent(a: ChatItem, b: ChatItem): Boolean = when (a) {
+            is ChatItem.User -> b is ChatItem.User && a.text == b.text && a.images == b.images
+            is ChatItem.Agent -> b is ChatItem.Agent && a.text == b.text
+            is ChatItem.Reasoning -> b is ChatItem.Reasoning && a.text == b.text
+            is ChatItem.Notice -> b is ChatItem.Notice && a.text == b.text
+            is ChatItem.Tool -> b is ChatItem.Tool && a.copy(id = b.id) == b
+        }
+    }
 
     data class State(
         val source: Source = Source.Loading,
@@ -60,6 +92,9 @@ class AgentChat(private val host: HostSession, val paneId: String, private val s
     val state: StateFlow<State> = _state.asStateFlow()
 
     private var jobs: List<Job> = emptyList()
+
+    /** The session whose transcript the chat shows now. */
+    @Volatile private var shownFrom: AgentSessionRef? = null
 
     private fun agent(): AgentInfo? = host.state.value.view?.agents?.firstOrNull { it.paneId == paneId }
 
@@ -106,7 +141,10 @@ class AgentChat(private val host: HostSession, val paneId: String, private val s
                 val transcript = kind?.let { Transcript.forAgent(ref?.agent?.ifEmpty { null } ?: it) }
                 if (ref == null || transcript == null || ref.value.isEmpty()) {
                     // No transcript for this agent: show its screen. An agent that just started
-                    // reports its session a moment later, which restarts this block.
+                    // reports its session a moment later, which restarts this block. Just reconnected,
+                    // herdr can list the agent before its session: the conversation on screen stays a
+                    // while, so it doesn't flash empty.
+                    if (_state.value.source == Source.Transcript) delay(SESSION_GRACE_MS)
                     if (pair != null || host.state.value.view != null) _state.update { it.copy(source = Source.Screen) }
                     return@collectLatest
                 }
@@ -114,19 +152,43 @@ class AgentChat(private val host: HostSession, val paneId: String, private val s
             }
     }
 
-    private suspend fun followLoop(ref: AgentSessionRef, kind: String) {
+    private suspend fun followLoop(ref: AgentSessionRef, kind: String) = coroutineScope {
         var failures = 0
         while (true) {
             val agent = ref.agent.ifEmpty { kind }
-            val transcript = Transcript.forAgent(agent) ?: return
+            val transcript = Transcript.forAgent(agent) ?: return@coroutineScope
             transcript.activity = ActivityLog.forAgent(agent)
+            // Read again after the connection dropped (back from the lock screen, say), the file comes
+            // from its start: what is on screen stays until the new read has caught up with it, so the
+            // chat doesn't go empty and fill again.
+            val shown = _state.value.takeIf { it.source == Source.Transcript && shownFrom == ref }?.items.orEmpty()
+            val lock = Any()
+            var caught = shown.isEmpty()
+            // The read so far, taken on the reading thread; shown once it has caught up.
+            var waiting: Read? = null
+            fun publish(r: Read) {
+                shownFrom = ref
+                _state.update { s ->
+                    s.copy(source = Source.Transcript, items = r.items, truncated = r.truncated, pending = unseen(s.pending, r.items), turns = r.turns, use = r.use, queued = r.queued)
+                }
+            }
+            // Past CATCH_UP_MS of reading, whatever the new read has is shown, once it has anything.
+            var late = false
+            var giveUp: Job? = null
             val result = try {
                 val connection = host.awaitConnection(timeoutMs = 60_000)
+                if (!caught) giveUp = launch {
+                    delay(CATCH_UP_MS)
+                    synchronized(lock) {
+                        late = true
+                        waiting?.takeIf { !caught && it.items.isNotEmpty() }?.let { caught = true; publish(it) }
+                    }
+                }
                 TranscriptFollower.follow(connection, ref, transcript) { truncated ->
-                    val items = transcript.items()
-                    val turns = transcript.activity?.turns().orEmpty()
-                    _state.update { s ->
-                        s.copy(source = Source.Transcript, items = items, truncated = truncated, pending = unseen(s.pending, items), turns = turns, use = transcript.use, queued = transcript.queued)
+                    val read = Read(transcript.items(), truncated, transcript.activity?.turns().orEmpty(), transcript.use, transcript.queued)
+                    synchronized(lock) {
+                        if (!caught && (caughtUp(shown, read.items) || (late && read.items.isNotEmpty()))) caught = true
+                        if (caught) publish(read) else waiting = read
                     }
                     failures = 0
                 }
@@ -134,6 +196,8 @@ class AgentChat(private val host: HostSession, val paneId: String, private val s
                 throw e
             } catch (t: Throwable) {
                 TranscriptFollower.Result.Ended
+            } finally {
+                giveUp?.cancel()
             }
             if (result == TranscriptFollower.Result.Missing) {
                 _state.update { it.copy(source = Source.Screen) }
@@ -209,10 +273,5 @@ class AgentChat(private val host: HostSession, val paneId: String, private val s
                 },
             )
         }
-    }
-
-    private companion object {
-        /** The agents that draw their reasoning on screen as it streams, in italics over the editor. */
-        val STREAMS_THINKING = setOf("pi", "omp")
     }
 }
