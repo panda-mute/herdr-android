@@ -42,6 +42,23 @@ class BlockedPromptTest {
     }
 
     @Test
+    fun claudesTipIsNoDetail() {
+        // Claude Code 2.1.3xx puts an ad for auto mode between "Bash command" and the command.
+        val p = assertNotNull(BlockedPrompt.parse(screen("claude-permission-tip.txt")))
+        assertEquals("Do you want to proceed?", p.question)
+        assertEquals(listOf("Bash command", "Create empty file in home directory", "touch ~/herdr-approve-claude2.txt"), p.details)
+        assertEquals(4, p.options.size)
+    }
+
+    @Test
+    fun codexEscalation() {
+        val p = assertNotNull(BlockedPrompt.parse(screen("codex-permission-escalated.txt")))
+        assertEquals("Reason: May I create ~/herdr-approve-codex.txt outside the workspace as requested?", p.question)
+        assertTrue("$ touch ~/herdr-approve-codex.txt" in p.details, p.details.toString())
+        assertEquals(listOf("Yes", "Always", "TellInstead"), p.options.indices.map { p.role(it).name })
+    }
+
+    @Test
     fun claudeTrustFolder() {
         val p = assertNotNull(BlockedPrompt.parse(screen("claude-trust.txt")))
         assertEquals(listOf("No, exit", "Yes, I trust this folder"), p.options.map { it.label })

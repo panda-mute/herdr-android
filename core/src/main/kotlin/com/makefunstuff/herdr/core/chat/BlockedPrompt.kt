@@ -142,6 +142,8 @@ data class BlockedPrompt(
         private val HARD_RULE = Regex("^[─━═▔▁]{6,}$")
         private val SOFT_RULE = Regex("^[╌┄┈╍┅┉\\-–—·.]{6,}$")
         private val BOX_EDGE = Regex("^[╭╮╰╯│┃]")
+        /** Claude's advice inside its prompt ("Tip: auto mode handles these prompts for you…"): not about this request. */
+        private val TIP = Regex("^Tip: ")
 
         /** Parses the bottom of a blocked agent's screen; null when no menu is visible. */
         fun parse(screen: String): BlockedPrompt? {
@@ -200,7 +202,7 @@ data class BlockedPrompt(
                 else o.copy(row = i)
             }
 
-            val above = context(lines, start, width).filterNot { CLAUDE_TABS.containsMatchIn(it) }
+            val above = context(lines, start, width).filterNot { CLAUDE_TABS.containsMatchIn(it) || TIP.containsMatchIn(it) }
             val questionAt = above.indexOfLast { it.endsWith("?") }.takeIf { it >= 0 }
                 ?: above.indexOfLast { it.contains("? ") }.takeIf { it >= 0 }
                 ?: 0
