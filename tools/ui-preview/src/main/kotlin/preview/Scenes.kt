@@ -374,6 +374,14 @@ fun scenes(): List<Scene> = listOf(
     Scene("prompt-question", route = Routes.agent(DEVBOX, API_AGENT), setup = { host(DEVBOX).screens += API_AGENT to Demo.resource("screen-claude-question.txt") }),
     Scene("prompt-checks", route = Routes.agent(DEVBOX, API_AGENT), setup = { host(DEVBOX).screens += API_AGENT to Demo.resource("screen-claude-checks.txt") }),
     Scene("chat-codex", route = Routes.agent(DEVBOX, SITE_AGENT)),
+    // Back from the lock screen with a long model name: while it reconnects, "Not connected" keeps to one line.
+    Scene("chat-reconnecting", route = Routes.agent(DEVBOX, SITE_AGENT), setup = {
+        host(DEVBOX).transcripts = host(DEVBOX).transcripts.mapValues { it.value.replace("\"gpt-5.5\"", "\"remote-magpie/zhishu/gpt-6.1-sol\"") }
+    }, actions = { ctx ->
+        ctx.data.host(DEVBOX).refuse = com.makefunstuff.herdr.core.ssh.ConnectError.Auth(null)
+        FakeMachines.closeAll()
+        settle()
+    }),
     // An edit opened: its file and its lines removed and added, while Claude's runs; Codex's patch of a page; a
     // whole new file, folded to its first lines until "Show all".
     Scene("chat-edit", route = Routes.agent(DEVBOX, APP_AGENT), actions = { tapExact("Edit") }),

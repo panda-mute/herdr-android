@@ -301,6 +301,9 @@ fun ChatComposer(
                             style = MaterialTheme.typography.labelMedium,
                             color = c.muted,
                             textAlign = TextAlign.End,
+                            // One line: squeezed by a long model name, wrapped words made the row (and the card) tall.
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f, fill = false).padding(horizontal = Space.s)
                                 .semantics { liveRegion = LiveRegionMode.Polite },
                         )
