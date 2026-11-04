@@ -61,3 +61,22 @@ class PainterTest {
         assertEquals(0xFF2A251F.toInt(), TerminalPainter.ensureContrast(0xFF2A251F.toInt(), paper, 4.5))
     }
 }
+
+class LightSurfaceTest {
+    private val ground = 0xFFF7F5EF.toInt()
+    private fun hex(c: Int) = "%06X".format(c and 0xFFFFFF)
+
+    @Test
+    fun darkProgramBackgroundsTurnLightOnALightGround() {
+        val p = com.makefunstuff.herdr.core.terminal.TerminalPainter
+        // Codex's prompt shade, from a dark aubergine terminal: a light panel near the ground.
+        val codex = p.lightSurface(0xFF48273E.toInt(), ground)
+        kotlin.test.assertTrue(p.luminance(codex) > 0.75, hex(codex))
+        kotlin.test.assertTrue(p.luminance(codex) < p.luminance(ground), hex(codex))
+        // Claude's dark diff red keeps its hue: red over green and blue.
+        val red = p.lightSurface(0xFF3D0100.toInt(), ground)
+        kotlin.test.assertTrue((red shr 16 and 0xFF) > (red shr 8 and 0xFF), hex(red))
+        // Light backgrounds stay as the program set them.
+        kotlin.test.assertEquals(0xFFDDEEFF.toInt(), p.lightSurface(0xFFDDEEFF.toInt(), ground))
+    }
+}

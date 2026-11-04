@@ -79,6 +79,7 @@ class TerminalPainter(var palette: TerminalPalette = TerminalPalette.Default) {
     ) {
         val p = palette
         canvas.fillRect(0f, 0f, px(emu.cols * cellW), px(emu.rows * cellH), p.background)
+        val light = luminance(p.background) > 0.5
         underText?.invoke()
         for (y in 0 until emu.rows) {
             val row = emu.row(y)
@@ -92,6 +93,7 @@ class TerminalPainter(var palette: TerminalPalette = TerminalPalette.Default) {
                 val right = px((x + span) * cellW)
                 var fg = p.resolve(cell.fg, p.foreground)
                 var bg = p.resolve(cell.bg, p.background)
+                if (light && Cell.isRgb(cell.bg)) bg = lightSurface(bg, p.background)
                 if (cell.attrs and Cell.BOLD != 0 && cell.fg in 0..7) fg = p.resolve(cell.fg + 8, p.foreground)
                 if (cell.attrs and Cell.INVERSE != 0) { val t = fg; fg = bg; bg = t }
                 val dim = cell.attrs and Cell.DIM != 0
@@ -249,6 +251,50 @@ class TerminalPainter(var palette: TerminalPalette = TerminalPalette.Default) {
             return c
         }
         private fun px(v: Float): Float = v.roundToInt().toFloat()
+
+        /**
+         * A dark background a program chose for a dark terminal (Codex shades its prompt from the
+         * computer's background, Claude Code's dark theme shades diffs), on a light [ground]: its
+         * lightness turned over, its hue kept, half way to the ground. Light ones stay as they are.
+         */
+        fun lightSurface(bg: Int, ground: Int): Int {
+            if (luminance(bg) >= DARK_SURFACE) return bg
+            val r = ((bg shr 16) and 0xFF) / 255f
+            val g = ((bg shr 8) and 0xFF) / 255f
+            val b = (bg and 0xFF) / 255f
+            val max = maxOf(r, g, b)
+            val min = minOf(r, g, b)
+            val l = (max + min) / 2
+            val d = max - min
+            val s = if (d == 0f) 0f else d / (1 - kotlin.math.abs(2 * l - 1))
+            val h = when {
+                d == 0f -> 0f
+                max == r -> 60 * (((g - b) / d) % 6)
+                max == g -> 60 * ((b - r) / d + 2)
+                else -> 60 * ((r - g) / d + 4)
+            }.let { if (it < 0) it + 360 else it }
+            val turned = hsl(h, s, 1 - l * 0.45f)
+            return blend(turned, ground, 0.5f)
+        }
+
+        /** Below this a background reads as a dark terminal's surface. */
+        private const val DARK_SURFACE = 0.06
+
+        private fun hsl(h: Float, s: Float, l: Float): Int {
+            val c = (1 - kotlin.math.abs(2 * l - 1)) * s
+            val x = c * (1 - kotlin.math.abs((h / 60) % 2 - 1))
+            val m = l - c / 2
+            val (r, g, b) = when ((h / 60).toInt()) {
+                0 -> Triple(c, x, 0f)
+                1 -> Triple(x, c, 0f)
+                2 -> Triple(0f, c, x)
+                3 -> Triple(0f, x, c)
+                4 -> Triple(x, 0f, c)
+                else -> Triple(c, 0f, x)
+            }
+            fun ch(v: Float) = ((v + m) * 255).roundToInt().coerceIn(0, 255)
+            return 0xFF000000.toInt() or (ch(r) shl 16) or (ch(g) shl 8) or ch(b)
+        }
 
         /** [amount] of [fg] over [bg]. */
         fun blend(fg: Int, bg: Int, amount: Float): Int {
