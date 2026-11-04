@@ -161,8 +161,8 @@ fun ReviewScreen(nav: NavController, startMachine: String? = null, startTask: St
     val view = LocalView.current
     val owner = LocalLifecycleOwner.current
     val hosts by container.hosts.hosts.collectAsStateWithLifecycle()
-    // herdr-projects 1.x's: a Shepherdr 2 machine's task is merged from its own screens.
-    val boards = hosts.filter { it.hasBoard && !it.onShepherdr2 }
+    // herdr-projects 1.x's: a Shepherdr 3 machine's task is merged from its own screens.
+    val boards = hosts.filter { it.hasBoard && !it.onShepherdr }
     val online = boards.filter { it.online }.map { it.machine.id }
     var lists by remember { mutableStateOf<Map<String, List<BoardTask>>>(emptyMap()) }
     var problems by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
@@ -175,12 +175,12 @@ fun ReviewScreen(nav: NavController, startMachine: String? = null, startTask: St
         val s = sig(item.task)
         return cards[item.key]?.takeIf { it.sig == s } ?: CardData(s).also { cards[item.key] = it }
     }
-    // A Shepherdr 2 task has no review card (a notification tapped before the app knew its board): once
-    // its machine says it runs Shepherdr 2, the task opens on its board instead, as its agent's chat.
-    val startOnV2 = startMachine != null && startTask != null && hosts.any { it.machine.id == startMachine && it.onShepherdr2 }
+    // A Shepherdr 3 task has no review card (a notification tapped before the app knew its board): once
+    // its machine says it runs Shepherdr 3, the task opens on its board instead, as its agent's chat.
+    val startOnV2 = startMachine != null && startTask != null && hosts.any { it.machine.id == startMachine && it.onShepherdr }
     LaunchedEffect(startOnV2) {
         if (!startOnV2 || startMachine == null || startTask == null) return@LaunchedEffect
-        // Only a task Shepherdr 2 lists: herdr-projects 1.x may run beside it, with review cards of its own.
+        // Only a task Shepherdr 3 lists: herdr-projects 1.x may run beside it, with review cards of its own.
         val session = container.hosts.session(startMachine) ?: return@LaunchedEffect
         val onV2 = runCatching { session.awaitWorkBoard().overview().tasks.any { it.id == startTask } }.getOrDefault(false)
         if (onV2) {

@@ -61,7 +61,7 @@ class FakeMachine(
     var said: Map<String, String> = emptyMap(),
     /** The work board's data, or null when herdr-projects isn't installed there. */
     var board: FakeBoard? = null,
-    /** Shepherdr 2 there (its API, reached with curl), or null where it doesn't run. */
+    /** Shepherdr 3's service there (reached with curl), or null where it doesn't run. */
     var shepherdr: FakeShepherdr? = null,
     /** Integration metadata per workspace (`workspace.get`'s tokens). */
     var workspaceTokens: Map<String, Map<String, String>> = emptyMap(),
@@ -74,7 +74,7 @@ class FakeMachine(
     var classic: Boolean = true,
     /** herdr-core (the desktop app's runtime) running there, or null where it doesn't. */
     var core: FakeCore? = null,
-    /** herdr-core's other sessions running there, by name (Shepherdr 2.1's `shepherdr`). */
+    /** herdr-core's other sessions running there, by name. */
     var coreSessions: Map<String, FakeCore> = emptyMap(),
     /** What the health probe reads there (RAM, disks, processes, worktrees). */
     var health: FakeHealth = FakeHealth(),

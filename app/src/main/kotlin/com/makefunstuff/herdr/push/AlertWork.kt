@@ -89,13 +89,13 @@ class AlertWork(
 
     private suspend fun act(s: HostSession, alert: Alert, action: AlertAction, text: String): String {
         val onTask = action.type == AlertAction.Type.Board || action.type == AlertAction.Type.TellTask || action.type == AlertAction.Type.AskCoordinator
-        // Only a task Shepherdr 2 lists: a machine may run herdr-projects 1.x beside it, whose tasks stay its own.
-        val v2 = if (onTask && onShepherdr2(s)) s.awaitWorkBoard() else null
+        // Only a task Shepherdr 3 lists: a machine may run herdr-projects 1.x beside it, whose tasks stay its own.
+        val v2 = if (onTask && onShepherdr(s)) s.awaitWorkBoard() else null
         val task = v2?.overview()?.tasks?.firstOrNull { it.id == alert.taskId }
         return if (v2 != null && task != null) actOnV2(v2, task, alert, action, text) else actHere(s, alert, action, text)
     }
 
-    /** A Shepherdr 2 task's action: a reply goes to its agent's chat, a yes merges it, a question goes to its space's coordinator. */
+    /** A Shepherdr 3 task's action: a reply goes to its agent's chat, a yes merges it, a question goes to its space's coordinator. */
     private suspend fun actOnV2(board: WorkBoard, task: WorkTask, alert: Alert, action: AlertAction, text: String): String {
         return when (action.type) {
             AlertAction.Type.TellTask -> board.tell(task, text).ifEmpty { "Sent: $text" }
@@ -104,7 +104,7 @@ class AlertWork(
                 "Sent to the coordinator"
             }
             else -> if (action.boardAction == BoardAction.Approve) board.approve(task).ifEmpty { "${action.label}: done" }
-            else throw IOException("Open ${task.name} to do that on Shepherdr 2")
+            else throw IOException("Open ${task.name} to do that on Shepherdr 3")
         }
     }
 
@@ -134,11 +134,11 @@ class AlertWork(
         }
     }
 
-    /** Whether [s]'s board is Shepherdr 2, checked first when it wasn't yet. */
-    private suspend fun onShepherdr2(s: HostSession): Boolean {
+    /** Whether [s]'s board is Shepherdr 3, checked first when it wasn't yet. */
+    private suspend fun onShepherdr(s: HostSession): Boolean {
         s.awaitConnection()
         if (!s.state.value.boardChecked) s.checkBoard()
-        return s.state.value.onShepherdr2
+        return s.state.value.onShepherdr
     }
 
     private suspend fun board(s: HostSession) = run {

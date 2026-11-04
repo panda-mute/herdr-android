@@ -24,31 +24,22 @@ import kotlinx.serialization.json.putJsonArray
 import java.io.Closeable
 import java.io.IOException
 
-/** What `/api/cli` answered: the `shepherdr` command's output and exit code. */
-@Serializable
-data class V2CliResult(val out: String = "", val code: Int = 0) {
-    val ok: Boolean get() = code == 0
-
-    /** Its last line: what it said it did, or why it refused. */
-    val said: String get() = out.lines().map { it.trim() }.lastOrNull { it.isNotEmpty() }.orEmpty()
-}
-
 /** What `/api/action` answered: [ok], and the whole answer. */
 data class V2ActResult(val ok: Boolean, val json: JsonObject)
 
-/** The bodies `POST /api/action` takes (`Action` in `shared/types.ts`), for what the app does. */
+/** The bodies `POST /api/action` takes (`Action` in `web/shared/types.ts`), for what the app does. */
 object V2Actions {
     /**
-     * Words into a chat; [reply]: the id of the message they answer; [space]: sent from a needs-you card in that space;
-     * [attachments]: files uploaded for it ([ShepherdrClient.upload]), each named to the agent as an `<attachment>` line.
+     * Words into a chat; [reply]: the id of the message they answer; [attachments]: files uploaded for it
+     * ([ShepherdrClient.upload]), their paths after the words. [human]: typed in the app by the person.
      */
     fun send(
         chat: String,
         text: String,
         reply: String? = null,
         cid: String? = null,
-        space: String? = null,
         attachments: List<String> = emptyList(),
+        human: Boolean = true,
     ): JsonObject = buildJsonObject {
         put("type", "send")
         put("chat", chat)
@@ -56,12 +47,13 @@ object V2Actions {
         if (attachments.isNotEmpty()) putJsonArray("attachments") { attachments.forEach { add(JsonPrimitive(it)) } }
         cid?.let { put("cid", it) }
         reply?.let { put("reply", it) }
-        space?.let { put("space", it) }
+        if (human) put("human", true)
     }
 
     /**
      * Answers question card [question] in [chat]: [choice] picked (-1 none), or [choices] on a multi card;
-     * [note] goes with it (a plan sent back needs one); [other] is a typed answer.
+     * [note] goes with it (a plan sent back needs one); [other] is a typed answer; [answers] one per part of a
+     * card that asks several.
      */
     fun answer(
         chat: String,
@@ -70,7 +62,7 @@ object V2Actions {
         choices: List<Int>? = null,
         note: String? = null,
         other: String? = null,
-        space: String? = null,
+        answers: List<String>? = null,
     ): JsonObject = buildJsonObject {
         put("type", "answer")
         put("chat", chat)
@@ -79,7 +71,7 @@ object V2Actions {
         choices?.let { c -> putJsonArray("choices") { c.forEach { add(JsonPrimitive(it)) } } }
         note?.takeIf { it.isNotEmpty() }?.let { put("note", it) }
         other?.takeIf { it.isNotEmpty() }?.let { put("other", it) }
-        space?.let { put("space", it) }
+        answers?.let { a -> putJsonArray("answers") { a.forEach { add(JsonPrimitive(it)) } } }
     }
 
     /** Adds [emoji] to message [message] in [chat], or takes yours away again. */
@@ -90,22 +82,28 @@ object V2Actions {
         put("emoji", emoji)
     }
 
-    /** Marks task [task] done with nothing merged (`shepherdr task close`); [force] even with work main lacks. */
-    fun close(task: String, force: Boolean = false): JsonObject = buildJsonObject {
+    /** Marks task [task]'s chat's task done with nothing merged (`herdr-task done`): its chat key, `<task>/worker`. */
+    fun close(chat: String): JsonObject = buildJsonObject {
         put("type", "close")
-        put("chat", task)
-        if (force) put("force", true)
-    }
-
-    /** Clears coordinator chat [chat]'s voice mark ([V2Chat.voiceMark]) and closes its safeguard cards (Shepherdr 2.1). */
-    fun voiceClear(chat: String): JsonObject = buildJsonObject {
-        put("type", "voice-clear")
         put("chat", chat)
     }
 
-    /** The body of `POST /api/cli`: the `shepherdr` command's words. */
-    fun cli(args: List<String>): JsonObject = buildJsonObject {
-        putJsonArray("args") { args.forEach { add(JsonPrimitive(it)) } }
+    /** Accept on a Ready task (`herdr-task accept`): it merges. */
+    fun accept(task: String): JsonObject = buildJsonObject {
+        put("type", "accept")
+        put("task", task)
+    }
+
+    /** What the Accept card shows of a Ready task (`herdr-task show --evidence`). */
+    fun evidence(task: String): JsonObject = buildJsonObject {
+        put("type", "evidence")
+        put("task", task)
+    }
+
+    /** Stops the agent in [chat]: the task goes back to To do, its work stays. */
+    fun stop(chat: String): JsonObject = buildJsonObject {
+        put("type", "stop")
+        put("chat", chat)
     }
 
     /** What the live link is told: the chats on screen. Sent as not visible, so the machine's alerts keep coming. */
@@ -118,17 +116,33 @@ object V2Actions {
     }
 }
 
-/** Shepherdr 2's API on one machine, over [transport]. */
+/** Shepherdr 3's service on one machine, over [transport]: what its web app calls. */
 class ShepherdrClient(private val transport: ShepherdrTransport) {
     val canStream: Boolean get() = transport.canStream
 
-    suspend fun version(): V2Version = get("/api/version")
-    suspend fun snapshot(): V2Snapshot = get("/api/snapshot")
-    suspend fun waiting(): V2Waiting = get("/api/waiting")
+    suspend fun version(): V2Version = get("/api/health")
+
+    /** Everything the screens list, as the live link sends it first (the service sends it no other way). */
+    suspend fun snapshot(timeoutMs: Long = 20_000): V2Snapshot {
+        if (!transport.canStream) {
+            val e = V2Events.parse(transport.readSnapshot(timeoutMs)) as? V2Event.Snapshot ?: throw IOException("Shepherdr sent no snapshot")
+            return e.snapshot
+        }
+        return V2Live(transport.webSocket("/api/ws")).use { link ->
+            withTimeoutOrNull(timeoutMs) {
+                var snap: V2Snapshot? = null
+                while (snap == null) {
+                    val e = link.next() ?: throw IOException("Shepherdr closed the live link")
+                    if (e is V2Event.Snapshot) snap = e.snapshot
+                }
+                snap
+            } ?: throw IOException("Shepherdr sent no snapshot")
+        }
+    }
 
     /** Sends [action] ([V2Actions]); its answer, or its own reason in the exception. */
     suspend fun act(action: JsonObject): JsonObject {
-        val o = ok(transport.http("POST", "/api/action", action.toString()))
+        val o = ok(transport.http("POST", "/api/action", action.toString(), timeoutMs = 0))
         if ((o["ok"] as? JsonPrimitive)?.booleanOrNull == false || o["error"] is JsonPrimitive) {
             throw IOException((o["error"] as? JsonPrimitive)?.content ?: "Shepherdr refused it")
         }
@@ -137,7 +151,7 @@ class ShepherdrClient(private val transport: ShepherdrTransport) {
 
     /** Sends [action] and gives its answer as it is, refused or not (a refusal can carry more than its words). */
     suspend fun actRaw(action: JsonObject): V2ActResult {
-        val o = ok(transport.http("POST", "/api/action", action.toString()))
+        val o = ok(transport.http("POST", "/api/action", action.toString(), timeoutMs = 0))
         return V2ActResult((o["ok"] as? JsonPrimitive)?.booleanOrNull != false && o["error"] !is JsonPrimitive, o)
     }
 
@@ -150,17 +164,23 @@ class ShepherdrClient(private val transport: ShepherdrTransport) {
         choices: List<Int>? = null,
         note: String? = null,
         other: String? = null,
-        space: String? = null,
-    ): JsonObject = act(V2Actions.answer(chat, question, choice, choices, note, other, space))
+    ): JsonObject = act(V2Actions.answer(chat, question, choice, choices, note, other))
 
     suspend fun react(chat: String, message: String, emoji: String): JsonObject = act(V2Actions.react(chat, message, emoji))
 
+    /** Accept on Ready task [task] (its id, `HERD-4`, or `<machine>:HERD-4`): it merges, as the Accept card's Accept. */
+    suspend fun accept(task: String): JsonObject = act(V2Actions.accept(task))
+
+    /** What the Accept card shows of [task] before it is accepted. */
+    suspend fun evidence(task: String): V2Evidence =
+        ShepherdrJson.decodeFromJsonElement(V2Evidence.serializer(), act(V2Actions.evidence(task)))
+
     /**
-     * Copies a file for [chat] to the machine of its agent (`POST /api/upload`, into Shepherdr's inbox
-     * there): its path, to send with a message ([V2Actions.send]'s attachments).
+     * Keeps a file on the service's machine for a message (`POST /api/upload`, where the Herdr window keeps pasted
+     * ones): its path, to send with a message ([V2Actions.send]'s attachments). An agent on another machine gets a copy.
      */
-    suspend fun upload(chat: String, name: String, data: ByteArray, type: String = "application/octet-stream"): String {
-        val (body, contentType) = Wire.form(mapOf("chat" to chat), "file", name, type, data)
+    suspend fun upload(name: String, data: ByteArray, type: String = "application/octet-stream"): String {
+        val (body, contentType) = Wire.form(emptyMap(), "file", name, type, data)
         val r = transport.bytes("POST", "/api/upload", body, contentType)
         val o = ok(HttpReply(r.status, r.body.toString(Charsets.UTF_8)))
         return (o["path"] as? JsonPrimitive)?.content?.takeIf { it.isNotEmpty() } ?: throw IOException("Shepherdr didn't say where it put the file")
@@ -168,51 +188,49 @@ class ShepherdrClient(private val transport: ShepherdrTransport) {
 
     /** A file attached in [chat], by its [path] (`GET /api/file`): its bytes. */
     suspend fun file(chat: String, path: String): ByteArray {
-        val q = "chat=" + java.net.URLEncoder.encode(chat, "UTF-8") + "&path=" + java.net.URLEncoder.encode(path, "UTF-8")
-        val r = transport.bytes("GET", "/api/file?$q")
+        val r = transport.bytes("GET", "/api/file?" + query("chat" to chat, "path" to path))
         if (r.status == 404) throw IOException("${path.substringAfterLast('/')} isn't there any more")
         if (r.status !in 200..299) throw IOException("Shepherdr answered ${r.status}")
         return r.body
     }
 
-    /**
-     * Artifact [id]'s page at version [v], wrapped by Shepherdr for a sealed frame: its colours (in [dark]
-     * or light), the bridge and its data; full screen at a phone's width (`GET /api/artifacts/<id>`).
-     */
-    suspend fun artifactPage(id: String, v: Int, dark: Boolean): String {
-        val r = transport.http("GET", artifactPath(id, "", "v=$v&full=1&device=phone&theme=${if (dark) "dark" else "light"}"))
-        if (r.status == 404) throw ArtifactGone("Shepherdr doesn't serve it: it was deleted, or its artifacts are turned off")
+    /** Recipe artifact [id]'s `recipe.json` at version [v] (`GET /api/artifacts/<id>/recipe`); [on]: its machine, when another. */
+    suspend fun recipe(id: String, v: Int, on: String? = null): Recipe {
+        val r = transport.http("GET", artifactPath(id, "/recipe", query("v" to v.toString(), "on" to on)))
+        if (r.status == 404) throw ArtifactGone("Shepherdr has no recipe for it: it was deleted, or it isn't a recipe")
         if (r.status !in 200..299) throw IOException("Shepherdr answered ${r.status}")
-        return r.body
+        return Recipes.parse(r.body)
     }
 
-    /** Version [v]'s data alone, as JSON text (`null` for none), for a page that only takes new data. */
-    suspend fun artifactData(id: String, v: Int): String =
-        ArtifactPage.dataOf(ok(transport.http("GET", artifactPath(id, "/data", "v=$v"))).toString())
-
-    /** The picture Shepherdr's check took of its latest version, in [dark] or light (PNG); null where it has none. */
-    suspend fun artifactThumb(id: String, dark: Boolean): ByteArray? {
-        val r = transport.bytes("GET", artifactPath(id, "/thumb", if (dark) "dark=1" else ""))
+    /** A file beside a recipe ([path], a picture) at version [v]; null where it isn't there. */
+    suspend fun artifactFile(id: String, v: Int, path: String, on: String? = null): ByteArray? {
+        val r = transport.bytes("GET", artifactPath(id, "/file/" + path.split('/').joinToString("/") { enc(it) }, query("v" to v.toString(), "on" to on)))
         return r.body.takeIf { r.status in 200..299 && it.isNotEmpty() }
     }
 
-    /** Shepherdr's font, which artifacts are set in (`GET /api/font/InterVariable.woff2`). */
-    suspend fun artifactFont(): ByteArray? {
-        val r = transport.bytes("GET", "/api/font/InterVariable.woff2")
-        return r.body.takeIf { r.status in 200..299 && it.isNotEmpty() }
+    /**
+     * What was said in [audio] (a recording of [type]), written down by whisper.cpp on the service's machine
+     * (`POST /api/dictate`), as the web app's dictation.
+     */
+    suspend fun dictate(audio: ByteArray, type: String = "audio/mp4"): String {
+        val r = transport.bytes("POST", "/api/dictate", audio, type)
+        val o = ok(HttpReply(r.status, r.body.toString(Charsets.UTF_8)))
+        (o["error"] as? JsonPrimitive)?.contentOrNull?.let { throw IOException(it) }
+        return (o["text"] as? JsonPrimitive)?.contentOrNull.orEmpty()
     }
+
+    /**
+     * A voice call with [chat]'s running agent (`/api/voice`, the Voice add-on): 16 kHz PCM both ways as binary
+     * messages, and the call's state as text ones ([VoiceCall]).
+     */
+    suspend fun voice(chat: String): VoiceCall = VoiceCall(transport.webSocket("/api/voice?" + query("chat" to chat)))
 
     private fun artifactPath(id: String, part: String, query: String) =
-        "/api/artifacts/" + java.net.URLEncoder.encode(id, "UTF-8").replace("+", "%20") + part + query.takeIf { it.isNotEmpty() }?.let { "?$it" }.orEmpty()
+        "/api/artifacts/" + enc(id) + part + query.takeIf { it.isNotEmpty() }?.let { "?$it" }.orEmpty()
 
-    /**
-     * The `shepherdr` command with [args] (`["merge", "HA-1"]`), as the human would run it. Some wait
-     * long (a merge waits for GitHub's checks), so there is no short timeout.
-     */
-    suspend fun cli(args: List<String>): V2CliResult {
-        val r = transport.http("POST", "/api/cli", V2Actions.cli(args).toString(), timeoutMs = 0)
-        return ShepherdrJson.decodeFromJsonElement(V2CliResult.serializer(), ok(r))
-    }
+    private fun enc(s: String) = java.net.URLEncoder.encode(s, "UTF-8").replace("+", "%20")
+
+    private fun query(vararg kv: Pair<String, String?>) = kv.filter { it.second != null }.joinToString("&") { (k, v) -> "$k=" + enc(v!!) }
 
     /**
      * Opens the live link: a snapshot comes at once, then each change. Without [snapshots] (a chat's screen) the
@@ -236,7 +254,8 @@ class ShepherdrClient(private val transport: ShepherdrTransport) {
             var chat: V2Chat? = null
             while (chat == null) {
                 val e = link.next() ?: throw IOException("Shepherdr closed the live link")
-                if (e is V2Event.Chat && e.chat.key == key) chat = e.chat
+                // Opening it: the reader is still looking for its log; the next one says what it found.
+                if (e is V2Event.Chat && e.chat.key == key && e.chat.notice != "opening") chat = e.chat
             }
             chat
         } ?: throw IOException("Shepherdr sent no chat $key")
@@ -295,8 +314,9 @@ class V2Live internal constructor(private val socket: LiveSocket, private val sn
  */
 object V2Events {
     fun parse(text: String, snapshots: Boolean = true): V2Event {
-        // A chat's screen has no use for a snapshot, most of a megabyte: not even read.
+        // A chat's screen has no use for a snapshot, most of a megabyte: not even read; nor the web app's own views.
         if (!snapshots && text.startsWith(SNAPSHOT)) return V2Event.Other("snapshot", JsonNull)
+        if (text.startsWith(VIEW)) return V2Event.Other("view", JsonNull)
         val o = runCatching { ShepherdrJson.parseToJsonElement(text) as? JsonObject }.getOrNull() ?: return V2Event.Other("", JsonNull)
         val type = (o["type"] as? JsonPrimitive)?.contentOrNull.orEmpty()
         return when {
@@ -334,7 +354,7 @@ object V2Events {
     /** A snapshot, its lists read item by item where the whole doesn't read. */
     fun snapshot(o: JsonObject): V2Snapshot {
         runCatching { return ShepherdrJson.decodeFromJsonElement(V2Snapshot.serializer(), o) }
-        val lists = listOf("places", "machines", "tasks", "artifacts", "asks", "last", "read")
+        val lists = listOf("places", "machines", "tasks", "artifacts", "asks", "last", "read", "needs", "alerts")
         val base = runCatching { ShepherdrJson.decodeFromJsonElement(V2Snapshot.serializer(), JsonObject(o - lists.toSet())) }.getOrElse { V2Snapshot() }
         fun <T> each(k: String, s: kotlinx.serialization.KSerializer<T>): List<T>? =
             (o[k] as? JsonArray)?.mapNotNull { runCatching { ShepherdrJson.decodeFromJsonElement(s, it) }.getOrNull() }
@@ -345,6 +365,8 @@ object V2Events {
             machines = each("machines", V2Machine.serializer()).orEmpty(),
             tasks = each("tasks", V2Task.serializer()).orEmpty(),
             artifacts = each("artifacts", V2Artifact.serializer()),
+            needs = each("needs", V2Need.serializer()).orEmpty(),
+            alerts = each("alerts", V2Alert.serializer()).orEmpty(),
             asks = map("asks") { it.contentOrNull },
             last = map("last") { it.doubleOrNull },
             read = map("read") { it.doubleOrNull },
@@ -357,4 +379,7 @@ object V2Events {
 
     /** How Shepherdr's snapshot events start (`JSON.stringify` keeps its `type` first). */
     private const val SNAPSHOT = """{"type":"snapshot""""
+
+    /** How the service's named views start (`service/live.ts`): the web app's, never read here. */
+    private const val VIEW = """{"type":"view""""
 }

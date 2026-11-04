@@ -17,7 +17,7 @@ data class HcProbe(
     val running: Boolean,
     val binaries: List<HcBinary>,
     val coreExes: List<String> = emptyList(),
-    /** The other sessions whose core runs (Shepherdr 2.1's `shepherdr`), by name. */
+    /** The other sessions whose core runs , by name. */
     val others: List<HcSession> = emptyList(),
 ) {
     /**

@@ -110,7 +110,7 @@ import com.makefunstuff.herdr.ui.common.rememberVoiceMessages
 private enum class TaskSheet { Menu, Said, Brief, Plan, Facts }
 
 /**
- * A Shepherdr 2 task as its agent's chat, as Shepherdr's own web UI has it: the task's chat live (its
+ * A Shepherdr 3 task as its agent's chat, as Shepherdr's own web UI has it: the task's chat live (its
  * agent's words, each turn's steps folded to a line, its question cards answered here), a strip under
  * the bar with where it stands, its pull request and the one thing it waits for (Merge), and a composer
  * to its agent. What it did, its brief, plan and facts, and Close, are in ⋯.
@@ -203,7 +203,7 @@ internal fun TaskChatScreen(
     // A list of its own for each task, so another task opens at its newest too; kept to its newest message (StickToBottom).
     val list = remember(t.id) { LazyListState() }
     val stick = rememberStickToBottom(list)
-    val foot = th?.working == true || problem != null
+    val foot = th?.working == true || problem != null || !th?.v2?.blocked.isNullOrBlank()
     stick.Follow(remember(items) { items.map { it.id } }, content = items to foot)
 
     var draft by rememberDraft(DraftStore.task(machineId, t.id))
@@ -265,6 +265,11 @@ internal fun TaskChatScreen(
     val c = Herdr.colors
     val typing = typingInShortWindow()
     val waits = th?.cards.orEmpty()
+    // A voice call with its agent (Shepherdr's voice agent on the machine), while it runs.
+    val calls = container.voiceCalls
+    val call by calls.state.collectAsStateWithLifecycle()
+    val callHere = call.machineId == machineId && call.task == t.id && (call.on || call.problem != null)
+    val askMic = com.makefunstuff.herdr.voice.rememberVoiceMic()
     val canClose = t.status != WorkStatus.Done && t.status != WorkStatus.Merging
     Box(Modifier.fillMaxSize()) {
         Scaffold(
@@ -276,6 +281,14 @@ internal fun TaskChatScreen(
                         subtitle = listOfNotNull(kind.takeIf { t.agent.isNotEmpty() }, space.ifEmpty { null }).joinToString(" · ").ifEmpty { null },
                         onBack = onBack, backLabel = "Back to the board",
                     ) {
+                        if (t.chat.isNotEmpty() && t.status != WorkStatus.Done) BarIcon(
+                            HerdrIcons.Phone, if (callHere && call.on) "End the call" else "Call ${t.name}",
+                            onClick = {
+                                if (callHere && call.on) calls.stop()
+                                else askMic { allowed -> if (allowed) calls.start(machineId, t.space, t.id, t.name) }
+                            },
+                            enabled = state.online, selected = callHere && call.on,
+                        )
                         BarIcon(HerdrIcons.Ellipsis, "Details and more", { sheet = TaskSheet.Menu })
                     }
                     TaskStrip(t, details, busy, onMerge, onPr = { context.openUrl(t.pr) })
@@ -289,6 +302,7 @@ internal fun TaskChatScreen(
                     textScale = sizes.chat,
                     composer = {
                         Column {
+                            if (callHere && !typing) com.makefunstuff.herdr.ui.coordinator.CallBar(call, Modifier.padding(horizontal = Space.screen).padding(bottom = Space.xs), calls::stop)
                             if (waits.isNotEmpty() && draft.isEmpty()) {
                                 WaitsForYou(waits, Modifier.padding(horizontal = Space.screen).padding(bottom = Space.xs)) { card ->
                                     val at = items.indexOfFirst { it.holds(card) }
@@ -342,15 +356,19 @@ internal fun TaskChatScreen(
                         ) {
                             if (foot) item(key = "foot") {
                                 Column(verticalArrangement = Arrangement.spacedBy(Space.s)) {
-                                    if (th.working) Working(kind.replaceFirstChar { it.uppercase() })
+                                    if (th.working) Working(kind.replaceFirstChar { it.uppercase() }, th.v2?.doing)
+                                    // It asks in its terminal and no card here asks for it: what it says it waits for.
+                                    th.v2?.blocked?.takeIf { it.isNotBlank() }?.let { Notice("Needs you: $it", c.red) }
                                     problem?.let { Notice(it, c.red) }
                                 }
                             }
+                            val notice = th.v2?.let(com.makefunstuff.herdr.core.shepherdr.ChatNotice::of)
                             if (items.isEmpty()) item(key = "empty") {
                                 Box(Modifier.fillParentMaxSize(), contentAlignment = Alignment.Center) {
-                                    ChatEmpty(HerdrIcons.MessagesSquare, "Nothing said yet", "Its agent writes here as it works. You can write to it too.")
+                                    if (notice != null) ChatEmpty(HerdrIcons.SquareTerminal, notice.first, notice.second.orEmpty())
+                                    else ChatEmpty(HerdrIcons.MessagesSquare, "Nothing said yet", "Its agent writes here as it works. You can write to it too.")
                                 }
-                            }
+                            } else if (notice != null) item(key = "notice") { Notice(listOfNotNull(notice.first, notice.second).joinToString(". "), null) }
                             items(items.asReversed(), key = { it.id }) { item ->
                                 Column(verticalArrangement = Arrangement.spacedBy(Space.m)) {
                                     if (item.id == stick.unread) NewLine()
@@ -436,7 +454,7 @@ private fun TaskStrip(t: WorkTask, d: WorkTaskDetails?, busy: String?, onMerge: 
             )
             if (t.status == WorkStatus.Ready) PrimaryButton(onClick = onMerge, enabled = busy == null, modifier = Modifier.padding(start = Space.s)) {
                 Icon(HerdrIcons.GitMerge, null, Modifier.size(18.dp))
-                Text("Merge")
+                Text(if (t.accepting) "Accepting…" else "Accept")
             }
         }
         busy?.let { BusyLine(it) }

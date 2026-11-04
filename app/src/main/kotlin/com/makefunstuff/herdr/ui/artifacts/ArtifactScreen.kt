@@ -29,19 +29,20 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.ui.graphics.ImageBitmap
 import com.makefunstuff.herdr.core.shepherdr.ArtifactGone
-import com.makefunstuff.herdr.core.shepherdr.ArtifactMessage
-import com.makefunstuff.herdr.core.shepherdr.ArtifactPage
-import com.makefunstuff.herdr.core.shepherdr.ArtifactSendGate
 import com.makefunstuff.herdr.core.shepherdr.Artifacts
+import com.makefunstuff.herdr.core.shepherdr.Recipe
+import com.makefunstuff.herdr.core.shepherdr.RecipeBlock
+import com.makefunstuff.herdr.core.shepherdr.Recipes
 import com.makefunstuff.herdr.core.shepherdr.V2Artifact
+import com.makefunstuff.herdr.ui.images.ImageCodec
 import com.makefunstuff.herdr.ui.common.LocalContainer
-import com.makefunstuff.herdr.ui.common.openUrl
 import com.makefunstuff.herdr.ui.coordinator.ChatEmpty
 import com.makefunstuff.herdr.ui.design.BarIcon
 import com.makefunstuff.herdr.ui.design.ChatComposer
@@ -53,22 +54,19 @@ import com.makefunstuff.herdr.ui.design.LoadingState
 import com.makefunstuff.herdr.ui.theme.Herdr
 import com.makefunstuff.herdr.ui.theme.Space
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
-/** The page in the WebView: Shepherdr's version whose page it is ([page]), the version whose data it has ([v]). */
-private data class Shown(val id: String, val page: Int, val v: Int, val html: String)
-
-/** Shepherdr's font, read once a run: every artifact is set in it. */
-private object ShepherdrFont {
-    @Volatile var bytes: ByteArray? = null
-}
+/** The recipe shown: its artifact and version, its blocks. */
+private data class Shown(val id: String, val v: Int, val recipe: Recipe)
 
 /**
- * An artifact full screen, as Shepherdr's viewer has it: its page sealed off at the phone's width in the
- * app's light or dark, its versions under the clock (older ones say so, with the way back to the latest),
- * Mark up to note on one thing in it, and a box that writes to its keeper. A newer version swaps in while
- * you look; one that only brought data goes into the open page without a reload. [v] opens that version.
+ * An artifact full screen, as Shepherdr's viewer has it: a recipe drawn natively at the phone's width ([RecipeView]),
+ * its versions under the clock (older ones say so, with the way back to the latest), Mark up to note on one block of
+ * it, and a box that writes to its keeper. A newer version swaps in while you look. A version that is a panel only
+ * the Herdr window runs (`gpui`) says so. [v] opens that version.
  */
 @Composable
 fun ArtifactScreen(nav: NavController, machineId: String, artifactId: String, v: Int?) {
@@ -78,7 +76,6 @@ fun ArtifactScreen(nav: NavController, machineId: String, artifactId: String, v:
         ChatEmpty(HerdrIcons.Monitor, "No such machine", "It was removed from the app.")
         return
     }
-    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val shelf = rememberArtifactShelf(session)
     val board = shelf.board
@@ -94,36 +91,28 @@ fun ArtifactScreen(nav: NavController, machineId: String, artifactId: String, v:
 
     var shown by remember(artifactId) { mutableStateOf<Shown?>(null) }
     var problem by remember(artifactId) { mutableStateOf<String?>(null) }
-    var font by remember { mutableStateOf(ShepherdrFont.bytes) }
-    val controller = remember { ArtifactController() }
-    val gate = remember { ArtifactSendGate(container.clock) }
-    // The page for the version wanted: the same page takes new data where it is; another page loads.
-    LaunchedEffect(board, a?.id, want, a?.let { art -> want?.let(art::htmlOf) }) {
+    val pictures = remember(artifactId) { mutableStateMapOf<String, ImageBitmap>() }
+    // The recipe of the version wanted, then the pictures beside it.
+    LaunchedEffect(board, a?.id, want) {
         val b = board ?: return@LaunchedEffect
         val art = a ?: return@LaunchedEffect
         val n = want ?: return@LaunchedEffect
-        val page = art.htmlOf(n)
-        val now = shown
-        if (now != null && now.id == art.id && now.page == page) {
-            if (now.v == n) return@LaunchedEffect
-            val data = runCatching { b.artifactData(art, n) }.getOrNull()
-            if (data != null) {
-                controller.data(ArtifactPage.data(data))
-                shown = now.copy(v = n)
-                return@LaunchedEffect
-            }
-        }
+        if (!art.drawn(n)) return@LaunchedEffect
         while (true) {
             try {
-                // Its font first, which the page asks for as it loads.
-                if (font == null) font = runCatching { b.artifactFont() }.getOrNull()?.also { ShepherdrFont.bytes = it }
-                shown = Shown(art.id, page, n, ArtifactPage.seal(b.artifactPage(art, n, dark)))
+                val recipe = b.recipe(art, n)
+                if (shown?.v != n) pictures.clear()
+                shown = Shown(art.id, n, recipe)
                 problem = null
+                for (name in Recipes.pictures(recipe.blocks)) {
+                    if (name in pictures) continue
+                    withContext(Dispatchers.IO) { runCatching { b.artifactFile(art, n, name)?.let { ImageCodec.load(it, 1600) } }.getOrNull() }?.let { pictures[name] = it }
+                }
                 break
             } catch (e: CancellationException) {
                 throw e
             } catch (gone: ArtifactGone) {
-                // Deleted, or artifacts turned off there: asking again won't bring it.
+                // Deleted, or not a recipe there: asking again won't bring it.
                 problem = gone.message
                 break
             } catch (t: Throwable) {
@@ -149,25 +138,21 @@ fun ArtifactScreen(nav: NavController, machineId: String, artifactId: String, v:
     }
 
     var markup by remember(artifactId) { mutableStateOf(false) }
-    var pick by remember(artifactId) { mutableStateOf<ArtifactMessage.Pick?>(null) }
+    var pick by remember(artifactId) { mutableStateOf<RecipeBlock?>(null) }
     var versions by remember { mutableStateOf(false) }
     var said by remember(artifactId) { mutableStateOf<String?>(null) }
     var draft by rememberSaveable(artifactId) { mutableStateOf("") }
     var sending by remember { mutableStateOf(false) }
 
-    fun onPage(m: ArtifactMessage) {
+    /** A choice, a form or a button in the recipe: its answer to the keeper, as recipe.js words it. */
+    fun answer(text: String) {
         val art = a ?: return
         val b = board ?: return
         val n = shown?.v ?: return
-        when (m) {
-            // A page speaks for you only right after you tapped or typed in it, at most once every two seconds.
-            is ArtifactMessage.Send -> gate.admit(m.text)?.let { text ->
-                scope.launch {
-                    runCatching { b.artifactSay(art, n, text, page = true) }.onSuccess { to -> controller.run(ArtifactPage.sent(text, to)) }
-                }
-            }
-            is ArtifactMessage.Open -> if (gate.fresh()) context.openUrl(m.url)
-            is ArtifactMessage.Pick -> if (markup) pick = m
+        scope.launch {
+            runCatching { b.artifactSay(art, n, text, answer = true) }
+                .onSuccess { to -> said = "Sent to $to." }
+                .onFailure { said = it.message ?: "That didn't go through. Try again." }
         }
     }
 
@@ -180,7 +165,7 @@ fun ArtifactScreen(nav: NavController, machineId: String, artifactId: String, v:
         sending = true
         val on = pick
         scope.launch {
-            runCatching { b.artifactSay(art, n, text, pick = on) }
+            runCatching { b.artifactSay(art, n, Artifacts.line(text), block = on?.id) }
                 .onSuccess { to ->
                     draft = ""
                     pick = null
@@ -220,14 +205,19 @@ fun ArtifactScreen(nav: NavController, machineId: String, artifactId: String, v:
                 gone -> Banner("v$picked is no longer kept, only the last 20 versions are. This is the latest.")
                 a != null && picked != null && picked != a.v -> Banner("An older version: v$picked of ${a.v}.", "Show the latest") { picked = null; pick = null }
             }
-            Box(Modifier.weight(1f).fillMaxWidth().background(shepherdrBackground(dark))) {
+            Box(Modifier.weight(1f).fillMaxWidth()) {
                 val s = shown
                 when {
                     shelf.read && shelf.all != null && a == null -> ChatEmpty(HerdrIcons.LayoutDashboard, "This artifact was deleted", "It isn't kept on ${session.machine.label} any more.")
                     shelf.read && shelf.all == null -> ChatEmpty(HerdrIcons.LayoutDashboard, "No artifacts here", "Shepherdr on ${session.machine.label} keeps none.")
-                    s != null && s.id == artifactId -> ArtifactView(
-                        s.html, dark = dark, markup = markup, background = shepherdrBackground(dark), font = font, gate = gate,
-                        controller = controller, onMessage = ::onPage, modifier = Modifier.fillMaxSize(),
+                    a != null && want != null && !a.drawn(want) -> ChatEmpty(
+                        HerdrIcons.LayoutDashboard, "Open it in the Herdr window",
+                        "This version is a panel only the Herdr window draws. Its newer versions are recipes, which show here.".takeIf { a.drawn(a.v) }
+                            ?: "It's a panel only the Herdr window draws.",
+                    )
+                    s != null && s.id == artifactId -> RecipeView(
+                        s.recipe.blocks, picture = { pictures[it] }, markup = markup, picked = pick?.id,
+                        onPick = { pick = it }, onAnswer = ::answer, modifier = Modifier.fillMaxSize(),
                     )
                     (problem ?: shelf.problem) != null -> ChatEmpty(HerdrIcons.CircleAlert, "Can't open it", problem ?: shelf.problem.orEmpty())
                     else -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { LoadingState("Opening") }
@@ -260,7 +250,7 @@ fun ArtifactScreen(nav: NavController, machineId: String, artifactId: String, v:
                         note != null -> ({
                             Row(Modifier.fillMaxWidth().padding(horizontal = Space.screen).padding(bottom = Space.xs), verticalAlignment = Alignment.CenterVertically) {
                                 Text(
-                                    "A note on " + (note.text.takeIf { it.isNotEmpty() }?.let { "“${it.take(40)}”" } ?: "what you picked"),
+                                    "A note on " + Recipes.blockName(note),
                                     style = MaterialTheme.typography.labelMedium, color = c.muted, maxLines = 1, overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.weight(1f),
                                 )
@@ -268,7 +258,7 @@ fun ArtifactScreen(nav: NavController, machineId: String, artifactId: String, v:
                             }
                         })
                         said != null -> ({ Hint(said.orEmpty()) })
-                        markup -> ({ Hint("Tap what should change.") })
+                        markup -> ({ Hint("Tap the part that should change.") })
                         else -> null
                     },
                 )

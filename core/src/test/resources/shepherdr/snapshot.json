@@ -1,252 +1,308 @@
 {
- "name": "Shepherdr",
- "host": "devbox",
- "places": [
-  {
-   "id": "p:devbox:~",
-   "name": "home",
-   "machine": "devbox",
-   "home": true,
-   "level": 1,
-   "status": "work",
-   "mode": "regular",
-   "chat": "p:devbox:~"
+ "type": "snapshot",
+ "snapshot": {
+  "terminalTransport": "core",
+  "name": "Shepherdr",
+  "off": [],
+  "look": {
+   "tabs": true,
+   "worktrees": true,
+   "unread": true,
+   "red": true,
+   "green": true,
+   "filters": true,
+   "place": true,
+   "helpers": true
   },
-  {
-   "id": "p:devbox:herdr-android",
-   "name": "herdr-android",
-   "machine": "devbox",
-   "level": 2,
-   "status": "work",
-   "mode": "regular",
-   "chat": "p:devbox:herdr-android",
-   "githubRemote": true
-  }
- ],
- "machines": [
-  {
-   "id": "m:devbox",
-   "machine": "devbox",
-   "name": "devbox",
-   "status": "idle",
-   "health": {
-    "meters": [
+  "panels": [],
+  "asks": {},
+  "needs": [],
+  "alerts": [],
+  "sections": [],
+  "artifacts": [],
+  "host": "devbox",
+  "user": "You",
+  "places": [
+   {
+    "id": "sp00000000000000000000000000000a03",
+    "name": "voice-notes",
+    "git": "main",
+    "gitName": "voice-notes",
+    "branch": "main",
+    "ahead": 0,
+    "behind": 0,
+    "machine": "devbox",
+    "level": 0,
+    "status": "idle",
+    "mode": "regular",
+    "chat": "p:sp00000000000000000000000000000a03",
+    "header": "Assistant · Claude Code",
+    "where": "~/Work/voice-notes",
+    "assistantTab": {
+     "id": "tb00000000000000000000000000000a03",
+     "name": "Assistant",
+     "named": true,
+     "state": "done",
+     "live": true,
+     "cli": "claude",
+     "agent": "claude"
+    },
+    "pilot": {
+     "on": false,
+     "next_run": null,
+     "pending": false,
+     "inflight": false,
+     "events": [],
+     "blank": true
+    },
+    "store": {
+     "folder": "/home/u/Work/voice-notes",
+     "key": "|/home/u/Work/voice-notes",
+     "name": "voice-notes"
+    },
+    "tabs": [
      {
-      "name": "CPU",
-      "pct": 46,
-      "detail": "load 5.6 on 12 cores",
-      "level": "ok"
-     },
-     {
-      "name": "Memory",
-      "pct": 52,
-      "detail": "16 GB of 32 GB",
-      "level": "ok"
+      "id": "tb0000000000000000000000000000ab01",
+      "name": "Terminal",
+      "named": false,
+      "term": "t:t1x",
+      "state": "idle",
+      "where": "/home/u/Work/voice-notes",
+      "prog": "bash"
      }
-    ],
-    "herdr": true,
-    "working": 1,
-    "max": 10,
-    "held": 0,
-    "at": "01:25"
-   }
-  }
- ],
- "tasks": [
-  {
-   "id": "HA-1",
-   "name": "Shepherdr 2 client in core",
-   "status": "work",
-   "place": "p:devbox:herdr-android",
-   "sub": "Working",
-   "age": "now",
-   "branch": "work/1-shepherdr-2-client-in-core",
-   "agent": {
-    "chat": "HA-1/Agent",
-    "role": "Agent",
-    "cli": "Claude Code",
-    "status": "work",
-    "age": "now",
-    "note": "Working"
+    ]
    },
-   "desc": "Build the core layer the app needs to work with Shepherdr 2, in core/ (no Android SDK needed).",
-   "state": "Working · just now",
-   "on": "Claude Code",
-   "created": "today 01:25 by herdr-android (you asked in chat)",
-   "browser": {
-    "ready": true
-   }
-  },
-  {
-   "id": "HA-2",
-   "name": "Board and task screens on v2",
-   "status": "queued",
-   "place": "p:devbox:herdr-android",
-   "sub": "After HA-1",
-   "age": "now",
-   "branch": "work/2-board-and-task-screens-on-v2",
-   "agent": {
-    "chat": "HA-2/Agent",
-    "role": "Agent",
-    "cli": "Claude Code",
-    "status": "queued",
-    "age": "now",
-    "note": "After HA-1"
+   {
+    "id": "sp00000000000000000000000000000a02",
+    "name": "homelab",
+    "git": "main",
+    "gitName": "homelab",
+    "branch": "main",
+    "ahead": 4,
+    "behind": 0,
+    "machine": "devbox",
+    "level": 0,
+    "status": "idle",
+    "mode": "regular",
+    "chat": "p:sp00000000000000000000000000000a02",
+    "header": "Assistant · Claude Code",
+    "where": "~/Work/homelab",
+    "assistantTab": {
+     "id": "tb00000000000000000000000000000a02",
+     "name": "Assistant",
+     "named": true,
+     "state": "done",
+     "live": true,
+     "cli": "claude",
+     "agent": "claude"
+    },
+    "pilot": {
+     "on": false,
+     "next_run": null,
+     "pending": false,
+     "inflight": false,
+     "events": [],
+     "blank": true
+    },
+    "store": {
+     "folder": "/home/u/Work/homelab",
+     "key": "|/home/u/Work/homelab",
+     "name": "homelab"
+    },
+    "tabs": [
+     {
+      "id": "tb0000000000000000000000000000ab01",
+      "name": "Terminal",
+      "named": false,
+      "term": "t:t20",
+      "state": "idle",
+      "where": "/home/u/Work/homelab",
+      "prog": "bash"
+     }
+    ]
    },
-   "desc": "Make the app's Board and a task's details work on Shepherdr 2.",
-   "state": "Queued · just now",
-   "on": "Claude Code",
-   "created": "today 01:25 by herdr-android (you asked in chat)",
-   "after": [
-    "HA-1"
-   ],
-   "browser": {
-    "ready": true
+   {
+    "id": "sp00000000000000000000000000000a01",
+    "name": "demo-app",
+    "git": "main",
+    "gitName": "demo-app",
+    "branch": "main",
+    "ahead": 0,
+    "behind": 0,
+    "machine": "devbox",
+    "level": 0,
+    "status": "idle",
+    "mode": "regular",
+    "chat": "p:sp00000000000000000000000000000a01",
+    "header": "Assistant · Claude Code",
+    "where": "~/Work/demo-app",
+    "assistantTab": {
+     "id": "tb00000000000000000000000000000a01",
+     "name": "Assistant",
+     "named": true,
+     "state": "done",
+     "live": true,
+     "cli": "claude",
+     "agent": "claude"
+    },
+    "pilot": {
+     "on": false,
+     "next_run": null,
+     "pending": false,
+     "inflight": false,
+     "events": [],
+     "blank": true
+    },
+    "store": {
+     "folder": "/home/u/Work/demo-app",
+     "key": "|/home/u/Work/demo-app",
+     "name": "demo-app"
+    },
+    "tabs": [
+     {
+      "id": "tb0000000000000000000000000000ab01",
+      "name": "Terminal",
+      "named": false,
+      "term": "t:t21",
+      "state": "idle",
+      "where": "/home/u/Work/demo-app",
+      "prog": "bash"
+     }
+    ]
    }
-  },
-  {
-   "id": "HA-3",
-   "name": "Coordinator chat on v2",
-   "status": "queued",
-   "place": "p:devbox:herdr-android",
-   "sub": "After HA-1",
-   "age": "now",
-   "branch": "work/3-coordinator-chat-on-v2",
-   "agent": {
-    "chat": "HA-3/Agent",
-    "role": "Agent",
-    "cli": "Claude Code",
-    "status": "queued",
-    "age": "now",
-    "note": "After HA-1"
-   },
-   "desc": "Make the app's Coordinator screen (ui/coordinator) chat with a space's coordinator on Shepherdr 2.",
-   "state": "Queued · just now",
-   "on": "Claude Code",
-   "created": "today 01:25 by herdr-android (you asked in chat)",
-   "after": [
-    "HA-1"
-   ],
-   "browser": {
-    "ready": true
-   }
-  }
- ],
- "automations": {
-  "p:devbox:~": [],
-  "p:devbox:herdr-android": []
- },
- "artifacts": [],
- "asks": {},
- "last": {
-  "p:devbox:~": 1793229804577,
-  "p:devbox:herdr-android": 1793229961474
- },
- "read": {
-  "*": 1793229804570
- },
- "sections": [
-  {
-   "id": "pinned",
-   "name": "Pinned",
-   "spaces": []
-  }
- ],
- "settings": [
-  {
-   "name": "How tasks work",
-   "about": "Each new task's brief ends with these in its Settings block, each as the line shown. To change one for a single task, tell its coordinator.",
-   "rows": [
-    {
-     "label": "Review",
-     "key": "brief.review",
-     "value": "on",
-     "options": [
-      "on",
-      "off"
-     ],
-     "line": "Review: on. Have your change reviewed by fresh eyes before it merges."
-    },
-    {
-     "label": "Must fix",
-     "key": "review.mustFix",
-     "value": "major",
-     "options": [
-      "critical",
-      "major",
-      "minor",
-      "trivial"
-     ],
-     "line": "Must fix: major. Findings are tagged critical/major/minor/trivial; fix critical and major, then review again."
-    },
-    {
-     "label": "Review rounds",
-     "key": "review.rounds",
-     "value": "3 rounds",
-     "num": {
-      "min": 1,
-      "max": 10,
-      "unit": "rounds",
-      "one": "round"
-     },
-     "line": "Review rounds: 3. Stop when a round finds none to fix, at most 3 rounds."
-    },
-    {
-     "label": "Merge",
-     "key": "brief.merge",
-     "value": "on its own",
-     "options": [
-      "on its own",
-      "after GitHub checks",
-      "ask me first"
-     ],
-     "line": "Merge: on its own. Merge it yourself once it works (shepherdr merge <id>). Don't wait for GitHub's checks."
-    },
-    {
-     "group": "Reviewer",
-     "label": "Agent",
-     "key": "reviewer.agent",
-     "value": "Codex",
-     "options": [
-      "Codex",
-      "Claude Code",
-      "pi"
-     ],
-     "line": "Reviewer: a headless Codex or a Codex subagent (its default model and effort)."
-    },
-    {
-     "group": "Reviewer",
-     "label": "Model",
-     "key": "reviewer.model",
-     "value": "default",
-     "text": false,
-     "options": [
-      "default",
-      "GPT-6-Luna",
-      "GPT-5.6-Terra",
-      "GPT-5.6-Luna"
-     ]
-    },
-    {
-     "group": "Reviewer",
-     "label": "Effort",
-     "key": "reviewer.effort",
-     "value": "default",
-     "options": [
-      "default",
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-      "max",
-      "ultra"
+  ],
+  "machines": [
+   {
+    "id": "m:devbox",
+    "machine": "devbox",
+    "name": "This computer",
+    "ownName": "This computer",
+    "status": "idle",
+    "here": true,
+    "health": {
+     "engine": "core",
+     "herdr": true,
+     "working": 0,
+     "held": 0,
+     "at": "10:18 PM",
+     "meters": [
+      {
+       "name": "CPU",
+       "pct": 14,
+       "detail": "Load 1.6 on 12 cores",
+       "level": "ok"
+      },
+      {
+       "name": "Memory",
+       "pct": 30,
+       "detail": "37 GB of 125 GB",
+       "level": "ok"
+      },
+      {
+       "name": "Disk",
+       "pct": 89,
+       "detail": "home 89% · 26 GB free · /tmp 30% · 44 GB free",
+       "level": "ok"
+      }
      ]
     }
-   ],
-   "note": "Settings: (from shepherdr show; where the brief above says otherwise, it wins)\n- Review: on. Have your change reviewed by fresh eyes before it merges.\n- Reviewer: a headless Codex or a Codex subagent (its default model and effort).\n- Must fix: major. Findings are tagged critical/major/minor/trivial; fix critical and major, then review again.\n- Review rounds: 3. Stop when a round finds none to fix, at most 3 rounds.\n- Merge: on its own. Merge it yourself once it works (shepherdr merge <id>). Don't wait for GitHub's checks.",
-   "level": "all",
-   "told": true
+   }
+  ],
+  "tasks": [
+   {
+    "id": "DEMO-7",
+    "name": "Assistant replies still lost",
+    "status": "done",
+    "place": "",
+    "listName": "demo-app",
+    "age": "",
+    "state": "done",
+    "on": "devbox",
+    "created": "",
+    "at": 1793647153999,
+    "doneAt": 1793647153999,
+    "branch": "work/7-assistant-replies-still-lost",
+    "base": "main",
+    "browser": {
+     "ready": true
+    }
+   },
+   {
+    "id": "DEMO-8",
+    "name": "Shepherdr 3 client",
+    "status": "work",
+    "place": "sp00000000000000000000000000000a01",
+    "listName": "demo-app",
+    "age": "1m",
+    "state": "working",
+    "on": "devbox",
+    "created": "",
+    "at": 1793823467788,
+    "sub": "Reading the 3.1 docs",
+    "left": "6h",
+    "branch": "task/8-shepherdr-3-client",
+    "base": "main",
+    "browser": {
+     "ready": true
+    },
+    "report": {
+     "msg": "Reading the 3.1 docs",
+     "progress": 2,
+     "eta": 359
+    },
+    "agent": {
+     "chat": "DEMO-8/worker",
+     "role": "worker",
+     "cli": "claude",
+     "status": "work",
+     "running": true,
+     "age": "",
+     "note": ""
+    }
+   },
+   {
+    "id": "DEMO-9",
+    "name": "Flat phone layout",
+    "status": "queued",
+    "place": "",
+    "listName": "demo-app",
+    "age": "",
+    "state": "queued",
+    "on": "devbox",
+    "created": "",
+    "at": 0,
+    "sub": "after DEMO-8",
+    "browser": {
+     "ready": true
+    }
+   },
+   {
+    "id": "HOME-16",
+    "name": "Scan: new quants and engines",
+    "status": "todo",
+    "place": "",
+    "listName": "homelab",
+    "age": "",
+    "state": "todo",
+    "on": "devbox",
+    "created": "",
+    "at": 0,
+    "browser": {
+     "ready": true
+    }
+   }
+  ],
+  "automations": [],
+  "last": {
+   "p:sp00000000000000000000000000000a01": 1,
+   "p:sp00000000000000000000000000000a02": 1,
+   "p:sp00000000000000000000000000000a03": 1
+  },
+  "read": {
+   "*": 0,
+   "p:sp00000000000000000000000000000a01": 1,
+   "p:sp00000000000000000000000000000a02": 1,
+   "p:sp00000000000000000000000000000a03": 1
   }
- ],
- "user": "Sam"
+ }
 }

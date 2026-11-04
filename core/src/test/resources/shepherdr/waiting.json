@@ -1,0 +1,74 @@
+[
+ {"type": "snapshot", "snapshot": {
+  "name": "Shepherdr", "host": "devbox", "user": "You", "terminalTransport": "core",
+  "places": [
+   {"id": "sp0000000000000000000000000000a001", "name": "demo-app", "machine": "devbox", "level": 0, "status": "need", "mode": "regular",
+    "chat": "p:sp0000000000000000000000000000a001", "header": "Assistant · Claude Code", "where": "~/Work/demo-app",
+    "store": {"folder": "/home/u/Work/demo-app", "key": "|/home/u/Work/demo-app", "name": "demo-app"},
+    "assistantTab": {"name": "Assistant", "named": true, "state": "blocked", "live": true, "cli": "claude"}},
+   {"id": "vm/sp0000000000000000000000000000b001", "name": "api", "machine": "vm", "level": 0, "status": "idle", "mode": "regular",
+    "chat": "p:vm:sp0000000000000000000000000000b001", "store": {"folder": "/home/u/api", "key": "vm|/home/u/api", "name": "api"}}
+  ],
+  "machines": [{"id": "m:devbox", "machine": "devbox", "name": "This computer", "ownName": "This computer", "status": "idle", "here": true},
+               {"id": "m:vm", "machine": "vm", "name": "vm", "ownName": "vm", "status": "idle"}],
+  "tasks": [
+   {"id": "DEMO-4", "name": "Dark mode", "status": "ready", "place": "sp0000000000000000000000000000a001", "listName": "demo-app", "age": "5m",
+    "state": "ready", "on": "devbox", "created": "", "sub": "Ready 5m ago", "branch": "task/4-dark-mode", "base": "main",
+    "report": {"msg": "Dark mode works on every screen", "progress": 100}, "agent": {"chat": "DEMO-4/worker", "role": "worker", "cli": "claude", "status": "idle", "running": true, "age": "", "note": ""}},
+   {"id": "DEMO-5", "name": "Login screen", "status": "need", "place": "sp0000000000000000000000000000a001", "listName": "demo-app", "age": "1m",
+    "state": "running", "on": "devbox", "created": "", "sub": "Asks which provider to use",
+    "report": {"msg": "Wiring the login form", "progress": 40, "eta": 12, "paused": true}, "agent": {"chat": "DEMO-5/worker", "role": "worker", "cli": "claude", "status": "need", "running": true, "age": "", "note": ""}},
+   {"id": "DEMO-6", "name": "Release notes", "status": "work", "place": "sp0000000000000000000000000000a001", "listName": "demo-app", "age": "3m",
+    "state": "running", "on": "devbox", "created": "", "sub": "Writing the changelog", "left": "6m",
+    "report": {"msg": "Writing the changelog", "progress": 70, "eta": 6}, "agent": {"chat": "DEMO-6/worker", "role": "worker", "cli": "codex", "status": "work", "running": true, "age": "", "note": ""}},
+   {"id": "DEMO-7", "name": "Merge the icons", "status": "merging", "place": "sp0000000000000000000000000000a001", "listName": "demo-app", "age": "", "state": "merging", "on": "devbox", "created": "", "sub": "Merges once its checks pass"},
+   {"id": "vm:API-2", "name": "Rate limits", "status": "ready", "place": "vm/sp0000000000000000000000000000b001", "listName": "api", "age": "1h",
+    "state": "ready", "on": "vm", "created": "", "sub": "Ready 1h ago", "accepting": true, "agent": {"chat": "vm:API-2/worker", "role": "worker", "cli": "claude", "status": "idle", "age": "", "note": ""}},
+   {"id": "DEMO-8", "name": "Archive me", "status": "done", "place": "", "listName": "demo-app", "age": "", "state": "done", "on": "devbox", "created": "", "archived": 1793595519630}
+  ],
+  "needs": [
+   {"id": "rq7", "chat": "DEMO-5/worker", "place": "sp0000000000000000000000000000a001", "task": "DEMO-5", "at": 1793823000000,
+    "question": {"id": "rq7", "title": "Which login provider?", "kind": "Question", "to": "DEMO-5/worker", "multi": false, "other": true,
+     "choices": [{"label": "GitHub", "recommended": true}, {"label": "Google"}, {"label": "Email link", "description": "No password"}]}},
+   {"id": "attention", "chat": "p:sp0000000000000000000000000000a001", "place": "sp0000000000000000000000000000a001", "at": 1793823100000,
+    "text": "Should I split the login work into two tasks?", "reply": "m12"}
+  ],
+  "alerts": [{"id": "al1", "at": 1793823200000, "title": "DEMO-5 · Login screen", "body": "Needs your pick", "chat": "DEMO-5/worker", "place": "sp0000000000000000000000000000a001", "notify": true}],
+  "artifacts": [
+   {"id": "demo-coverage", "title": "DEMO-4: Coverage", "kind": "recipe", "place": "sp0000000000000000000000000000a001", "v": 2, "at": 1793823300000,
+    "when": "3m", "by": "DEMO-4 agent", "keeper": "DEMO-4 agent", "folder": "/home/u/Work/demo-app", "folderName": "demo-app",
+    "store": "|/home/u/Work/demo-app", "task": "DEMO-4",
+    "versions": [{"n": 2, "when": "3m", "by": "DEMO-4 agent", "html": 2, "kind": "recipe"}, {"n": 1, "when": "1h", "by": "DEMO-4 agent", "html": 1, "kind": "gpui"}]},
+   {"id": "api-load", "title": "Load test", "kind": "recipe", "place": "vm/sp0000000000000000000000000000b001", "v": 1, "at": 1793823000000,
+    "when": "8m", "by": "API-2 agent", "keeper": "api Assistant", "store": "vm|/home/u/api", "machine": "vm",
+    "versions": [{"n": 1, "when": "8m", "by": "API-2 agent", "html": 1}]}
+  ],
+  "asks": {}, "last": {}, "read": {}, "sections": []
+ }},
+ {"type": "view", "name": "tasks", "value": []},
+ {"type": "chat", "chat": {
+  "key": "p:sp0000000000000000000000000000a001", "working": true, "cli": "claude", "top": true,
+  "doing": "Reading the task list", "agent": {"kind": "claude", "words": "Opus 5.5 · High", "modelLabel": "Opus 5.5"},
+  "messages": [
+   {"id": "m1:b", "who": "you", "at": 1793820000000, "text": "You are the Assistant of demo-app.", "brief": {"label": "New session"}},
+   {"id": "m1", "who": "you", "at": 1793820000000, "text": "Plan dark mode and a login screen", "cid": "c1", "mentions": [{"task": "DEMO-4", "ref": "DEMO-4", "title": "Dark mode"}]},
+   {"id": "m2", "who": "agent", "at": 1793820010000, "text": "I'll start two tasks: **DEMO-4** and **DEMO-5**."},
+   {"id": "t1", "who": "agent", "at": 1793820020000, "activity": {"id": "t1", "at": 1793820020000, "end": 1793820080000, "steps": 3, "summary": "Ran 3 commands", "rows": [{"text": "Ran herdr-task add"}]}},
+   {"id": "tn:DEMO-4:started:1", "who": "agent", "at": 1793820090000, "news": {"task": "DEMO-4", "ref": "DEMO-4", "mark": "started", "what": "started", "text": "Dark mode"}},
+   {"id": "tn:DEMO-4:ready:2", "who": "agent", "at": 1793823300000, "news": {"task": "DEMO-4", "ref": "DEMO-4", "mark": "ready", "what": "is ready", "text": "Dark mode works on every screen", "accept": true}},
+   {"id": "a1", "who": "agent", "at": 1793823300000, "artifact": {"id": "demo-coverage", "v": 2}},
+   {"id": "p1", "who": "agent", "at": 1793823310000, "publishing": true},
+   {"id": "ae:9", "who": "agent", "at": 1793823320000, "ended": "Run: npm test · Allowed in the chat"},
+   {"id": "e1", "who": "agent", "at": 1793823330000, "text": "API Error: overloaded", "error": true},
+   {"id": "m12", "who": "agent", "at": 1793823340000, "text": "Should I split the login work into two tasks?", "asked": "open"},
+   {"id": "ask:rq7", "who": "agent", "at": 1793823350000, "question": {"id": "rq7", "title": "Which login provider?", "kind": "Question", "to": "p:sp0000000000000000000000000000a001", "other": true,
+    "by": {"ref": "DEMO-5", "title": "Login screen", "chat": "DEMO-5/worker"},
+    "choices": [{"label": "GitHub", "recommended": true}, {"label": "Google"}, {"label": "Email link"}]}},
+   {"id": "q2", "who": "agent", "at": 1793823360000, "question": {"id": "q2", "title": "2 questions", "kind": "Question", "to": "x", "choices": [], "other": true,
+    "parts": [{"title": "Colour?", "choices": [{"label": "Amber"}, {"label": "Teal"}]}, {"title": "Which screens?", "multi": true, "choices": [{"label": "All"}, {"label": "Board"}]}]}},
+   {"id": "w1", "who": "you", "at": 1793823370000, "text": "and keep it small", "waiting": true, "waitsFor": "queue", "cid": "c2"},
+   {"id": "s1", "who": "agent", "at": 1793823380000, "secret": {"id": "s1", "name": "GITHUB_TOKEN", "why": "to open the pull request"}},
+   {"id": "z1", "who": "agent", "at": 1793823390000, "somethingNew": {"x": 1}}
+  ]}},
+ {"type": "chat", "chat": {"key": "DEMO-6/worker", "working": false, "cli": "codex", "notice": "ended", "finished": true, "messages": []}}
+]

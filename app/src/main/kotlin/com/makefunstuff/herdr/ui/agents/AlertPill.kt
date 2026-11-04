@@ -174,7 +174,7 @@ private fun words(w: Waiting): String = when (w) {
 private fun open(nav: NavHostController, panes: Panes, p: PillItem, hosts: List<HostState>) {
     when (p) {
         is PillItem.Needs -> when (val w = p.waiting) {
-            is Waiting.Question -> panes.openAgent(nav, w.machineId, w.agent.agent, hosts.any { it.machine.id == w.machineId && it.onShepherdr2 })
+            is Waiting.Question -> panes.openAgent(nav, w.machineId, w.agent.agent, hosts.any { it.machine.id == w.machineId && it.onShepherdr })
             is Waiting.Task -> if (w.work == null && Approvals.waits(w.task)) panes.open(nav, Routes.review(w.machineId, w.task.id)) else panes.openBoard(nav, w.machineId, w.task.id)
             is Waiting.Coordinator -> panes.open(nav, Routes.coordinator(w.machineId, w.space.id))
         }

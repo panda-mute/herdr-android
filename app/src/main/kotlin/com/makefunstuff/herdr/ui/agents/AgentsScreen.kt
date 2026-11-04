@@ -277,7 +277,7 @@ fun AgentsScreen(
     }
 
     /**
-     * A Shepherdr 2 task's [what] through Shepherdr: its merge (the fingerprint first, when that is on) or an
+     * A Shepherdr 3 task's [what] through Shepherdr: its merge (the fingerprint first, when that is on) or an
      * answer to its card. The card hides once it is done, as a v1 task's does.
      */
     fun work(w: Waiting.Task, what: String, run: suspend (com.makefunstuff.herdr.core.board.WorkBoard) -> String) {
@@ -296,20 +296,22 @@ fun AgentsScreen(
         }
     }
 
-    fun merge(w: Waiting.Task, t: WorkTask) = guard.run(Guarded.Merge, "Merge ${t.name}?", t.title) {
-        view.confirmTap()
-        work(w, "Merging") { it.approve(t) }
+    /** A Ready task whose Accept card is up, and its machine. */
+    var acceptFor by remember { mutableStateOf<Pair<Waiting.Task, WorkTask>?>(null) }
+    // Shepherdr's Accept: its card first, which says what you approve.
+    fun merge(w: Waiting.Task, t: WorkTask) {
+        acceptFor = w to t
     }
 
     fun choose(w: Waiting.Task, card: WorkCard, i: Int) =
         work(w, "Answering: ${card.question.choices.getOrNull(i)?.label.orEmpty()}") { it.answer(CardAnswer(card, i)).ifEmpty { "Answered" } }
 
-    /** Finished work opens on its review card (what changed, the review, the checks); any other task on its board, a Shepherdr 2 one as its chat. */
+    /** Finished work opens on its review card (what changed, the review, the checks); any other task on its board, a Shepherdr 3 one as its chat. */
     fun openTask(w: Waiting.Task) {
         if (w.work == null && Approvals.waits(w.task)) panes.open(nav, Routes.review(w.machineId, w.task.id)) else panes.openBoard(nav, w.machineId, w.task.id)
     }
 
-    fun openAgent(a: HomeAgent) = panes.openAgent(nav, a.machineId, a.agent, hosts.any { it.machine.id == a.machineId && it.onShepherdr2 })
+    fun openAgent(a: HomeAgent) = panes.openAgent(nav, a.machineId, a.agent, hosts.any { it.machine.id == a.machineId && it.onShepherdr })
 
     /**
      * What an agent's long-press sheet offers besides its triage, as TalkBack's actions on its card
@@ -534,6 +536,21 @@ fun AgentsScreen(
                 Text("Its review card says what failed, and can approve it anyway.", style = MaterialTheme.typography.bodyMedium, color = Herdr.colors.muted)
             }
         }
+    }
+    acceptFor?.let { (w, t) ->
+        val board by androidx.compose.runtime.produceState<com.makefunstuff.herdr.core.board.WorkBoard?>(null, w.machineId) {
+            value = runCatching { container.hosts.session(w.machineId)?.awaitWorkBoard() }.getOrNull()
+        }
+        com.makefunstuff.herdr.ui.board.AcceptSheet(
+            board, t, onDismiss = { acceptFor = null },
+            onProof = { id -> nav.navigate(com.makefunstuff.herdr.Routes.artifact(w.machineId, id, null)) },
+            onAccepted = {
+                container.inbox.dismiss(Alerts.taskTag(w.machineId, w.task.id))
+                context.toast(it)
+                readNow.trySend(Unit)
+            },
+            confirm = { run -> guard.run(Guarded.Merge, "Accept ${t.name}?", t.title) { view.confirmTap(); run() } },
+        )
     }
     if (showNotices) {
         NoticesSheet(

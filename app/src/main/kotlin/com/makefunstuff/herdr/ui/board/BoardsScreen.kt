@@ -75,7 +75,7 @@ fun BoardsScreen(nav: NavController) {
     // Each task's agent on its machine: its chat opens from the card.
     val agents = remember(hosts) { HomeAgent.of(hosts) }
     val boards = rememberBoards()
-    // Shepherdr 2 machines: their spaces and tasks as the board sent them.
+    // Shepherdr 3 machines: their spaces and tasks as the board sent them.
     val works = rememberWorkBoards()
     val problems = rememberBoardProblems()
     val readNow = remember { Channel<Unit>(Channel.CONFLATED) }
@@ -85,7 +85,7 @@ fun BoardsScreen(nav: NavController) {
     // A machine without a board (or not checked yet since it connected) shows all.
     val machine = chosen?.takeIf { id -> withBoard.any { it.machine.id == id } }
     val groups = remember(boards, works, machine) { BoardGroup.of(boards.filter { it.machineId !in works }, machine).associateBy { it.machineId } }
-    // In the machines' order, each with its v1 group or its Shepherdr 2 board.
+    // In the machines' order, each with its v1 group or its Shepherdr 3 board.
     val shown = boards.filter { machine == null || it.machineId == machine }
     // What of the Needs you list (both tabs' badge) this tab shows: tasks and coordinators, on the machine chosen;
     // the rest (agents that ask with no task) is named, so the count adds up to the badge.
@@ -197,7 +197,7 @@ fun BoardsScreen(nav: NavController) {
     adding?.let { id ->
         container.hosts.session(id)?.let { session ->
             val repos = boards.firstOrNull { it.machineId == id }?.tasks.orEmpty().map { it.repo }.distinct().sorted()
-            if (session.state.value.onShepherdr2) AddWorkTask(session, works[id], onDismiss = { adding = null }) { space, title, brief ->
+            if (session.state.value.onShepherdr) AddWorkTask(session, works[id], onDismiss = { adding = null }) { space, title, brief ->
                 adding = null
                 scope.launch {
                     runCatching { session.awaitWorkBoard().addTask(space.id, title, brief) }
@@ -214,7 +214,7 @@ fun BoardsScreen(nav: NavController) {
 }
 
 /**
- * A Shepherdr 2 machine's part of the Board tab: what needs you, then each space's tasks at work and
+ * A Shepherdr 3 machine's part of the Board tab: what needs you, then each space's tasks at work and
  * to do, and how many are done. Its heading opens the whole board.
  */
 private fun LazyListScope.workGroup(

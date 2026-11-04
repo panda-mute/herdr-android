@@ -72,9 +72,9 @@ class MainActivity : FragmentActivity() {
             quick.isNotEmpty() -> Links.open(Routes.quickRuns(machine, quick))
             intent.getBooleanExtra(OPEN_COORDINATOR, false) -> Links.open(Routes.coordinator(machine))
             pane.isNotEmpty() -> Links.open(agentRoute(machine, pane))
-            // Finished work that waits for a yes: its review card, with the others after it. A Shepherdr 2
+            // Finished work that waits for a yes: its review card, with the others after it. A Shepherdr 3
             // task has none: it opens on its board as its agent's chat, Merge on it.
-            task.isNotEmpty() && intent.getBooleanExtra(OPEN_REVIEW, false) && !onShepherdr2(machine, task) -> Links.open(Routes.review(machine, task))
+            task.isNotEmpty() && intent.getBooleanExtra(OPEN_REVIEW, false) && !onShepherdr(machine, task) -> Links.open(Routes.review(machine, task))
             task.isNotEmpty() -> Links.open(Routes.board(machine, task))
             else -> Links.open(Routes.SETTINGS)
         }
@@ -82,19 +82,19 @@ class MainActivity : FragmentActivity() {
     }
 
     /**
-     * Where a notification about [pane] on [machine] opens: for an agent Shepherdr 2.1 started, its
+     * Where a notification about [pane] on [machine] opens: for an agent Shepherdr 3 started, its
      * task's chat or its space's Coordinator, where its cards are ([Panes.openAgent]); else its chat.
      */
     private fun agentRoute(machine: String, pane: String): String {
         val host = (application as HerdrApp).container.hosts.hosts.value.firstOrNull { it.machine.id == machine }
-        val agent = host?.takeIf { it.onShepherdr2 }?.view?.agents?.firstOrNull { it.paneId == pane }
+        val agent = host?.takeIf { it.onShepherdr }?.view?.agents?.firstOrNull { it.paneId == pane }
         return agent?.shepherdrTask?.let { Routes.board(machine, it, alone = true) }
             ?: agent?.shepherdrSpace?.let { Routes.coordinator(machine, it) }
             ?: Routes.agent(machine, pane)
     }
 
-    /** Whether [task] is a Shepherdr 2 task on [machine], as the app last read its board. */
-    private fun onShepherdr2(machine: String, task: String): Boolean =
+    /** Whether [task] is a Shepherdr 3 task on [machine], as the app last read its board. */
+    private fun onShepherdr(machine: String, task: String): Boolean =
         (application as HerdrApp).container.boards.lists.value[machine]?.work?.tasks?.any { it.id == task } == true
 
     companion object {

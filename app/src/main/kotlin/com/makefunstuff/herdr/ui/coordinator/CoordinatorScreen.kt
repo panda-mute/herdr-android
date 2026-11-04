@@ -125,7 +125,7 @@ fun CoordinatorScreen(nav: NavController, machineId: String, space: String? = nu
         return
     }
     val state by session.state.collectAsStateWithLifecycle()
-    // Shepherdr 2 has a coordinator in each space; herdr-projects 1.x one for the machine.
+    // Shepherdr 3 has a coordinator in each space; herdr-projects 1.x one for the machine.
     if (state.boardApi is BoardApi.V2) SpaceCoordinator(nav, machineId, session, space) else BoardCoordinator(nav, machineId, session)
 }
 
@@ -550,13 +550,14 @@ private fun Foot(v: CoordinatorView?, tooOld: Boolean, problem: String?, waitNot
 }
 
 @Composable
-internal fun Working(who: String = "Coordinator") {
+internal fun Working(who: String = "Coordinator", doing: String? = null) {
     val t = rememberInfiniteTransition(label = "working")
     val a by t.animateFloat(0.3f, 1f, infiniteRepeatable(tween(700), RepeatMode.Reverse), label = "dots")
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = Space.xs)) {
         StatusDot(Herdr.colors.working, Modifier.alpha(a), size = 8)
         Spacer(Modifier.width(Space.s))
-        Text("$who is working…", style = MaterialTheme.typography.bodySmall, color = Herdr.colors.muted)
+        // Shepherdr's working line: what it does now, in its CLI's words, where it says.
+        Text(doing?.takeIf { it.isNotBlank() } ?: "$who is working…", style = MaterialTheme.typography.bodySmall, color = Herdr.colors.muted, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
     }
 }
 

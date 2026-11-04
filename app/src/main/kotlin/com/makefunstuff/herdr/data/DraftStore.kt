@@ -35,10 +35,10 @@ class DraftStore(context: Context) {
         /** An agent's chat: one draft per pane on each machine. */
         fun agent(machineId: String, paneId: String) = "agent/$machineId/$paneId"
 
-        /** The work board's Coordinator chat on a machine; on Shepherdr 2, one per space. */
+        /** The work board's Coordinator chat on a machine; on Shepherdr 3, one per space. */
         fun coordinator(machineId: String, space: String? = null) = "coordinator/$machineId" + (space?.let { "/$it" } ?: "")
 
-        /** A Shepherdr 2 task's own chat, to its agent: one draft per task on each machine. */
+        /** A Shepherdr 3 task's own chat, to its agent: one draft per task on each machine. */
         fun task(machineId: String, task: String) = "task/$machineId/$task"
 
         /**

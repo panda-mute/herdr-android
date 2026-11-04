@@ -71,7 +71,7 @@ fun ArtifactsScreen(nav: NavController, machineId: String, space: String?) {
                     ?: Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { LoadingState("Reading the artifacts") }
                 list.isEmpty() -> ChatEmpty(
                     HerdrIcons.LayoutDashboard, "No artifacts yet",
-                    "Ask ${spaceName ?: "a coordinator"} for one: a report, a dashboard, a draft screen. Every agent can make them.",
+                    "Ask ${spaceName?.let { "$it's Assistant" } ?: "an Assistant"} for one: a report, a dashboard, a draft screen. Every agent can make them.",
                 )
                 else -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(vertical = 4.dp)) {
                     items(list, key = { it.id }) { a ->

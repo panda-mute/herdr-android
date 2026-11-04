@@ -1,0 +1,67 @@
+[
+ {
+  "type": "hello",
+  "version": "3.1.2",
+  "login": "local",
+  "machine": "devbox",
+  "link": null
+ },
+ {
+  "type": "chat",
+  "chat": {
+   "key": "p:sp00000000000000000000000000000a01",
+   "messages": [
+    {
+     "id": "tn:DEMO-8:started:1793823467788",
+     "who": "agent",
+     "at": 1793823467788,
+     "news": {
+      "task": "DEMO-8",
+      "ref": "DEMO-8",
+      "mark": "started",
+      "what": "started",
+      "text": "Shepherdr 3 client"
+     }
+    }
+   ],
+   "notice": "none",
+   "agent": {
+    "kind": "claude",
+    "words": "Opus",
+    "model": "opus",
+    "modelLabel": "Opus 5.5",
+    "runtime": {
+     "model": "opus",
+     "modelLabel": "Opus 5.5",
+     "speed": "normal",
+     "source": "session"
+    }
+   },
+   "working": false,
+   "cli": "claude"
+  }
+ },
+ {
+  "type": "chat",
+  "chat": {
+   "key": "DEMO-8/worker",
+   "messages": [],
+   "doing": "Running ./gradlew -p core test",
+   "notice": "none",
+   "agent": {
+    "kind": "claude",
+    "words": "Opus",
+    "model": "opus",
+    "modelLabel": "Opus 5.5",
+    "runtime": {
+     "model": "opus",
+     "modelLabel": "Opus 5.5",
+     "speed": "normal",
+     "source": "session"
+    }
+   },
+   "working": true,
+   "cli": "claude"
+  }
+ }
+]

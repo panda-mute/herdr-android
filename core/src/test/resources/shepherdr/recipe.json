@@ -1,0 +1,17 @@
+{"recipe": 1, "blocks": [
+ {"type": "heading", "text": "Coverage", "level": 1},
+ {"type": "text", "md": "**92%** of lines, up from 85%."},
+ {"type": "stats", "items": [{"label": "Lines", "value": 92, "note": "+7"}, {"label": "Files", "value": "41"}]},
+ {"type": "table", "columns": ["Module", {"label": "Cover", "align": "right"}], "rows": [["core", "95%"], ["app", 81]]},
+ {"type": "chart", "kind": "bar", "labels": ["Mon", "Tue", "Wed"], "series": [{"name": "Lines", "values": [80, 85, 92]}]},
+ {"type": "chart", "kind": "pie", "labels": ["Covered", "Not"], "series": [{"name": "Share", "values": [92, 8]}]},
+ {"type": "callout", "tone": "warn", "title": "Flaky", "md": "One test retried twice."},
+ {"id": "pics", "type": "pair", "before": {"src": "before.png", "caption": "Before"}, "after": {"src": "after.png", "caption": "After"}},
+ {"type": "columns", "columns": [[{"type": "list", "items": ["one", "two"], "ordered": true}], [{"type": "code", "text": "./gradlew test", "lang": "sh"}]]},
+ {"type": "details", "summary": "How it was measured", "blocks": [{"type": "text", "md": "With Kover."}, {"type": "image", "src": "../secret.png"}]},
+ {"type": "divider"},
+ {"type": "choice", "question": "Ship it?", "options": [{"label": "Yes"}, {"label": "Not yet", "description": "Wait for the flaky test"}]},
+ {"type": "form", "title": "Feedback", "fields": [{"name": "who", "label": "Your name"}, {"name": "ok", "label": "Looks good", "kind": "checkbox"}, {"name": "how", "kind": "select", "options": ["fast", "slow"]}], "submit": "Send"},
+ {"type": "button", "label": "Rerun", "reply": "Please rerun the coverage"},
+ {"type": "hologram", "text": "from the future"}
+]}

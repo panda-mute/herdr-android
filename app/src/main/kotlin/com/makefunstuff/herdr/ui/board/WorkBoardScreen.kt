@@ -110,14 +110,14 @@ import kotlinx.coroutines.launch
 @ReadOnlyComposable
 fun WorkStatus.color(): Color = Herdr.colors.tone(tone)
 
-/** What a person is part-way through on a Shepherdr 2 board: closing a task, adding one. */
+/** What a person is part-way through on a Shepherdr 3 board: closing a task, adding one. */
 private sealed interface WorkPending {
     data class Close(val task: WorkTask) : WorkPending
     data object Add : WorkPending
 }
 
 /**
- * A machine's Shepherdr 2 board, as [BoardScreen] shows it there: what needs you first (tasks that ask
+ * A machine's Shepherdr 3 board, as [BoardScreen] shows it there: what needs you first (tasks that ask
  * or wait, then those ready to merge, then coordinators that ask), then each space's tasks, done ones
  * folded away. Kept current from Shepherdr's live link, or read every few seconds where there is none.
  */
@@ -198,8 +198,12 @@ internal fun WorkBoardScreen(
         }
     }
 
-    // A merge can't be taken back: the fingerprint first, when that is on, as for v1's Approve and merge.
-    fun merge(t: WorkTask) = guard.run(Guarded.Merge, "Merge ${t.name}?", t.title) { act("Merging", t, approves = true) { it.approve(t) } }
+    /** The Ready task whose Accept card is up. */
+    var acceptFor by remember { mutableStateOf<WorkTask?>(null) }
+    // Shepherdr's Accept: its card first, which says what you approve; the fingerprint then, as for v1's Approve and merge.
+    fun merge(t: WorkTask) {
+        acceptFor = t
+    }
     fun answer(a: CardAnswer, t: WorkTask) = act("Answering", t) { it.answer(a).ifEmpty { "Answered" } }
     /** [space]'s coordinator chat; the home space's without one. */
     fun openCoordinator(space: String? = null) {
@@ -221,10 +225,10 @@ internal fun WorkBoardScreen(
             topBar = {
                 HerdrTopBar(
                     "Board",
-                    subtitle = "${state.machine.label} · ${if (o == null) "Shepherdr 2" else "${needsYou.size + asking.size} need you"}",
+                    subtitle = "${state.machine.label} · ${if (o == null) "Shepherdr" else "${needsYou.size + asking.size} need you"}",
                     onBack = if (pane == null) ({ nav.popBackStack() }) else null,
                 ) {
-                    BarIcon(HerdrIcons.MessagesSquare, "Coordinator chat", { openCoordinator() })
+                    BarIcon(HerdrIcons.MessagesSquare, "Assistant chat", { openCoordinator() })
                     BarIcon(HerdrIcons.RefreshCw, "Read the board again", { readNow.trySend(Unit) })
                 }
             },
@@ -264,15 +268,21 @@ internal fun WorkBoardScreen(
                                     // The space's heading opens its coordinator's chat.
                                     SectionHeading(
                                         listOfNotNull(s.name, open.size.takeIf { it > 0 }?.toString(), "can't be reached".takeIf { s.unreachable }).joinToString(" · "),
-                                        Modifier.clickable(onClickLabel = "Open ${s.name}'s coordinator chat") { openCoordinator(s.id) }.heightIn(min = 48.dp),
+                                        Modifier.clickable(onClickLabel = "Open ${s.name}'s Assistant chat") { openCoordinator(s.id) }.heightIn(min = 48.dp),
                                         top = Space.m,
                                         trailing = { Icon(HerdrIcons.MessagesSquare, null, tint = Herdr.colors.muted, modifier = Modifier.size(18.dp)) },
                                     )
                                 }
                                 items(open, key = { it.id }) { t -> WorkTaskRow(t, onOpen = { openId = t.id }) }
                             }
+                            // Tasks no space works in (queued or to do in a task list of their own): under their list's name.
+                            o.tasks.filter { t -> !t.status.needsYou && t.status != WorkStatus.Done && o.spaces.none { it.id == t.space } }
+                                .groupBy { it.listName.ifEmpty { "Other tasks" } }.forEach { (list, ts) ->
+                                    item(key = "l-$list") { SectionHeading("$list · ${ts.size}", top = Space.m) }
+                                    items(ts, key = { "l-${it.id}" }) { t -> WorkTaskRow(t, onOpen = { openId = t.id }) }
+                                }
                             if (needsYou.isEmpty() && asking.isEmpty() && o.tasks.none { it.status != WorkStatus.Done }) item(key = "empty") {
-                                StateBlock(HerdrIcons.SquareKanban, "Nothing open", "Add a task with +, or ask a space's coordinator.", Modifier.padding(top = Space.xxl))
+                                StateBlock(HerdrIcons.SquareKanban, "Nothing open", "Add a task with +, or ask a space's Assistant.", Modifier.padding(top = Space.xxl))
                             }
                             if (done.isNotEmpty()) {
                                 item(key = "h-done") {
@@ -321,6 +331,15 @@ internal fun WorkBoardScreen(
                 onAnswer = { a -> answer(a, open) },
             )
         }
+        acceptFor?.let { t ->
+            val board by produceState<WorkBoard?>(null, machineId) { value = runCatching { session.awaitWorkBoard() }.getOrNull() }
+            AcceptSheet(
+                board, o?.tasks?.firstOrNull { it.id == t.id } ?: t, onDismiss = { acceptFor = null },
+                onProof = { id -> nav.navigate(Routes.artifact(machineId, id, null)) },
+                onAccepted = { context.toast(it); readNow.trySend(Unit) },
+                confirm = { run -> guard.run(Guarded.Merge, "Accept ${t.name}?", t.title) { view.confirmTap(); run() } },
+            )
+        }
         when (val p = pending) {
             is WorkPending.Close -> BoardPanel(
                 "Close ${p.task.name}?", onDismiss = { pending = null },
@@ -337,7 +356,7 @@ internal fun WorkBoardScreen(
             }
             WorkPending.Add -> if (o != null) AddWorkTaskPanel(
                 o.spaces, onDismiss = { pending = null },
-                onSend = { space, title, brief -> pending = null; act("Asking the coordinator", null) { it.addTask(space.id, title, brief) } },
+                onSend = { space, title, brief -> pending = null; act("Asking the Assistant", null) { it.addTask(space.id, title, brief) } },
             )
             null -> {}
         }
@@ -352,9 +371,9 @@ internal fun WorkBoardScreen(
 /** The pull request's number in [pr]'s address, or null when it isn't one. */
 internal fun prNumberOf(pr: String): String? = pr.substringAfterLast('/').takeIf { "/pull/" in pr && it.isNotEmpty() && it.all(Char::isDigit) }
 
-/** What the Add panel and Start work say about adding a task on Shepherdr 2. */
+/** What the Add panel and Start work say about adding a task on Shepherdr 3. */
 internal const val ADD_THROUGH_COORDINATOR =
-    "Shepherdr 2 makes tasks only through a space's coordinator: this sends it what you wrote, and it adds the task."
+    "Shepherdr makes tasks only through a space's Assistant: this sends it what you wrote, and it adds the task."
 
 /**
  * [AddWorkTaskPanel] for [session]'s board from elsewhere (the Board tab): its spaces as last read, or read
@@ -372,7 +391,7 @@ internal fun AddWorkTask(session: HostSession, read: WorkOverview?, onDismiss: (
 }
 
 /**
- * Adding a task on a Shepherdr 2 board: which space, a title and a brief. Sent to that space's
+ * Adding a task on a Shepherdr 3 board: which space, a title and a brief. Sent to that space's
  * coordinator as a message, which makes the task; the panel says so.
  */
 @OptIn(ExperimentalLayoutApi::class)
@@ -387,7 +406,7 @@ internal fun AddWorkTaskPanel(spaces: List<WorkSpace>, onDismiss: () -> Unit, on
         "Add a task", onDismiss,
         buttons = {
             PanelCancel(onDismiss)
-            PrimaryButton("Send to the coordinator", enabled = space != null && title.isNotBlank()) { space?.let { onSend(it, title.trim(), brief.trim()) } }
+            PrimaryButton("Send to the Assistant", enabled = space != null && title.isNotBlank()) { space?.let { onSend(it, title.trim(), brief.trim()) } }
         },
     ) {
         Notice(ADD_THROUGH_COORDINATOR, icon = HerdrIcons.MessagesSquare)

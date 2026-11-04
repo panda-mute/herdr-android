@@ -162,9 +162,9 @@ data class AgentInfo(
     @SerialName("completion_seq") val completionSeq: Long? = null,
     val cwd: String? = null,
     @SerialName("agent_session") val agentSession: AgentSessionRef? = null,
-    /** The Shepherdr 2.1 task it is the agent of, from its terminal's labels (herdr-core); null for any other (its reviewer too). */
+    /** The Shepherdr task it is the agent of (`HERD-8`), from its terminal's labels (herdr-core); null for any other (its reviewer too). */
     @SerialName("shepherdr_task") val shepherdrTask: String? = null,
-    /** The Shepherdr 2.1 space (its id) whose coordinator this is, from its terminal's labels (herdr-core); null for any other. */
+    /** The Shepherdr space (its id) whose Assistant this is, from its terminal's labels (herdr-core); null for any other. */
     @SerialName("shepherdr_space") val shepherdrSpace: String? = null,
 ) {
     val agentStatus: AgentStatus get() = AgentStatus.of(agentStatusRaw)

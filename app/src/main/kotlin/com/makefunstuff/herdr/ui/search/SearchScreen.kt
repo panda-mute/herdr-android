@@ -105,7 +105,7 @@ fun SearchScreen(nav: NavController, machineId: String? = null, initial: String 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val hosts by container.hosts.hosts.collectAsStateWithLifecycle()
-    // Shepherdr 2 boards too: their tasks open as their agents' chats.
+    // Shepherdr 3 boards too: their tasks open as their agents' chats.
     val boards = rememberBoards()
     val readNow = remember { Channel<Unit>(Channel.CONFLATED) }
     ReadBoards(readNow, everyMs = 30_000)
@@ -147,9 +147,9 @@ fun SearchScreen(nav: NavController, machineId: String? = null, initial: String 
     val chats = hosts.flatMap { h -> chatHits[h.machine.id].orEmpty().map { h to it } }
         .filter { (h, hit) -> filter == SearchFilter.All || h.view?.agents?.firstOrNull { it.paneId == hit.paneId }?.let { SearchFilter.of(it.agentStatus) } == filter }
 
-    fun openAgent(h: AgentHit) = panes.openAgent(nav, h.agent.machineId, h.agent.agent, hosts.any { it.machine.id == h.agent.machineId && it.onShepherdr2 })
+    fun openAgent(h: AgentHit) = panes.openAgent(nav, h.agent.machineId, h.agent.agent, hosts.any { it.machine.id == h.agent.machineId && it.onShepherdr })
     fun openTask(t: TaskHit) {
-        val v2 = hosts.firstOrNull { it.machine.id == t.machineId }?.onShepherdr2 == true
+        val v2 = hosts.firstOrNull { it.machine.id == t.machineId }?.onShepherdr == true
         if (Approvals.waits(t.task) && !v2) panes.open(nav, Routes.review(t.machineId, t.task.id)) else panes.openBoard(nav, t.machineId, t.task.id)
     }
     fun startWork(text: String) = panes.open(nav, Routes.start(scoped, text.trim().ifEmpty { null }))

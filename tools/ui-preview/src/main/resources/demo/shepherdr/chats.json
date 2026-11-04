@@ -1,71 +1,228 @@
 {
- "AND-21/Agent": {
-  "key": "AND-21/Agent",
-  "cli": "Claude Code",
+ "AND-21/worker": {
+  "key": "AND-21/worker",
+  "cli": "claude",
   "messages": [
-   {"id": "u0", "who": "you", "at": 1793226880869, "text": "Add a “last answered 2 min ago” line to each machine card, with a test for it."},
-   {"id": "act:t21", "who": "agent", "at": 1793228210869, "activity": {
-     "id": "t21", "at": 1793226890869, "end": 1793228210869, "steps": 11, "more": 2,
+   {
+    "id": "u0",
+    "who": "you",
+    "at": 1793226880869,
+    "text": "Add a “last answered 2 min ago” line to each machine card, with a test for it."
+   },
+   {
+    "id": "act:t21",
+    "who": "agent",
+    "at": 1793228210869,
+    "activity": {
+     "id": "t21",
+     "at": 1793226890869,
+     "end": 1793228210869,
+     "steps": 11,
+     "more": 2,
      "rows": [
-      {"key": "r1", "kind": "read", "text": "Read MachinesScreen.kt and HostState.kt", "steps": ["s1"]},
-      {"key": "r2", "kind": "edit", "text": "Edited 2 files: MachinesScreen.kt, HostState.kt", "steps": ["s2"]},
-      {"key": "r3", "kind": "test", "text": "Ran tests: 214 passed", "steps": ["s3"]}
+      {
+       "key": "r1",
+       "kind": "read",
+       "text": "Read MachinesScreen.kt and HostState.kt",
+       "steps": [
+        "s1"
+       ]
+      },
+      {
+       "key": "r2",
+       "kind": "edit",
+       "text": "Edited 2 files: MachinesScreen.kt, HostState.kt",
+       "steps": [
+        "s2"
+       ]
+      },
+      {
+       "key": "r3",
+       "kind": "test",
+       "text": "Ran tests: 214 passed",
+       "steps": [
+        "s3"
+       ]
+      }
      ]
-   }},
-   {"id": "m1", "who": "agent", "text": "The line is in and its test passes. One question before I finish."},
-   {"id": "m2", "who": "agent", "question": {
-     "id": "q-and21-1", "title": "Which wording for the line under each machine?", "kind": "Form", "other": true, "to": "AND-21",
+    }
+   },
+   {
+    "id": "m1",
+    "who": "agent",
+    "text": "The line is in and its test passes. One question before I finish."
+   },
+   {
+    "id": "m2",
+    "who": "agent",
+    "question": {
+     "id": "q-and21-1",
+     "title": "Which wording for the line under each machine?",
+     "kind": "Form",
+     "other": true,
+     "to": "AND-21/worker",
      "choices": [
-      {"label": "Last answered 2 min ago", "description": "As the brief said"},
-      {"label": "Answered 2 min ago"},
-      {"label": "Seen 2 min ago", "description": "Shorter; matches the agents' cards"}
+      {
+       "label": "Last answered 2 min ago",
+       "description": "As the brief said"
+      },
+      {
+       "label": "Answered 2 min ago"
+      },
+      {
+       "label": "Seen 2 min ago",
+       "description": "Shorter; matches the agents' cards"
+      }
      ]
-   }}
+    }
+   }
   ]
  },
- "AND-24/Agent": {
-  "key": "AND-24/Agent",
-  "cli": "Codex",
+ "AND-24/worker": {
+  "key": "AND-24/worker",
+  "cli": "codex",
   "messages": [
-   {"id": "m1", "who": "agent", "question": {
-     "id": "q-and24-1", "title": "Which sections should fold away under **More settings**?", "kind": "Form", "multi": true, "noNote": true, "to": "AND-24",
+   {
+    "id": "m1",
+    "who": "agent",
+    "question": {
+     "id": "q-and24-1",
+     "title": "Which sections should fold away under **More settings**?",
+     "kind": "Form",
+     "multi": true,
+     "noNote": true,
+     "to": "AND-24/worker",
      "choices": [
-      {"label": "Key bar"}, {"label": "Quiet hours"}, {"label": "Alert rules"}, {"label": "Usage limits"}
+      {
+       "label": "Key bar"
+      },
+      {
+       "label": "Quiet hours"
+      },
+      {
+       "label": "Alert rules"
+      },
+      {
+       "label": "Usage limits"
+      }
      ]
-   }}
+    }
+   }
   ]
  },
- "AND-20/Agent": {
-  "key": "AND-20/Agent",
-  "cli": "Claude Code",
+ "AND-20/worker": {
+  "key": "AND-20/worker",
+  "cli": "claude",
   "messages": [
-   {"id": "u1", "who": "you", "at": 1793225880869, "text": "Limit exports to 10 a minute per tenant."},
-   {"id": "act:t20", "who": "agent", "at": 1793226730869, "activity": {
-     "id": "t20", "at": 1793225890869, "end": 1793226730869, "steps": 9,
+   {
+    "id": "u1",
+    "who": "you",
+    "at": 1793225880869,
+    "text": "Limit exports to 10 a minute per tenant."
+   },
+   {
+    "id": "act:t20",
+    "who": "agent",
+    "at": 1793226730869,
+    "activity": {
+     "id": "t20",
+     "at": 1793225890869,
+     "end": 1793226730869,
+     "steps": 9,
      "rows": [
-      {"key": "r1", "kind": "edit", "text": "Edited 3 files: export.go, limit.go, config.go", "steps": ["s1"]},
-      {"key": "r2", "kind": "test", "text": "Ran tests: 41 passed", "steps": ["s2"]},
-      {"key": "r3", "kind": "run", "text": "Opened PR #142", "steps": ["s3"]}
+      {
+       "key": "r1",
+       "kind": "edit",
+       "text": "Edited 3 files: export.go, limit.go, config.go",
+       "steps": [
+        "s1"
+       ]
+      },
+      {
+       "key": "r2",
+       "kind": "test",
+       "text": "Ran tests: 41 passed",
+       "steps": [
+        "s2"
+       ]
+      },
+      {
+       "key": "r3",
+       "kind": "run",
+       "text": "Opened PR #142",
+       "steps": [
+        "s3"
+       ]
+      }
      ]
-   }},
-   {"id": "m2", "who": "agent", "at": 1793226780869, "text": "Exports are now limited to **10 a minute per tenant**. A request over the limit gets a 429 with `Retry-After`, and the limit is a setting (`export.per_minute`)."},
-   {"id": "c3", "who": "agent", "at": 1793226880869, "text": "AND-20 is ready to merge", "card": {"id": "c3", "task": "AND-20", "status": "ready", "text": "is ready to merge", "pr": {"number": 142, "url": "https://github.com/demo/api-server/pull/142"}}}
+    }
+   },
+   {
+    "id": "m2",
+    "who": "agent",
+    "at": 1793226780869,
+    "text": "Exports are now limited to **10 a minute per tenant**. A request over the limit gets a 429 with `Retry-After`, and the limit is a setting (`export.per_minute`)."
+   },
+   {
+    "id": "tn:AND-20:ready:c3",
+    "who": "agent",
+    "at": 1793226880869,
+    "news": {
+     "task": "AND-20",
+     "ref": "AND-20",
+     "mark": "ready",
+     "what": "is ready to merge",
+     "text": "",
+     "accept": true
+    }
+   }
   ]
  },
- "AND-19/Agent": {
-  "key": "AND-19/Agent",
-  "cli": "Claude Code",
+ "AND-19/worker": {
+  "key": "AND-19/worker",
+  "cli": "claude",
   "working": true,
   "messages": [
-   {"id": "u1", "who": "you", "at": 1793228880869, "text": "Make GET /jobs answer under 200 ms on a table of a million rows."},
-   {"id": "m1", "who": "agent", "at": 1793228980869, "text": "It scans the whole table: there is no index on `created_at`. Adding one, then I'll measure again."},
-   {"id": "act:t19", "who": "agent", "at": 1793229080869, "activity": {
-     "id": "t19", "at": 1793228990869, "steps": 4,
+   {
+    "id": "u1",
+    "who": "you",
+    "at": 1793228880869,
+    "text": "Make GET /jobs answer under 200 ms on a table of a million rows."
+   },
+   {
+    "id": "m1",
+    "who": "agent",
+    "at": 1793228980869,
+    "text": "It scans the whole table: there is no index on `created_at`. Adding one, then I'll measure again."
+   },
+   {
+    "id": "act:t19",
+    "who": "agent",
+    "at": 1793229080869,
+    "activity": {
+     "id": "t19",
+     "at": 1793228990869,
+     "steps": 4,
      "rows": [
-      {"key": "r1", "kind": "edit", "text": "Edited migrations/0042_jobs_created_at.sql", "steps": ["s1"]},
-      {"key": "r2", "kind": "run", "text": "Running the benchmark", "steps": ["s2"]}
+      {
+       "key": "r1",
+       "kind": "edit",
+       "text": "Edited migrations/0042_jobs_created_at.sql",
+       "steps": [
+        "s1"
+       ]
+      },
+      {
+       "key": "r2",
+       "kind": "run",
+       "text": "Running the benchmark",
+       "steps": [
+        "s2"
+       ]
+      }
      ]
-   }}
+    }
+   }
   ]
  }
 }

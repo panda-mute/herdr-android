@@ -21,21 +21,22 @@ class BytesReply(val status: Int, val body: ByteArray)
 /**
  * Just enough HTTP/1.1 and WebSocket (RFC 6455) for Shepherdr's loopback API, over any byte stream
  * (a socket to the SSH port forward). Android has no `java.net.http`, and core has no HTTP library:
- * these few requests don't need one. A request is sent without `Origin`, as a program's, which
- * Shepherdr's same-site check lets through (`sameSite` in `server/app.ts`).
+ * these few requests don't need one. A request is sent without `Origin` and with the service's token, as a program
+ * on its machine sends it, which is what its gate lets through on 127.0.0.1 (`service/auth.ts`).
  */
 object Wire {
-    /** The `Host` the server sees: the address it listens on, as the forward reaches it. */
-    const val HOST = "127.0.0.1:7787"
+    /** The `Host` the service sees: the address it listens on, as the forward reaches it. */
+    const val HOST = "127.0.0.1:${BoardDetection.PORT}"
 
-    fun request(method: String, path: String, body: String?): ByteArray =
-        request(method, path, body?.toByteArray(Charsets.UTF_8), "application/json")
+    fun request(method: String, path: String, body: String?, token: String? = null): ByteArray =
+        request(method, path, body?.toByteArray(Charsets.UTF_8), "application/json", token)
 
-    /** A request with [bytes] of [type] as its body (none: no body). */
-    fun request(method: String, path: String, bytes: ByteArray?, type: String?): ByteArray {
+    /** A request with [bytes] of [type] as its body (none: no body), with the service's [token] where there is one. */
+    fun request(method: String, path: String, bytes: ByteArray?, type: String?, token: String? = null): ByteArray {
         val head = buildString {
             append("$method $path HTTP/1.1\r\n")
             append("Host: $HOST\r\n")
+            token?.let { append("Authorization: Bearer $it\r\n") }
             append("Accept: application/json\r\n")
             append("Connection: close\r\n")
             if (bytes != null) {
@@ -48,14 +49,14 @@ object Wire {
     }
 
     /** One request on a fresh stream, closed after the answer. */
-    fun exchange(stream: Duplex, method: String, path: String, body: String?): HttpReply {
-        val r = exchange(stream, method, path, body?.toByteArray(Charsets.UTF_8), "application/json")
+    fun exchange(stream: Duplex, method: String, path: String, body: String?, token: String? = null): HttpReply {
+        val r = exchange(stream, method, path, body?.toByteArray(Charsets.UTF_8), "application/json", token)
         return HttpReply(r.status, r.body.toString(Charsets.UTF_8))
     }
 
     /** One request with a binary body (or none), its answer as bytes; the stream is closed after it. */
-    fun exchange(stream: Duplex, method: String, path: String, bytes: ByteArray?, type: String?): BytesReply = stream.use { s ->
-        s.output.write(request(method, path, bytes, type))
+    fun exchange(stream: Duplex, method: String, path: String, bytes: ByteArray?, type: String?, token: String? = null): BytesReply = stream.use { s ->
+        s.output.write(request(method, path, bytes, type, token))
         s.output.flush()
         val input = BufferedInputStream(s.input)
         val (status, headers) = readHead(input)
@@ -137,10 +138,11 @@ object Wire {
     }
 
     /** Opens a WebSocket on [stream] at [path]; the stream belongs to it from here on. */
-    fun webSocket(stream: Duplex, path: String, random: SecureRandom = SecureRandom()): WebSocketLink {
+    fun webSocket(stream: Duplex, path: String, random: SecureRandom = SecureRandom(), token: String? = null): WebSocketLink {
         try {
             val key = Base64.getEncoder().encodeToString(ByteArray(16).also(random::nextBytes))
             val req = "GET $path HTTP/1.1\r\nHost: $HOST\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+                (token?.let { "Authorization: Bearer $it\r\n" } ?: "") +
                 "Sec-WebSocket-Key: $key\r\nSec-WebSocket-Version: 13\r\n\r\n"
             stream.output.write(req.toByteArray(Charsets.US_ASCII))
             stream.output.flush()
@@ -157,8 +159,8 @@ object Wire {
 }
 
 /**
- * A client's WebSocket: text messages both ways. [receive] blocks until a whole message is in (pings
- * are answered on the way) and gives null once the server closed it.
+ * A client's WebSocket: text messages both ways, and binary ones for a voice call. [receive] blocks until a whole
+ * text message is in (pings are answered on the way) and gives null once the server closed it.
  */
 class WebSocketLink internal constructor(
     private val input: InputStream,
@@ -169,7 +171,18 @@ class WebSocketLink internal constructor(
     @Volatile var closed = false
         private set
 
+    /** The next whole text message; binary ones are skipped. */
     override fun receive(): String? {
+        while (true) {
+            when (val m = receiveAny() ?: return null) {
+                is String -> return m
+                else -> continue
+            }
+        }
+    }
+
+    /** The next whole message: a [String] (text) or a [ByteArray] (binary); null once closed. */
+    fun receiveAny(): Any? {
         val message = ByteArrayOutputStream()
         var kind = 0
         while (true) {
@@ -194,18 +207,16 @@ class WebSocketLink internal constructor(
                     if (opcode != 0x0) kind = opcode
                     message.write(payload)
                     if (message.size() > MAX_MESSAGE) throw IOException("Shepherdr sent a message too large to take")
-                    if (fin) {
-                        // Shepherdr's live link only sends text: anything binary is skipped.
-                        if (kind == 0x1) return message.toString(Charsets.UTF_8.name())
-                        message.reset()
-                        kind = 0
-                    }
+                    if (fin) return if (kind == 0x2) message.toByteArray() else message.toString(Charsets.UTF_8.name())
                 }
             }
         }
     }
 
     override fun send(text: String) = frame(0x1, text.toByteArray(Charsets.UTF_8))
+
+    /** A binary message (a voice call's audio). */
+    fun send(bytes: ByteArray) = frame(0x2, bytes)
 
     @Synchronized
     private fun frame(opcode: Int, payload: ByteArray) {

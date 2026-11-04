@@ -29,7 +29,7 @@ class BoardLists(
 ) {
     /**
      * One board's list; [problem] when the last read failed (the tasks are then the read before).
-     * On Shepherdr 2, [work] is the board as it sent it (its spaces) and [tasks] its tasks in v1's row shape.
+     * On Shepherdr 3, [work] is the board as it sent it (its spaces) and [tasks] its tasks in v1's row shape.
      */
     data class Read(val tasks: List<BoardTask>, val problem: String? = null, val work: WorkOverview? = null)
 
@@ -45,7 +45,7 @@ class BoardLists(
         _lists.update { it + (machineId to Read(tasks)) }
     }
 
-    /** [machineId]'s Shepherdr 2 board, read somewhere in the app. */
+    /** [machineId]'s Shepherdr 3 board, read somewhere in the app. */
     fun put(machineId: String, work: WorkOverview) {
         readAt[machineId] = now()
         _lists.update { it + (machineId to Read(work.tasks.map(WorkTasks::row), work = work)) }
@@ -67,7 +67,7 @@ class BoardLists(
     private suspend fun read(machineId: String) {
         try {
             val session = hosts.session(machineId) ?: return
-            val tasks = if (session.state.value.onShepherdr2) {
+            val tasks = if (session.state.value.onShepherdr) {
                 val work = withTimeout(30_000) { session.awaitWorkBoard().overview() }
                 put(machineId, work)
                 work.tasks.map(WorkTasks::row)

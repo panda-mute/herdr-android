@@ -209,8 +209,8 @@ class BriefWork(
         if (!s.state.value.boardChecked) s.checkBoard()
         val hasBoard = s.state.value.hasWorkBoard
         val tasks = when {
-            // Shepherdr 2: its tasks in the rows the brief reads.
-            s.state.value.onShepherdr2 -> runCatching { s.awaitWorkBoard().overview().tasks.map(WorkTasks::row) }.getOrNull()
+            // Shepherdr 3: its tasks in the rows the brief reads.
+            s.state.value.onShepherdr -> runCatching { s.awaitWorkBoard().overview().tasks.map(WorkTasks::row) }.getOrNull()
             hasBoard -> runCatching { PushLook.tasks(s.awaitBoard()) }.getOrNull()
             else -> null
         }

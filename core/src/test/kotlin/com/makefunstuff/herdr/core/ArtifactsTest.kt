@@ -1,11 +1,11 @@
 package com.makefunstuff.herdr.core
 
-import com.makefunstuff.herdr.core.shepherdr.ArtifactMessage
-import com.makefunstuff.herdr.core.shepherdr.ArtifactPage
-import com.makefunstuff.herdr.core.shepherdr.ArtifactSendGate
+import com.makefunstuff.herdr.core.board.WorkSpace
 import com.makefunstuff.herdr.core.shepherdr.Artifacts
 import com.makefunstuff.herdr.core.shepherdr.BytesReply
 import com.makefunstuff.herdr.core.shepherdr.HttpReply
+import com.makefunstuff.herdr.core.shepherdr.RecipeBlock
+import com.makefunstuff.herdr.core.shepherdr.Recipes
 import com.makefunstuff.herdr.core.shepherdr.ShepherdrClient
 import com.makefunstuff.herdr.core.shepherdr.ShepherdrJson
 import com.makefunstuff.herdr.core.shepherdr.ShepherdrTransport
@@ -13,57 +13,100 @@ import com.makefunstuff.herdr.core.shepherdr.SpaceChat
 import com.makefunstuff.herdr.core.shepherdr.SpaceChatItem
 import com.makefunstuff.herdr.core.shepherdr.V2Board
 import com.makefunstuff.herdr.core.shepherdr.V2Chat
+import com.makefunstuff.herdr.core.shepherdr.V2Event
+import com.makefunstuff.herdr.core.shepherdr.V2Events
 import com.makefunstuff.herdr.core.shepherdr.V2Snapshot
 import com.makefunstuff.herdr.core.shepherdr.V2WorkBoard
 import com.makefunstuff.herdr.core.shepherdr.WebSocketLink
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.io.IOException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class ArtifactsTest {
-    /** A 2.1 snapshot with two artifacts in herdr-android and one at home, as `GET /api/snapshot` sends them. */
-    private val snapshot = ShepherdrJson.decodeFromString(
-        V2Snapshot.serializer(),
-        """
-        {"places":[{"id":"p:a","name":"app"},{"id":"p:h","name":"home","home":true}],"tasks":[],
-         "artifacts":[
-          {"id":"wk3n","title":"Weekly board","place":"p:a","v":3,"at":300,"when":"2m","by":"HA-1 agent","keeper":"HA-1 agent","thumb":true,
-           "chats":["HA-1/Agent"],"versions":[{"n":3,"when":"2m","by":"HA-1 agent","html":2,"what":"data"},{"n":2,"when":"1h","by":"HA-1 agent","html":2,"note":"bars by week"},{"n":1,"when":"2h","by":"HA-1 agent","html":1}]},
-          {"id":"rn09","title":"Release notes","place":"p:a","v":1,"at":500,"when":"now","by":"app","keeper":"app","versions":[{"n":1,"when":"now","by":"app","html":1}]},
-          {"id":"bk","title":"Backups","place":"p:h","v":1,"at":900,"versions":[{"n":1,"html":1}]}
-         ]}
-        """.trimIndent(),
-    )
+    private fun fixture(name: String) = javaClass.getResource("/shepherdr/$name")!!.readText()
+
+    private val snapshot: V2Snapshot = (ShepherdrJson.parseToJsonElement(fixture("waiting.json")) as JsonArray)
+        .map { V2Events.parse(it.toString()) }.filterIsInstance<V2Event.Snapshot>().single().snapshot
 
     @Test
-    fun aSpaceListsItsOwnArtifactsNewestFirst() {
+    fun aSpaceListsTheArtifactsInItsStoreNewestFirst() {
         val all = snapshot.artifacts!!
-        assertEquals(listOf("rn09", "wk3n"), Artifacts.inSpace(all, "p:a").map { it.id })
-        // A home space lists its machine's, the main home every machine's, as Shepherdr's lists do.
-        val spaces = listOf(
-            com.makefunstuff.herdr.core.board.WorkSpace("p:a", "app", machine = "m"),
-            com.makefunstuff.herdr.core.board.WorkSpace("p:h", "home", machine = "m", home = true, level = 1),
-            com.makefunstuff.herdr.core.board.WorkSpace("p:x", "elsewhere", machine = "n"),
-        )
-        assertEquals(listOf("bk", "rn09", "wk3n"), Artifacts.inSpace(all, "p:h", spaces).map { it.id })
-        assertEquals(listOf("rn09", "wk3n"), Artifacts.inSpace(all, "p:a", spaces).map { it.id })
-        assertEquals(emptyList(), Artifacts.inSpace(all, "p:x", spaces))
-        assertEquals(3, Artifacts.inSpace(all, "p:h", spaces.map { if (it.home) it.copy(level = 0) else it }).size)
-        val wk = all.first { it.id == "wk3n" }
-        // A version that only brought data shows the page before it.
-        assertEquals(2, wk.htmlOf(3))
-        assertEquals(1, wk.htmlOf(1))
-        assertEquals("v3 · latest · new data", Artifacts.versionLine(wk, wk.versions[0]))
-        assertEquals("v2 · bars by week", Artifacts.versionLine(wk, wk.versions[1]))
-        // The overview carries them; a Shepherdr that keeps none has none, so the app shows no artifacts.
-        assertEquals(3, V2Board.overview(snapshot).artifacts!!.size)
+        val o = V2Board.overview(snapshot)
+        val app = o.spaces.first { it.name == "demo-app" }
+        assertEquals(listOf("demo-coverage"), Artifacts.inSpace(all, app.id, o.spaces).map { it.id })
+        assertEquals(listOf("api-load"), Artifacts.inSpace(all, "vm/sp0000000000000000000000000000b001", o.spaces).map { it.id })
+        // A worktree space shares its repo's store: its artifacts too.
+        val worktree = WorkSpace("sp-wt", "demo-app-wt", store = app.store)
+        assertEquals(listOf("demo-coverage"), Artifacts.inSpace(all, "sp-wt", o.spaces + worktree).map { it.id })
+        assertEquals(emptyList(), Artifacts.inSpace(all, "sp-none", o.spaces))
+        // The overview carries them; a board that keeps none has none, so the app shows no artifacts.
+        assertEquals(2, o.artifacts!!.size)
         assertNull(V2Board.overview(V2Snapshot()).artifacts)
+    }
+
+    @Test
+    fun aRecipeIsDrawnAndAPanelOnlyTheWindowRunsIsNot() {
+        val a = snapshot.artifacts!!.first { it.id == "demo-coverage" }
+        assertEquals("recipe", a.kind)
+        assertTrue(a.drawn(2))
+        // Converted: its first version was a GPUI panel.
+        assertFalse(a.drawn(1))
+        assertEquals("v2 · latest", Artifacts.versionLine(a, a.versions[0]))
+        assertEquals("DEMO-4", a.task)
+        // A version that says no kind of its own takes the artifact's.
+        assertTrue(snapshot.artifacts!!.first { it.id == "api-load" }.drawn(1))
+    }
+
+    @Test
+    fun readsEveryKindOfBlock() {
+        val r = Recipes.parse(fixture("recipe.json"))
+        assertEquals(
+            listOf("Heading", "Text", "Stats", "Table", "Chart", "Chart", "Callout", "Pair", "Columns", "Details", "Divider", "Choice", "Form", "Button", "Unknown"),
+            r.blocks.map { it::class.simpleName },
+        )
+        // Ids as core/recipe.js withIds gives them: its own, else b1, b2… in order, a block before what it holds.
+        assertEquals(listOf("b1", "b2", "b3", "b4", "b5", "b6", "b7", "pics", "b8", "b11", "b14", "b15", "b16", "b17", "b18"), r.blocks.map { it.id })
+        val cols = r.blocks[8] as RecipeBlock.Columns
+        assertEquals(listOf("b9", "b10"), cols.columns.map { it.single().id })
+        val stats = r.blocks[2] as RecipeBlock.Stats
+        // A number as it was written.
+        assertEquals(listOf("92", "41"), stats.items.map { it.value })
+        assertEquals("+7", stats.items[0].note)
+        val table = r.blocks[3] as RecipeBlock.Table
+        assertEquals(listOf(null, "right"), table.columns.map { it.align })
+        assertEquals(listOf("app", "81"), table.rows[1])
+        assertEquals("warn", (r.blocks[6] as RecipeBlock.Callout).tone)
+        val form = r.blocks[12] as RecipeBlock.Form
+        assertEquals(listOf("text", "checkbox", "select"), form.fields.map { it.kind })
+        assertEquals(listOf("fast", "slow"), form.fields[2].options)
+        assertEquals("hologram", (r.blocks.last() as RecipeBlock.Unknown).type)
+        assertIs<RecipeBlock.Heading>(r.blocks[0]).let { assertEquals(1, it.level) }
+        // Only pictures beside it are read: never one outside its folder.
+        assertEquals(listOf("before.png", "after.png"), Recipes.pictures(r.blocks))
+    }
+
+    @Test
+    fun answersAndNotesInRecipesWords() {
+        val r = Recipes.parse(fixture("recipe.json"))
+        val choice = r.blocks.filterIsInstance<RecipeBlock.Choice>().single()
+        assertEquals("Ship it?: Not yet", Recipes.choiceReply(choice, "Not yet"))
+        val form = r.blocks.filterIsInstance<RecipeBlock.Form>().single()
+        assertEquals("Feedback\nYour name: Ada\nLooks good: yes\nhow: (empty)", Recipes.formReply(form, mapOf("who" to " Ada ", "ok" to true)))
+        assertEquals("the heading “Coverage”", Recipes.blockName(r.blocks[0]))
+        assertEquals("the numbers b3", Recipes.blockName(r.blocks[2]))
+        assertEquals("the choice “Ship it?”", Recipes.blockName(choice))
+        val bars = Recipes.bars(r.blocks[4] as RecipeBlock.Chart)
+        assertEquals(listOf(80.0 / 92, 85.0 / 92, 1.0), bars.map { it.h })
+        assertEquals(listOf(0.92, 0.08), Recipes.slices(r.blocks[5] as RecipeBlock.Chart).map { it.third })
+        assertEquals("x".repeat(4000), Artifacts.line("x".repeat(5000)))
     }
 
     @Test
@@ -78,71 +121,10 @@ class ArtifactsTest {
         )
         val cards = SpaceChat.items("p:a", chat).filterIsInstance<SpaceChatItem.Artifact>()
         assertEquals(listOf(true, false, false), cards.map { it.later })
-        assertEquals("With bars by week", cards[2].intro)
-        assertEquals(2, cards[2].version)
     }
 
     @Test
-    fun thePageIsSealedBeforeAnythingOfItsOwnRuns() {
-        val wrapped = """<!doctype html><html class="full phone shepherdr-dark"><head><meta charset="utf-8"><script>/*bridge*/</script></head><body><header>Hi</header></body></html>"""
-        val sealed = ArtifactPage.seal(wrapped)
-        val csp = sealed.indexOf("Content-Security-Policy")
-        assertTrue(csp in 0 until sealed.indexOf("/*bridge*/"))
-        assertTrue("connect-src 'none'" in sealed && "default-src 'none'" in sealed)
-        assertTrue(sealed.indexOf(ArtifactPage.BRIDGE) < sealed.indexOf("/*bridge*/"))
-        // First after the doctype, so a script before its <head>, or a "<head>" in a comment, can't come first.
-        assertTrue(sealed.startsWith("<!doctype html><meta http-equiv=\"Content-Security-Policy\""))
-        val sly = ArtifactPage.seal("""<html><!-- <head> --><script>/*early*/</script><head></head></html>""")
-        assertTrue(sly.indexOf("Content-Security-Policy") < sly.indexOf("/*early*/"))
-        assertTrue(ArtifactPage.seal("<p>Hi</p>").startsWith("<!doctype html><meta http-equiv=\"Content-Security-Policy\""))
-        // Served with a sandbox, as Shepherdr's frame is; no peer connections either.
-        assertTrue(ArtifactPage.HEADERS.getValue("Content-Security-Policy").startsWith("sandbox allow-scripts allow-forms; default-src 'none'"))
-        assertTrue("RTCPeerConnection" in sealed)
-        // What goes into the page: data as JSON, the theme, what was sent.
-        assertEquals("window.postMessage({shepherdr:'data',data:{\"rows\":[1,2]}},'*');", ArtifactPage.data(ArtifactPage.dataOf("""{"data":{"rows":[1,2]}}""")))
-        assertEquals("null", ArtifactPage.dataOf("""{"data":null}"""))
-        assertEquals("window.postMessage({shepherdr:'theme',theme:'light'},'*');", ArtifactPage.theme(false))
-        assertEquals("window.postMessage({shepherdr:'sent',text:\"a \\\"b\\\"\",to:\"HA-1 agent\"},'*');", ArtifactPage.sent("a \"b\"", "HA-1 agent"))
-    }
-
-    @Test
-    fun thePagePostsOnlyWhatTheAppTakes() {
-        assertEquals(ArtifactMessage.Send("colour: Accent"), ArtifactMessage.parse("""{"shepherdr":"send","text":"colour: Accent"}"""))
-        assertEquals(ArtifactMessage.Open("https://example.com/a"), ArtifactMessage.parse("""{"shepherdr":"open","url":"https://example.com/a"}"""))
-        assertNull(ArtifactMessage.parse("""{"shepherdr":"open","url":"javascript:alert(1)"}"""))
-        assertNull(ArtifactMessage.parse("""{"shepherdr":"send","text":"  "}"""))
-        assertNull(ArtifactMessage.parse("""{"shepherdr":"height","h":300}"""))
-        assertNull(ArtifactMessage.parse("not json"))
-        val pick = ArtifactMessage.parse("""{"shepherdr":"pick","text":"Send","selector":"div#board > form > button.primary","component":"Board"}""") as ArtifactMessage.Pick
-        assertEquals("\"Send\" (button.primary in Board)", pick.target())
-        assertEquals("(svg)", ArtifactMessage.Pick("", "div > svg").target())
-    }
-
-    @Test
-    fun aPageSpeaksOnlyRightAfterATouchAndNotTooOften() {
-        var now = 10_000L
-        val gate = ArtifactSendGate { now }
-        // Nothing touched it: a script alone can't send.
-        assertNull(gate.admit("hello"))
-        gate.touched()
-        now += 1_000
-        assertEquals("colour: Accent, size: big", gate.admit("colour: Accent,\n  size: big"))
-        // Again within two seconds: refused, even right after another tap.
-        gate.touched()
-        now += 1_500
-        assertNull(gate.admit("again"))
-        now += 1_000
-        assertEquals("again", gate.admit("again"))
-        // A touch counts for five seconds, as a browser's does.
-        now += 6_000
-        assertFalse(gate.fresh())
-        assertNull(gate.admit("late"))
-        gate.touched()
-        assertEquals("x".repeat(2000), gate.admit("x".repeat(3000)))
-    }
-
-    @Test
-    fun theClientReadsPagesDataAndPicturesAndSendsToTheKeeper() = runBlocking {
+    fun theClientReadsRecipesAndSendsToTheKeeper() = runBlocking {
         val seen = ArrayList<String>()
         val bodies = ArrayList<String>()
         val t = object : ShepherdrTransport {
@@ -151,49 +133,45 @@ class ArtifactsTest {
                 seen += "$method $path"
                 body?.let { bodies += it }
                 return when {
-                    path.startsWith("/api/artifacts/gone") -> HttpReply(404, "no such artifact")
-                    path.startsWith("/api/artifacts/wk3n/data") -> HttpReply(200, """{"data":{"rows":[3]}}""")
-                    path.startsWith("/api/artifacts/wk3n") -> HttpReply(200, "<html><head></head><body>board</body></html>")
-                    path == "/api/action" -> HttpReply(200, """{"to":"HA-1 agent"}""")
+                    path.startsWith("/api/artifacts/gone") -> HttpReply(404, """{"error":"No recipe here."}""")
+                    path.startsWith("/api/artifacts/demo-coverage/recipe") -> HttpReply(200, fixture("recipe.json"))
+                    path == "/api/action" -> HttpReply(200, """{"to":"DEMO-4 agent"}""")
                     else -> HttpReply(404, """{"error":"Not found"}""")
                 }
             }
             override suspend fun bytes(method: String, path: String, bytes: ByteArray?, type: String?, timeoutMs: Int): BytesReply {
                 seen += "$method $path"
-                return if (path.contains("thumb")) BytesReply(200, byteArrayOf(1, 2, 3)) else BytesReply(404, ByteArray(0))
+                return if (path.contains("before.png")) BytesReply(200, byteArrayOf(1, 2, 3)) else BytesReply(404, ByteArray(0))
             }
             override suspend fun webSocket(path: String): WebSocketLink = throw IOException("none")
             override fun close() {}
         }
-        val c = ShepherdrClient(t)
-        assertEquals("<html><head></head><body>board</body></html>", c.artifactPage("wk3n", 2, dark = true))
-        assertEquals("""{"rows":[3]}""", c.artifactData("wk3n", 3))
-        assertEquals(3, c.artifactThumb("wk3n", dark = false)!!.size)
-        assertNull(c.artifactFont())
-        val err = runCatching { c.artifactPage("gone", 1, dark = false) }.exceptionOrNull()
-        assertTrue(err is com.makefunstuff.herdr.core.shepherdr.ArtifactGone)
+        val board = V2WorkBoard(ShepherdrClient(t), "3.1.2")
+        val a = snapshot.artifacts!!.first { it.id == "demo-coverage" }
+        assertEquals(15, board.recipe(a, 2).blocks.size)
+        assertEquals(3, board.artifactFile(a, 2, "before.png")!!.size)
+        assertNull(board.artifactFile(a, 2, "after.png"))
+        val err = runCatching { board.recipe(a.copy(id = "gone"), 1) }.exceptionOrNull()
+        assertIs<com.makefunstuff.herdr.core.shepherdr.ArtifactGone>(err)
         assertEquals(
             listOf(
-                "GET /api/artifacts/wk3n?v=2&full=1&device=phone&theme=dark",
-                "GET /api/artifacts/wk3n/data?v=3",
-                "GET /api/artifacts/wk3n/thumb",
-                "GET /api/font/InterVariable.woff2",
-                "GET /api/artifacts/gone?v=1&full=1&device=phone&theme=light",
+                "GET /api/artifacts/demo-coverage/recipe?v=2",
+                "GET /api/artifacts/demo-coverage/file/before.png?v=2",
+                "GET /api/artifacts/demo-coverage/file/after.png?v=2",
+                "GET /api/artifacts/gone/recipe?v=1",
             ),
             seen,
         )
-        // What you send reaches its keeper by its space, as the web UI's actions do.
-        val board = V2WorkBoard(c, "2.1.0")
-        val wk = snapshot.artifacts!!.first { it.id == "wk3n" }
-        assertEquals("HA-1 agent", board.artifactSay(wk, 3, "size: big", page = true))
-        board.artifactSay(wk, 2, "Make the bars blue")
-        board.artifactSay(wk, 3, "Say Save", pick = ArtifactMessage.Pick("Send", "form > button.primary"))
+        // What you send reaches its keeper, as the web app's actions do.
+        assertEquals("DEMO-4 agent", board.artifactSay(a, 2, "Ship it?: Yes", answer = true))
+        board.artifactSay(a, 2, "Make the bars blue")
+        board.artifactSay(a, 2, "Round these", block = "b3")
         val sent = bodies.map { ShepherdrJson.parseToJsonElement(it).jsonObject }
         assertEquals(listOf("artifact-send", "artifact-say", "artifact-note"), sent.map { it["type"]!!.jsonPrimitive.content })
-        assertEquals("p:a", sent[0]["place"]!!.jsonPrimitive.content)
-        assertEquals("size: big", sent[0]["text"]!!.jsonPrimitive.content)
+        assertEquals("demo-coverage", sent[0]["artifact"]!!.jsonPrimitive.content)
+        assertEquals("Ship it?: Yes", sent[0]["text"]!!.jsonPrimitive.content)
         assertEquals("2", sent[1]["v"]!!.jsonPrimitive.content)
-        assertEquals("Say Save", sent[2]["note"]!!.jsonPrimitive.content)
-        assertEquals("\"Send\" (button.primary)", sent[2]["target"]!!.jsonPrimitive.content)
+        assertEquals("Round these", sent[2]["note"]!!.jsonPrimitive.content)
+        assertEquals("b3", sent[2]["target"]!!.jsonPrimitive.content)
     }
 }

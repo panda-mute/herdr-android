@@ -267,7 +267,7 @@ fun MachineScreen(nav: NavController, machineId: String) {
             if (core != null) {
                 val spaces = core.snapshot.workspaces
                 item(key = "herdr-core") {
-                    // Its other sessions too (Shepherdr 2.1's own): then it is herdr-core's, not the desktop app's alone.
+                    // Its other sessions too (Shepherdr's): then it is herdr-core's, not the desktop app's alone.
                     SectionHeading((if (core.sessions.isEmpty()) "Desktop app" else "herdr-core") + if (spaces.isEmpty()) "" else " · ${spaces.size}", top = Space.m)
                     Text(
                         if (core.sessions.isEmpty()) "herdr-core ${core.version}: its spaces, tabs and terminals"
@@ -347,8 +347,8 @@ fun MachineScreen(nav: NavController, machineId: String) {
             showMachine = false,
             onOpenAgent = { _, pane ->
                 showNotices = false
-                // A Shepherdr 2.1 agent's notice opens its task's chat or Coordinator, as from the Agents list.
-                val agent = state.view?.agents?.firstOrNull { it.paneId == pane }?.takeIf { state.onShepherdr2 }
+                // A Shepherdr 3 agent's notice opens its task's chat or Coordinator, as from the Agents list.
+                val agent = state.view?.agents?.firstOrNull { it.paneId == pane }?.takeIf { state.onShepherdr }
                 nav.navigate(
                     agent?.shepherdrTask?.let { Routes.board(machineId, it, alone = true) }
                         ?: agent?.shepherdrSpace?.let { Routes.coordinator(machineId, it) }

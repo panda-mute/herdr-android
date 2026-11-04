@@ -101,8 +101,8 @@ fun StartWorkScreen(nav: NavController, machineId: String? = null, text: String 
     val host = able.firstOrNull { it.machine.id == chosen } ?: able.firstOrNull()
     val session = host?.let { container.hosts.session(it.machine.id) }
     val mid = host?.machine?.id
-    // Shepherdr 2 makes a task through a space's coordinator: the spaces take the repos' place.
-    val v2 = board && host?.onShepherdr2 == true
+    // Shepherdr 3 makes a task through a space's coordinator: the spaces take the repos' place.
+    val v2 = board && host?.onShepherdr == true
     val works = rememberWorkBoards()
     val spaces by produceState(works[mid ?: ""]?.spaces, mid, v2) {
         if (!v2 || session == null) return@produceState

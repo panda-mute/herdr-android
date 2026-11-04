@@ -1,13 +1,13 @@
-// Shepherdr 2.1's artifacts on devbox: three pages agents made in herdr-android and api-server, the
-// pictures its check took of them (drawn here as blocks, so every run gives the same pixels), and a post
-// of one in a task's chat. FakeShepherdr serves them as `/api/artifacts/…` does.
+// Shepherdr 3.1's artifacts on devbox: three recipes agents made in herdr-android and api-server (recipe.json, as
+// core/recipe.js describes it), the pictures beside one (drawn here as blocks, so every run gives the same pixels),
+// a GPUI panel only the Herdr window runs, and a post of one in a task's chat. FakeShepherdr serves them as
+// `/api/artifacts/<id>/recipe` and `/file/<path>` do.
 package preview
 
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
 import org.jetbrains.skia.EncodedImageFormat
 import org.jetbrains.skia.Paint
 import org.jetbrains.skia.RRect
@@ -15,95 +15,93 @@ import org.jetbrains.skia.Rect
 import org.jetbrains.skia.Surface
 
 object DemoArtifacts {
-    /** The snapshot's `artifacts`: newest first by `at`, release notes posted in herdr-android's coordinator chat (`m6`). */
+    /** The snapshot's `artifacts`: newest first by `at`, the release notes posted in herdr-android's Assistant chat (`m7`). */
     val LIST = """
-        [{"id":"rn09","title":"Release notes for 0.9","place":"${DemoV2.APP}","v":2,"at":1793229000000,"when":"3m","by":"herdr-android","keeper":"herdr-android","thumb":true,
-          "chats":["${DemoV2.APP}"],"versions":[{"n":2,"when":"3m","by":"herdr-android","html":2,"note":"grouped by area"},{"n":1,"when":"1h","by":"herdr-android","html":1}]},
-         {"id":"bl3x","title":"Board load times","place":"${DemoV2.APP}","v":3,"at":1793228000000,"when":"20m","by":"AND-19 agent","keeper":"AND-19 agent","thumb":true,
-          "chats":["AND-19/Agent"],"versions":[{"n":3,"when":"20m","by":"AND-19 agent","html":2,"what":"data"},{"n":2,"when":"1h","by":"AND-19 agent","html":2,"note":"by screen"},{"n":1,"when":"2h","by":"AND-19 agent","html":1}]},
-         {"id":"sq7k","title":"Slow queries on /jobs","place":"${DemoV2.API}","v":1,"at":1793227000000,"when":"40m","by":"API-7 agent","keeper":"API-7 agent","thumb":true,
-          "chats":["API-7/Agent"],"versions":[{"n":1,"when":"40m","by":"API-7 agent","html":1}]}]
+        [{"id":"rn09","title":"Release notes for 0.9","kind":"recipe","place":"${DemoV2.APP}","store":"|/home/demo/src/herdr-android","folder":"/home/demo/src/herdr-android","folderName":"herdr-android",
+          "v":2,"at":1793229000000,"when":"3m","by":"herdr-android Assistant","keeper":"herdr-android Assistant",
+          "chats":["${DemoV2.chat(DemoV2.APP)}"],"versions":[{"n":2,"when":"3m","by":"herdr-android Assistant","html":2,"note":"grouped by area"},{"n":1,"when":"1h","by":"herdr-android Assistant","html":1}]},
+         {"id":"bl3x","title":"AND-19: Board load times","kind":"recipe","place":"${DemoV2.APP}","store":"|/home/demo/src/herdr-android","task":"AND-19",
+          "v":3,"at":1793228000000,"when":"20m","by":"AND-19 agent","keeper":"AND-19 agent",
+          "chats":["AND-19/worker"],"versions":[{"n":3,"when":"20m","by":"AND-19 agent","html":3,"note":"before and after"},{"n":2,"when":"1h","by":"AND-19 agent","html":2,"note":"by screen"},{"n":1,"when":"2h","by":"AND-19 agent","html":1,"kind":"gpui"}]},
+         {"id":"sq7k","title":"Slow queries on /jobs","kind":"gpui","place":"${DemoV2.API}","store":"|/home/demo/src/api-server",
+          "v":1,"at":1793227000000,"when":"40m","by":"API-7 agent","keeper":"API-7 agent",
+          "chats":["API-7/worker"],"versions":[{"n":1,"when":"40m","by":"API-7 agent","html":1,"kind":"gpui"}]}]
     """.trimIndent()
 
-    /** Each page as Shepherdr would wrap it (its own head and bridge left out: the stand-in runs no script). */
-    val PAGES = mapOf(
+    /** Each recipe's `recipe.json` (its latest version's; the previews serve the same for every version). */
+    val RECIPES = mapOf(
         "rn09" to """
-            <!doctype html><html class="full phone"><head><meta charset="utf-8"><title>Release notes</title></head><body>
-            <h1>Herdr for Android 0.9</h1>
-            <p>Out on Friday. Every build installs over the last one and keeps its machines and SSH key.</p>
-            <h2>Chats</h2>
-            <ul><li>Artifacts open full screen, in your light or dark</li><li>Voice messages in task chats</li><li>A task chat keeps its whole composer</li></ul>
-            <h2>Board</h2>
-            <ul><li>Shepherdr 2.1's agents and tasks</li><li>Merge from the task's own card</li></ul>
-            <h2>Fixed</h2>
-            <ul><li>The Board card no longer jumps on reconnect</li></ul>
-            </body></html>
+            {"recipe":1,"blocks":[
+             {"type":"heading","text":"Herdr for Android 0.9","level":1},
+             {"type":"text","md":"Out on **Friday**. Every build installs over the last one and keeps its machines and SSH key."},
+             {"type":"heading","text":"Chats"},
+             {"type":"list","items":["Artifacts drawn natively, in your light or dark","Voice calls with an Assistant","A task chat keeps its whole composer"]},
+             {"type":"heading","text":"Board"},
+             {"type":"list","items":["Shepherdr 3's spaces, tasks and states","Accept from the task's own card"]},
+             {"type":"callout","tone":"good","title":"Fixed","md":"The Board card no longer jumps on reconnect."},
+             {"type":"choice","question":"Ship it on Friday?","options":[{"label":"Yes"},{"label":"Wait a week","description":"Give the voice call more testing"}]}
+            ]}
         """.trimIndent(),
-        "bl3x" to """<!doctype html><html><head></head><body><h1>Board load times</h1><p>Median time to the first card, by screen, this week.</p></body></html>""",
-        "sq7k" to """<!doctype html><html><head></head><body><h1>Slow queries on /jobs</h1><p>The five slowest, before and after the index.</p></body></html>""",
+        "bl3x" to """
+            {"recipe":1,"blocks":[
+             {"type":"heading","text":"Board load times","level":1},
+             {"type":"text","md":"Median time to the first card, by screen, this week."},
+             {"type":"stats","items":[{"label":"Board","value":"420 ms","note":"−35%"},{"label":"Agents","value":"310 ms"},{"label":"Task","value":"260 ms"}]},
+             {"type":"chart","kind":"bar","labels":["Board","Agents","Task"],"series":[{"name":"Before","values":[650,420,300]},{"name":"After","values":[420,310,260]}]},
+             {"type":"table","columns":["Screen",{"label":"Before","align":"right"},{"label":"After","align":"right"}],"rows":[["Board","650","420"],["Agents","420","310"],["Task","300","260"]]},
+             {"type":"pair","before":{"src":"before.png","caption":"Before: the card jumps"},"after":{"src":"after.png","caption":"After: it stays"}},
+             {"type":"details","summary":"How it was measured","blocks":[{"type":"code","text":"./gradlew -p tools/ui-preview render -Ponly=board","lang":"sh"}]},
+             {"type":"button","label":"Measure again","reply":"Please measure the load times again"}
+            ]}
+        """.trimIndent(),
     )
 
-    /** A version's data alone, as `/api/artifacts/<id>/data` answers. */
-    fun data(id: String): String = if (id == "bl3x") """{"data":{"board":420,"agents":310,"task":260}}""" else """{"data":null}"""
+    /** A picture beside [id]'s recipe ([name]), or null where there is none. */
+    fun picture(id: String, name: String): ByteArray? = if (id == "bl3x" && name in setOf("before.png", "after.png")) screen(name == "after.png") else null
 
-    /** The check's picture of [id] at a phone's width, in [dark] or light: its heading, lines and, for a chart, its bars. */
-    fun thumb(id: String, dark: Boolean): ByteArray {
-        val w = 780
-        val h = 960
+    /** A phone's Board drawn as blocks: its cards, the first one moved down in [after]'s "before". */
+    private fun screen(after: Boolean): ByteArray {
+        val w = 540
+        val h = 360
         val surface = Surface.makeRasterN32Premul(w, h)
         val c = surface.canvas
-        // Shepherdr's --bg, --fg, --fg3, --well and --accent (server/frame.ts).
-        c.clear(if (dark) 0xFF0B0B0D.toInt() else 0xFFFFFFFF.toInt())
-        val fg = Paint().apply { color = if (dark) 0xFFFAFAFA.toInt() else 0xFF09090B.toInt() }
-        val dim = Paint().apply { color = if (dark) 0xFF3F3F46.toInt() else 0xFFD4D4D8.toInt() }
-        val well = Paint().apply { color = if (dark) 0xFF1C1C20.toInt() else 0xFFF4F4F5.toInt() }
-        val accent = Paint().apply { color = if (dark) 0xFFFB923C.toInt() else 0xFFC2410C.toInt() }
-        val blue = Paint().apply { color = if (dark) 0xFF60A5FA.toInt() else 0xFF2563EB.toInt() }
-        c.drawRRect(RRect.makeXYWH(40f, 48f, if (id == "rn09") 520f else 440f, 44f, 8f), fg)
-        c.drawRRect(RRect.makeXYWH(40f, 124f, 640f, 18f, 9f), dim)
-        c.drawRRect(RRect.makeXYWH(40f, 156f, 480f, 18f, 9f), dim)
-        if (id == "rn09") {
-            var y = 220f
-            listOf(3, 2, 1).forEach { items ->
-                c.drawRRect(RRect.makeXYWH(40f, y, 160f, 26f, 6f), accent)
-                y += 50f
-                repeat(items) { i ->
-                    c.drawCircle(52f, y + 9f, 6f, fg)
-                    c.drawRRect(RRect.makeXYWH(76f, y, (if (i % 2 == 0) 520f else 400f), 18f, 9f), dim)
-                    y += 40f
-                }
-                y += 24f
-            }
-        } else {
-            c.drawRRect(RRect.makeXYWH(40f, 220f, 700f, 520f, 16f), well)
-            listOf(0.8f, 0.6f, 0.5f, 0.35f, 0.3f).forEachIndexed { i, f ->
-                val bar = 380f * f
-                c.drawRect(Rect.makeXYWH(100f + i * 125f, 700f - bar, 80f, bar), if (i == 0) accent else blue)
-            }
+        c.clear(0xFF1C1A17.toInt())
+        val card = Paint().apply { color = 0xFF2A2621.toInt() }
+        val dim = Paint().apply { color = 0xFF57504A.toInt() }
+        val accent = Paint().apply { color = 0xFFE0A33A.toInt() }
+        listOf(0, 1, 2).forEach { i ->
+            val y = 40f + i * 100f + if (!after && i == 0) 36f else 0f
+            c.drawRRect(RRect.makeXYWH(30f, y, 480f, 80f, 12f), card)
+            c.drawCircle(60f, y + 40f, 8f, if (i == 0) accent else dim)
+            c.drawRRect(RRect.makeXYWH(84f, y + 22f, 260f, 14f, 7f), dim)
+            c.drawRRect(RRect.makeXYWH(84f, y + 46f, 180f, 12f, 6f), dim)
         }
+        if (!after) c.drawRect(Rect.makeXYWH(30f, 40f, 480f, 4f), accent)
         return surface.makeImageSnapshot().encodeToData(EncodedImageFormat.PNG)!!.bytes
     }
 }
 
-/** devbox on Shepherdr 2.1 with artifacts: the release notes in herdr-android's chat, and the load-time chart posted in AND-19's. */
+/** devbox on Shepherdr 3.1 with artifacts: the release notes in herdr-android's chat, and the load times posted in AND-19's. */
 fun SceneData.artifacts() {
-    val v2 = DemoV2.board().apply { version = "2.1.0" }
+    val v2 = DemoV2.board()
     v2.snapshot = JsonObject(v2.snapshot + ("artifacts" to Json.parseToJsonElement(DemoArtifacts.LIST).jsonArray))
-    v2.chats["AND-19/Agent"]?.let { c ->
-        val post = obj("id" to "art1", "who" to "agent", "at" to 1793229180869L, "text" to "The load times by screen, before and after:", "artifact" to obj("id" to "bl3x", "v" to 3))
-        v2.chats = v2.chats + ("AND-19/Agent" to JsonObject(c + ("messages" to JsonArray(c.getValue("messages").jsonArray + post))))
+    v2.chats["AND-19/worker"]?.let { c ->
+        val post = obj("id" to "art1", "who" to "agent", "at" to 1793229180869L, "artifact" to obj("id" to "bl3x", "v" to 3))
+        val words = obj("id" to "art0", "who" to "agent", "at" to 1793229180869L, "text" to "The load times by screen, before and after:")
+        v2.chats = v2.chats + ("AND-19/worker" to JsonObject(c + ("messages" to JsonArray(c.getValue("messages").jsonArray + words + post))))
     }
     host(Demo.DEVBOX).shepherdr = v2
-    host(Demo.DEVBOX).coreSessions = mapOf("shepherdr" to DemoCore.shepherdr())
+    host(Demo.DEVBOX).core = DemoCore.shepherdr()
 }
 
-/** [artifacts], and herdr-android's coordinator posted the release notes' first version earlier too: that post folds to a line. */
+/** [artifacts], and herdr-android's Assistant posted the release notes' first version earlier too: that post folds to a line. */
 fun SceneData.artifactPostedTwice() {
     artifacts()
     val v2 = host(Demo.DEVBOX).shepherdr!!
-    v2.chats[DemoV2.APP]?.let { c ->
+    val key = DemoV2.chat(DemoV2.APP)
+    v2.chats[key]?.let { c ->
         val msgs = c.getValue("messages").jsonArray
-        val first = obj("id" to "m0", "who" to "agent", "at" to 1, "text" to "A first go at the release notes:", "artifact" to obj("id" to "rn09", "v" to 1))
-        v2.chats = v2.chats + (DemoV2.APP to JsonObject(c + ("messages" to JsonArray(msgs.take(4) + first + msgs.drop(4)))))
+        val first = obj("id" to "m0", "who" to "agent", "at" to 1, "artifact" to obj("id" to "rn09", "v" to 1))
+        v2.chats = v2.chats + (key to JsonObject(c + ("messages" to JsonArray(msgs.take(4) + first + msgs.drop(4)))))
     }
 }

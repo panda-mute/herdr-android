@@ -2,6 +2,7 @@
 // A scene starts from Demo's machines; `route` opens a screen, `actions` taps on what it shows.
 package preview
 
+import com.makefunstuff.herdr.core.voice.CallState
 import com.makefunstuff.herdr.core.voice.VoiceState
 import com.makefunstuff.herdr.Links
 import com.makefunstuff.herdr.Routes
@@ -61,7 +62,7 @@ private fun SceneData.appDone() {
     host(DEVBOX).transcripts = host(DEVBOX).transcripts + (Demo.APP_SESSION to Demo.appTranscriptDone())
 }
 
-/** devbox on Shepherdr 2 (DemoV2): its spaces and their coordinators. */
+/** devbox on Shepherdr 3 (DemoV2): its spaces and their Assistants. */
 private fun SceneData.shepherdr() {
     host(DEVBOX).shepherdr = DemoV2.board()
 }
@@ -84,7 +85,7 @@ private fun FakeMachine.coordinatorSays(text: String) {
     board.remote = JsonObject(board.remote + ("coordinator" to JsonObject(c + mapOf("talk" to talk, "said" to JsonPrimitive(text)))))
 }
 
-/** A long talk in website's coordinator chat on Shepherdr 2, longer than the screen. */
+/** A long talk in website's Assistant chat on Shepherdr 3, longer than the screen. */
 private fun SceneData.longWebsiteChat() {
     val v2 = host(DEVBOX).shepherdr!!
     val talk = (1..6).flatMap { i ->
@@ -93,42 +94,33 @@ private fun SceneData.longWebsiteChat() {
     v2.chats = v2.chats + (WEBSITE_CHAT to obj("key" to WEBSITE_CHAT, "cli" to "Claude Code", "working" to false, "messages" to JsonArray(talk)))
 }
 
-private const val WEBSITE_CHAT = "p:devbox:website"
+private const val WEBSITE_CHAT = "p:sp-website"
 
-/**
- * Shepherdr 2.1's voice mark on the home coordinator's chat: the voice computer sent to it, and the command it then
- * tried waits on a safeguard card.
- */
-private fun SceneData.voiceMarked() {
+/** An Assistant's chat whose log Shepherdr can't find on its machine: its notice, and the news lines it still has. */
+private fun SceneData.chatNotFound() {
     shepherdr()
     val v2 = host(DEVBOX).shepherdr!!
-    val c = v2.chats.getValue(DemoV2.HOME)
-    val more = Json.parseToJsonElement(
-        """[
-          {"id":"h4","who":"you","at":4,"text":"Close AND-12, it's done. (by voice)"},
-          {"id":"h5","who":"agent","at":5,"text":"AND-12 waits on your yes to close: this chat was sent to by voice."},
-          {"id":"sg1","who":"agent","at":6,"question":{"id":"sg1","title":"Voice-touched chat: run “task close AND-12”?","kind":"Safeguard",
-            "choices":[{"label":"Allow once"},{"label":"Deny"}],"to":"${DemoV2.HOME}","noNote":true,"screen":"shepherdr task close AND-12"}}
-        ]""",
-    ).jsonArray
-    v2.chats = v2.chats + (DemoV2.HOME to JsonObject(c + mapOf("voiceMark" to JsonPrimitive(Demo.NOW), "messages" to JsonArray(c.getValue("messages").jsonArray + more))))
+    val key = DemoV2.chat(DemoV2.APP)
+    val c = v2.chats.getValue(key)
+    v2.chats = v2.chats + (key to JsonObject(c + mapOf("notice" to JsonPrimitive("none"), "working" to JsonPrimitive(false),
+        "messages" to JsonArray(c.getValue("messages").jsonArray.filter { it.jsonObject.containsKey("news") }))))
 }
 
 /** A message of a kind newer than the app among the replies, and one whose parts don't read: the rest still shows. */
 private fun SceneData.unknownMessage() {
     shepherdr()
     val v2 = host(DEVBOX).shepherdr!!
-    val c = v2.chats.getValue(DemoV2.HOME)
+    val c = v2.chats.getValue(DemoV2.chat(DemoV2.HOME))
     val more = Json.parseToJsonElement(
         """[
           {"id":"h4","who":"agent","at":4,"poll":{"question":"Which night for the NAS check?","options":["Tue","Thu"]}},
           {"id":"h5","who":"agent","at":5,"text":"Done: the NAS check now runs on Thursdays.","reactions":"👍"}
         ]""",
     ).jsonArray
-    v2.chats = v2.chats + (DemoV2.HOME to JsonObject(c + ("messages" to JsonArray(c.getValue("messages").jsonArray + more))))
+    v2.chats = v2.chats + (DemoV2.chat(DemoV2.HOME) to JsonObject(c + ("messages" to JsonArray(c.getValue("messages").jsonArray + more))))
 }
 
-/** A new message in a space's coordinator chat on Shepherdr 2. */
+/** A new message in a space's Assistant chat on Shepherdr 3. */
 private fun FakeMachine.v2Says(chat: String, id: String, text: String) {
     val v2 = shepherdr!!
     val c = v2.chats.getValue(chat)
@@ -183,7 +175,7 @@ private fun SceneData.home() {
     host(GPU).board = Demo.gpuBoard()
 }
 
-/** Shepherdr 2 on devbox, beside the herdr-projects 1.x left on disk, as on a machine that upgraded: its board wins. */
+/** Shepherdr 3 on devbox, beside the herdr-projects 1.x left on disk, as on a machine that upgraded: its board wins. */
 private fun SceneData.v2() {
     host(DEVBOX).shepherdr = DemoV2.board()
 }
@@ -202,9 +194,11 @@ fun scenes(): List<Scene> = listOf(
     // then answering from the card, the machine filter, Mark seen, a calm morning, and the agent's long-press sheet.
     Scene("agents", setup = { home() }),
     Scene("agents-all", heightDp = 1500, setup = { home() }),
-    // devbox on Shepherdr 2: its tasks that ask or are ready wait on Needs you too, answered or merged from the card.
+    // devbox on Shepherdr 3: its tasks that ask or are ready wait on Needs you too, answered or accepted from the card.
     Scene("agents-v2", heightDp = 1700, setup = { home(); v2() }),
     Scene("agents-v2-answer", heightDp = 1700, setup = { home(); v2() }, actions = { settle(); tapText("Last answered 2 min ago") }),
+    // A Ready task's Accept on its card: the Accept card first.
+    Scene("agents-v2-accept", heightDp = 1500, setup = { home(); v2() }, actions = { settle(); tapExact("Accept") }),
     Scene("agents-reply", setup = { home() }, actions = { tapText("Reply") }),
     // Answered from its card: the question is read again and answered, the approved task leaves the list.
     Scene("agents-yes", setup = { home() }, actions = { tapText("Yes") }),
@@ -280,28 +274,27 @@ fun scenes(): List<Scene> = listOf(
     Scene("machine-desktop-only", route = Routes.machine(Demo.MINI), setup = { desktopApp() }),
     Scene("chat-desktop", route = Routes.agent(DEVBOX, DemoCore.CLAUDE), setup = { desktopApp() }),
     Scene("terminal-desktop", route = Routes.terminal(DEVBOX, DemoCore.SHELL), setup = { desktopApp() }),
-    // Shepherdr 2.1 on devbox: its agents run in herdr-core's own `shepherdr` session, found beside classic herdr and
-    // called by their task or space; on the Agents list with the rest (tapping one opens its task's chat), and on
-    // the machine screen with the session named.
-    Scene("agents-shepherdr21", heightDp = 1700, setup = { home(); shepherdr21() }),
-    Scene("agents-shepherdr21-open", heightDp = 1700, setup = { home(); shepherdr21() }, actions = { tapText("AND-19 · claude") }),
-    Scene("machine-shepherdr21", route = Routes.machine(DEVBOX), heightDp = 1300, setup = { shepherdr21() }),
-    Scene("machines-shepherdr21", route = Routes.MACHINES, setup = { shepherdr21() }),
-    // A task's chat takes voice messages too (into Shepherdr's inbox, then the chat as its file), as the Coordinator's.
-    Scene("task-v2-voice-sent", route = Routes.board(DEVBOX, "AND-19"), setup = { shepherdr21() }, actions = {
+    // Shepherdr 3 on devbox: its agents run in herdr-core beside classic herdr, called by their task or space (from
+    // Shepherdr's labels); on the Agents list with the rest (tapping one opens its task's chat), and on the machine screen.
+    Scene("agents-shepherdr3", heightDp = 1700, setup = { home(); shepherdr3() }),
+    Scene("agents-shepherdr3-open", heightDp = 1700, setup = { home(); shepherdr3() }, actions = { tapText("AND-19 · claude") }),
+    Scene("machine-shepherdr3", route = Routes.machine(DEVBOX), heightDp = 1300, setup = { shepherdr3() }),
+    Scene("machines-shepherdr3", route = Routes.MACHINES, setup = { shepherdr3() }),
+    // A task's chat takes voice messages too (kept by Shepherdr's service, then the chat as its file), as the Assistant's.
+    Scene("task-v2-voice-sent", route = Routes.board(DEVBOX, "AND-19"), setup = { shepherdr3() }, actions = {
         tapLabel("Record a voice message")
         tapLabel("Send voice message")
     }),
-    // Every agent's chat keeps its whole composer (text, attach, mic, Send): a herdr-core agent at work, Shepherdr 2.1's
-    // task agent and coordinator opened as agents, and the task's own chat.
+    // Every agent's chat keeps its whole composer (text, attach, mic, Send): a herdr-core agent at work, Shepherdr 3's
+    // task worker and Assistant opened as agents, and the task's own chat.
     Scene("chat-core-working", route = Routes.agent(DEVBOX, DemoCore.CODEX), setup = { desktopApp() }),
-    Scene("chat-shepherdr21-agent", route = Routes.agent(DEVBOX, "hc:@shepherdr:t4"), setup = { shepherdr21() }),
-    Scene("chat-shepherdr21-asks", route = Routes.agent(DEVBOX, "hc:@shepherdr:t2"), setup = { shepherdr21() }),
-    Scene("chat-shepherdr21-coordinator", route = Routes.agent(DEVBOX, "hc:@shepherdr:t1"), setup = { shepherdr21() }),
-    Scene("task-shepherdr21", route = Routes.board(DEVBOX, "AND-19"), setup = { shepherdr21() }),
+    Scene("chat-shepherdr3-agent", route = Routes.agent(DEVBOX, "hc:t4"), setup = { shepherdr3() }),
+    Scene("chat-shepherdr3-asks", route = Routes.agent(DEVBOX, "hc:t2"), setup = { shepherdr3() }),
+    Scene("chat-shepherdr3-coordinator", route = Routes.agent(DEVBOX, "hc:t1"), setup = { shepherdr3() }),
+    Scene("task-shepherdr3", route = Routes.board(DEVBOX, "AND-19"), setup = { shepherdr3() }),
     // Its chat not read yet (or not readable): the composer is whole and writable all the same; and attaching a file.
-    Scene("task-shepherdr21-unread", route = Routes.board(DEVBOX, "AND-19"), setup = { shepherdr21(); host(DEVBOX).shepherdr?.chatRefused = "Couldn't read the chat" }),
-    Scene("task-shepherdr21-attach", route = Routes.board(DEVBOX, "AND-19"), setup = { shepherdr21() }, actions = { tapLabel("Attach files") }),
+    Scene("task-shepherdr3-unread", route = Routes.board(DEVBOX, "AND-19"), setup = { shepherdr3(); host(DEVBOX).shepherdr?.chatRefused = "Couldn't read the chat" }),
+    Scene("task-shepherdr3-attach", route = Routes.board(DEVBOX, "AND-19"), setup = { shepherdr3() }, actions = { tapLabel("Attach files") }),
     Scene("machine-new", route = Routes.machine(DEVBOX), actions = { tapText("New") }),
     // Add machine: scanning the code herdr-push pair shows (the phone's own scanner is a system screen; the stand-in
     // reads studio's code), studio found on Tailscale, studio answering nowhere, and typing the address instead.
@@ -533,7 +526,7 @@ fun scenes(): List<Scene> = listOf(
     Scene("search", route = Routes.search(q = "jobs"), setup = { home() }, actions = { settle() }),
     Scene("search-empty", route = Routes.search(), setup = { home() }),
     Scene("search-machine", route = Routes.search(DEVBOX, "api"), setup = { home() }, actions = { settle() }),
-    // Shepherdr 2's tasks are found too, and open as their agents' chats.
+    // Shepherdr's tasks are found too, and open as their agents' chats.
     Scene("search-v2", route = Routes.search(q = "export"), setup = { home(); v2() }, actions = { settle() }),
     Scene("search-v2-open", route = Routes.search(q = "export"), setup = { home(); v2() }, actions = { settle(); tapText("Rate-limit the export endpoint") }),
     Scene("search-needs", route = Routes.search(q = "jobs"), setup = { home() }, actions = { settle(); tapText("Needs you") }),
@@ -557,47 +550,61 @@ fun scenes(): List<Scene> = listOf(
     Scene("coordinator-needs", route = Routes.coordinator(DEVBOX), setup = { host(DEVBOX).board?.remote = Demo.whatNeedsMe() }),
     // A suggested ask tapped: its words wait in the message box, to send or change.
     Scene("coordinator-ask", route = Routes.coordinator(DEVBOX), actions = { tapText("What needs me?") }),
-    // On Shepherdr 2 each space has its own coordinator: herdr-android's chat with its update cards, a
-    // task's plan copied in to approve and its own merge question; the home space's quiet one; one at work
-    // with your message on its way; and a choice answered from here.
+    // On Shepherdr 3 each space has its own Assistant: herdr-android's chat with its tasks' news lines, a task's plan
+    // headed by its task to approve, and a ready line with Accept; the home space's quiet one; one at work with your
+    // message on its way and Shepherdr's working line; and a plan approved from here.
     Scene("coordinator-v2", route = Routes.coordinator(DEVBOX, DemoV2.APP), setup = { shepherdr() }),
-    // An update card's agent chip opens that task's chat.
+    // A news line's agent chip opens that task's chat.
     Scene("coordinator-v2-chips", route = Routes.coordinator(DEVBOX, DemoV2.APP), setup = { host(DEVBOX).shepherdr = FakeShepherdr() }),
     Scene("coordinator-v2-agent", route = Routes.coordinator(DEVBOX, DemoV2.APP), setup = { host(DEVBOX).shepherdr = FakeShepherdr() }, actions = { tapText("claude") }),
     Scene("coordinator-v2-home", route = Routes.coordinator(DEVBOX), setup = { shepherdr() }),
-    // Shepherdr 2.1: a chat the voice computer sent to, its banner over the message box and a safeguard card to tap;
-    // a message the app can't read yet, a quiet line among replies that still show.
-    Scene("coordinator-v2-voice-mark", route = Routes.coordinator(DEVBOX), setup = { voiceMarked() }),
-    // Allow once tapped: a yes to its command waits for Send, never one stray tap.
-    Scene("coordinator-v2-safeguard-send", route = Routes.coordinator(DEVBOX), setup = { voiceMarked() }, actions = { tapExact("Allow once") }),
+    // A message the app can't read yet: a quiet line among replies that still show. Its log not found on the machine:
+    // Shepherdr's notice, over what it still has.
     Scene("coordinator-v2-unknown", route = Routes.coordinator(DEVBOX), setup = { unknownMessage() }),
+    Scene("coordinator-v2-notice", route = Routes.coordinator(DEVBOX, DemoV2.APP), setup = { chatNotFound() }),
+    // A ready line's Accept: the Accept card, what you approve before it merges.
+    Scene("coordinator-v2-accept", route = Routes.coordinator(DEVBOX, DemoV2.APP), setup = { shepherdr() }, actions = { settle(); tapExact("Accept") }),
+    // A voice call with the Assistant (Shepherdr's voice agent on the machine): its bar over the message box.
+    Scene("coordinator-v2-call", route = Routes.coordinator(DEVBOX, DemoV2.APP), setup = {
+        shepherdr()
+        call = CallState(on = true, machineId = DEVBOX, space = DemoV2.APP, who = "the herdr-android Assistant", phase = CallState.Phase.Listening)
+    }),
+    Scene("coordinator-v2-call-ended", route = Routes.coordinator(DEVBOX, DemoV2.APP), setup = {
+        shepherdr()
+        call = CallState(on = false, machineId = DEVBOX, space = DemoV2.APP, who = "the herdr-android Assistant", problem = "No ElevenLabs key. Add ELEVENLABS_API_KEY in Settings › Secrets.")
+    }),
     Scene("coordinator-v2-working", route = Routes.coordinator(DEVBOX, DemoV2.API), setup = {
         shepherdr()
         drafts[com.makefunstuff.herdr.data.DraftStore.coordinator(DEVBOX, DemoV2.API)] = "Also check the /jobs/export endpoint"
     }, actions = { tapLabel("Send") }),
-    Scene("coordinator-v2-answered", route = Routes.coordinator(DEVBOX, DemoV2.APP), setup = { shepherdr() }, actions = { tapText("Let me look first") }),
-    // Shepherdr 2.1's artifacts: a card with its picture in a coordinator's chat and in a task's, full screen in the
-    // app's light or dark, its versions and an older one, and a space's Artifacts list.
+    Scene("coordinator-v2-answered", route = Routes.coordinator(DEVBOX, DemoV2.APP), setup = { shepherdr() }, actions = { settle(); tapExact("Approve") }),
+    // Shepherdr 3.1's artifacts, recipes the app draws itself: a card in an Assistant's chat and in a task's, full
+    // screen (text, lists, a callout and a choice; numbers, a chart, a table, before and after), its versions and an
+    // older one that is a panel only the Herdr window draws, Mark up on one block, and a space's Artifacts list.
     Scene("coordinator-v2-artifact", route = Routes.coordinator(DEVBOX, DemoV2.APP), setup = { artifacts() }),
     Scene("task-artifact", route = Routes.board(DEVBOX, "AND-19"), setup = { artifacts() }),
     Scene("artifact", route = Routes.artifact(DEVBOX, "rn09"), setup = { artifacts() }),
     Scene("artifact-versions", route = Routes.artifact(DEVBOX, "rn09"), setup = { artifacts() }, actions = { settle(); tapLabel("Versions") }),
     Scene("artifact-older", route = Routes.artifact(DEVBOX, "rn09", 1), setup = { artifacts() }),
+    Scene("artifact-recipe", route = Routes.artifact(DEVBOX, "bl3x"), heightDp = 1800, setup = { artifacts() }),
+    Scene("artifact-gpui", route = Routes.artifact(DEVBOX, "bl3x", 1), setup = { artifacts() }),
+    Scene("artifact-markup", route = Routes.artifact(DEVBOX, "bl3x"), setup = { artifacts() }, actions = { settle(); tapLabel("Mark up"); tapText("Board load times") }),
+    Scene("artifact-answered", route = Routes.artifact(DEVBOX, "rn09"), setup = { artifacts() }, actions = { settle(); tapExact("Yes") }),
     Scene("artifacts", route = Routes.artifacts(DEVBOX, DemoV2.APP), setup = { artifacts() }),
     // An earlier post of one folds to a line; one deleted, a version no longer kept, a space with none yet.
     Scene("coordinator-v2-artifact-folded", route = Routes.coordinator(DEVBOX, DemoV2.APP), heightDp = 1300, setup = { artifactPostedTwice() }),
     Scene("artifact-gone", route = Routes.artifact(DEVBOX, "zz00"), setup = { artifacts() }),
     Scene("artifact-not-kept", route = Routes.artifact(DEVBOX, "rn09", 9), setup = { artifacts() }),
-    Scene("artifacts-empty", route = Routes.artifacts(DEVBOX, "p:devbox:website"), setup = { artifacts() }),
-    // A voice message to a space's coordinator: recording, then sent into Shepherdr's inbox and the chat as its file.
+    Scene("artifacts-empty", route = Routes.artifacts(DEVBOX, "sp-website"), setup = { artifacts() }),
+    // A voice message to a space's Assistant: recording, then kept by Shepherdr's service and in the chat as its file.
     Scene("coordinator-v2-voice", route = Routes.coordinator(DEVBOX), setup = { shepherdr() }, actions = { tapLabel("Record a voice message") }),
     Scene("coordinator-v2-voice-sent", route = Routes.coordinator(DEVBOX), setup = { shepherdr() }, actions = {
         tapLabel("Record a voice message")
         tapLabel("Send voice message")
     }),
-    // The coordinator's voice: turned on with the headphones, reading a reply (a tap stops it), hearing you
+    // The Assistant's voice: turned on with the headphones, reading a reply (a tap stops it), hearing you
     // hands-free, and the phone's own voice while the server is away, muted.
-    Scene("coordinator-v2-hear", route = Routes.coordinator(DEVBOX, DemoV2.APP), setup = { shepherdr() }, actions = { tapLabel("Hear the coordinator") }),
+    Scene("coordinator-v2-hear", route = Routes.coordinator(DEVBOX, DemoV2.APP), setup = { shepherdr() }, actions = { tapLabel("Hear the Assistant") }),
     Scene("coordinator-v2-hear-speaking", route = Routes.coordinator(DEVBOX, DemoV2.APP), setup = {
         shepherdr()
         voice = VoiceState(on = true, machineId = DEVBOX, space = DemoV2.APP, spaceName = "herdr-android", phase = VoiceState.Phase.Speaking, level = 0.6f, speed = 1.2f)
@@ -621,7 +628,7 @@ fun scenes(): List<Scene> = listOf(
     Scene("coordinator-v2-up", route = Routes.coordinator(DEVBOX, DemoV2.APP), setup = { shepherdr() }, actions = { scrollTo(4) }),
     Scene("coordinator-v2-new-message", route = Routes.coordinator(DEVBOX, DemoV2.APP), setup = { shepherdr() }, actions = { ctx ->
         scrollTo(4)
-        ctx.data.host(DEVBOX).v2Says(DemoV2.APP, "m7", "AND-15 is on its way: the recognizer is wired, the composer's mic comes next.")
+        ctx.data.host(DEVBOX).v2Says(DemoV2.chat(DemoV2.APP), "m8", "AND-15 is on its way: the recognizer is wired, the composer's mic comes next.")
         waitForRead()
     }),
     Scene("coordinator-v2-switch", route = Routes.coordinator(DEVBOX, DemoV2.APP), setup = { shepherdr(); longWebsiteChat() }, actions = {
@@ -670,16 +677,23 @@ fun scenes(): List<Scene> = listOf(
     // Run now; reached from a board's menu, the Board tab's bar and a machine's Routines row. One open with its
     // firings; a new one on a schedule and on a board event; one edited; one removed; every board's; none yet.
     Scene("board-menu", route = Routes.board(DEVBOX), actions = { tapLabel("Filter and more") }),
-    // Shepherdr 2: the board through its API (what needs you first, then each space, each task with its agent's chip),
-    // a task as its agent's chat with its cards answered in it, and adding a task, which goes to a space's coordinator.
+    // Shepherdr 3: the board through its service (what needs you first, then each space, each task with its agent's
+    // chip, Shepherdr's own second line and the minutes left), a task as its agent's chat with its cards answered in
+    // it, Accept's card, and adding a task, which goes to a space's Assistant.
     Scene("board-v2", route = Routes.board(DEVBOX), setup = { v2() }),
     Scene("board-v2-tall", route = Routes.board(DEVBOX), heightDp = 1700, setup = { v2() }, actions = { tapText("Done · 2") }),
     Scene("task-v2-asks", route = Routes.board(DEVBOX, "AND-21"), setup = { v2() }),
     Scene("task-v2-answered", route = Routes.board(DEVBOX, "AND-21"), setup = { v2() }, actions = { tapText("Seen 2 min ago") }),
     Scene("task-v2-multi", route = Routes.board(DEVBOX, "AND-24"), setup = { v2() }, actions = { tapText("Key bar"); tapText("Alert rules") }),
     Scene("task-v2-ready", route = Routes.board(DEVBOX, "AND-20"), setup = { v2() }),
+    Scene("task-v2-accept", route = Routes.board(DEVBOX, "AND-20"), heightDp = 1300, setup = { v2() }, actions = { settle(); tapExact("Accept") }),
+    // A call with a task's agent.
+    Scene("task-v2-call", route = Routes.board(DEVBOX, "AND-19"), setup = {
+        v2()
+        call = CallState(on = true, machineId = DEVBOX, space = "sp-herdr-android", task = "AND-19", who = "AND-19", phase = CallState.Phase.Speaking)
+    }),
     // A task opens as its agent's chat: its turns' steps folded to a line (one opened), its question cards
-    // answered in it, the strip with its PR and Merge, and ⋯ for what it did, its brief and facts, and Close.
+    // answered in it, the strip with its PR and Accept, and ⋯ for what it did, its brief and facts, and Close.
     Scene("task-v2-close", route = Routes.board(DEVBOX, "AND-20"), setup = { v2() }, actions = { tapLabel("Details and more"); tapText("Close, nothing merged") }),
     Scene("task-v2-menu", route = Routes.board(DEVBOX, "AND-20"), setup = { v2() }, actions = { tapLabel("Details and more") }),
     Scene("task-v2-brief", route = Routes.board(DEVBOX, "AND-20"), setup = { v2() }, actions = { tapLabel("Details and more"); tapText("Brief") }),
@@ -691,7 +705,7 @@ fun scenes(): List<Scene> = listOf(
     Scene("task-v2-todo-menu", route = Routes.board(DEVBOX, "AND-23"), setup = { v2() }, actions = { tapLabel("More") }),
     Scene("board-v2-add", route = Routes.board(DEVBOX), setup = { v2() }, actions = { tapLabel("Add a task") }),
     Scene("boards-v2", route = Routes.BOARDS, setup = { home(); v2() }),
-    // A space's heading opens that space's coordinator chat.
+    // A space's heading opens that space's Assistant chat.
     Scene("board-v2-coordinator", route = Routes.board(DEVBOX), setup = { v2() }, actions = { tapText("herdr-android · 2") }),
     Scene("routines", route = Routes.routines(DEVBOX), heightDp = 1100, setup = { home() }),
     Scene("routines-all", route = Routes.routines(), setup = { home(); host(GPU).board = Demo.gpuBoard() }),

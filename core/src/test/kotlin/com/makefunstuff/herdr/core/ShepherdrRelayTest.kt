@@ -36,65 +36,14 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * Shepherdr 2.1's chats as this machine's Shepherdr sent them (personal data scrubbed): every reply shows, the voice
- * mark and safeguard cards read, and what the app can't read never hides the rest. And the relay that keeps the
- * live link's snapshots off the phone's connection.
+ * What the app can't read never hides the rest, and the relay that keeps the live link's snapshots (and the web app's
+ * own views) off the phone's connection, with the service's token read on the machine.
  */
 class ShepherdrRelayTest {
     private fun fixture(name: String) = javaClass.getResource("/shepherdr/$name")!!.readText()
 
-    private fun chat21() = (V2Events.parse(fixture("coordinator-chat-21.json")) as V2Event.Chat).chat
-
-    @Test
-    fun aCoordinatorChatOf21ReadsWhole() {
-        val chat = chat21()
-        // One message the app can't read at all ("not a message") is left out; every other one is kept.
-        assertEquals(14, chat.messages.size)
-        assertEquals(1793560000000.0, chat.voiceMark)
-        val items = SpaceChat.items("p:m1:herdr-android", chat)
-        val words = items.filterIsInstance<SpaceChatItem.Words>()
-        // Every reply in full, the one whose reactions came in a shape the app doesn't know too.
-        assertEquals(
-            listOf("What's the status?", "msg_0001", "msg_0002", "msg_0003", "msg_0004", "msg_0005"),
-            words.map { if (it.you) it.text else it.id },
-        )
-        assertTrue(words.first { it.id == "msg_0001" }.text.endsWith("**add a task** for it now, or wait?"))
-        assertEquals("A reply whose reactions came in a newer shape still shows.", words.first { it.id == "msg_0003" }.text)
-        // A message with an artifact that doesn't read keeps its words.
-        assertEquals("Here's what changed today.", words.first { it.id == "msg_0004" }.text)
-        // A message of a kind the app doesn't know: one quiet line in its place.
-        assertEquals(listOf("poll-0001"), items.filterIsInstance<SpaceChatItem.Unreadable>().map { it.id })
-        // The health card with no task, and the task's news card.
-        val updates = items.filterIsInstance<SpaceChatItem.Update>()
-        assertEquals(listOf("ask-0001", "task-news-0001", "health-m1-herdr-1793490331330"), updates.map { it.id })
-        assertEquals("core crossed its alert limit", updates.last().text)
-    }
-
-    @Test
-    fun safeguardCardsReadAndAreAnsweredOnlyByATap() {
-        val items = SpaceChat.items("p:m1:herdr-android", chat21())
-        val cards = items.filterIsInstance<SpaceChatItem.Question>().filter { it.card.question.safeguard }
-        assertEquals(listOf("sg-0001", "sg-0002"), cards.map { it.id })
-        val open = cards[0]
-        assertNull(open.answer)
-        assertEquals("shepherdr task close HA-6", open.card.question.screen)
-        assertEquals(listOf("Allow once", "Deny"), open.card.question.choices.map { it.label })
-        assertTrue(open.card.question.noNote)
-        assertEquals("Voice mark cleared", cards[1].answer)
-        // Still waiting, it is one of the chat's cards that wait for you.
-        assertEquals(listOf("sg-0001"), V2Board.thread("p:m1:herdr-android", chat21()).cards.filter { it.question.safeguard }.map { it.question.id })
-        // Read aloud, it asks for a tap, never offers its choices to say.
-        val spoken = SpeechText.of(open)!!
-        assertTrue("tap" in spoken && "Allow once" !in spoken, spoken)
-        assertNull(SpeechText.of(items.first { it is SpaceChatItem.Unreadable }))
-    }
-
-    @Test
-    fun theVoiceMarkIsClearedWithItsOwnAction() {
-        assertEquals("""{"type":"voice-clear","chat":"p:m1:herdr-android"}""", V2Actions.voiceClear("p:m1:herdr-android").toString())
-        // Shepherdr 2.0 and before send none: no mark.
-        assertNull((V2Events.parse(fixture("chat-event.json")) as V2Event.Chat).chat.voiceMark)
-    }
+    /** The first chat event 3.1.2 sent (`chats.json`), as its live link sends it. */
+    private fun chatEvent() = (kotlinx.serialization.json.Json.parseToJsonElement(fixture("chats.json")) as kotlinx.serialization.json.JsonArray)[1].toString()
 
     @Test
     fun eventsTheAppCantReadNeverEndTheLink() {
@@ -111,7 +60,9 @@ class ShepherdrRelayTest {
         assertEquals(mapOf("p1" to "q1"), s.asks)
         // A chat's screen doesn't read snapshots at all.
         assertEquals("snapshot", (V2Events.parse("""{"type":"snapshot","snapshot":{}}""", snapshots = false) as V2Event.Other).type)
-        assertIs<V2Event.Chat>(V2Events.parse(fixture("chat-event.json"), snapshots = false))
+        assertIs<V2Event.Chat>(V2Events.parse(chatEvent(), snapshots = false))
+        // The web app's own views are never read.
+        assertEquals("view", (V2Events.parse("""{"type":"view","name":"tasks","value":[{"x":1}]}""") as V2Event.Other).type)
     }
 
     @Test
@@ -180,6 +131,8 @@ class ShepherdrRelayTest {
             val chat2 = """{"type":"chat","chat":{"key":"k","messages":[{"id":"1","text":"one"},{"id":"2","text":"two"}]}}"""
             val watched = LinkedBlockingQueue<String>()
             fake.script = { ws ->
+                ws.send("""{"type":"hello","version":"3.1.2"}""")
+                ws.send("""{"type":"view","name":"tasks","value":[]}""")
                 ws.send("""{"type":"snapshot","snapshot":{"places":[]}}""")
                 ws.send("""{"type":"build","id":"b1"}""")
                 watched += ws.read()
@@ -190,11 +143,17 @@ class ShepherdrRelayTest {
                 ws.send("""{"type":"pong"}""")
                 ws.read()
             }
-            val proc = ProcessBuilder("sh", "-c", LiveRelay.command(snapshots = false, url = "ws://127.0.0.1:${fake.port}/api/ws")).start()
+            // The service's token, where the relay reads it on its machine.
+            val data = kotlin.io.path.createTempDirectory("shepherdr").toFile()
+            java.io.File(data, "token").writeText("s3cret\n")
+            val proc = ProcessBuilder("sh", "-c", LiveRelay.command(snapshots = false, url = "ws://127.0.0.1:${fake.port}/api/ws"))
+                .apply { environment()["SHEPHERDR_DATA"] = data.path }.start()
             val link = LiveRelay.open(processDuplex(proc))
             link.send(V2Actions.watch(listOf("k")).toString())
-            val got = withTimeout(20_000) { List(4) { link.receive() } }
-            assertEquals(listOf("""{"type":"build","id":"b1"}""", chat1, chat2, """{"type":"pong"}"""), got)
+            val got = withTimeout(20_000) { List(5) { link.receive() } }
+            assertEquals(listOf("""{"type":"hello","version":"3.1.2"}""", """{"type":"build","id":"b1"}""", chat1, chat2, """{"type":"pong"}"""), got)
+            assertEquals("Bearer s3cret", fake.authorization)
+            data.deleteRecursively()
             assertTrue(watched.poll(5, TimeUnit.SECONDS)!!.contains("\"watch\""))
             link.close()
             assertTrue(proc.waitFor(10, TimeUnit.SECONDS), "the relay ends with its link")
@@ -239,6 +198,8 @@ private class MiniShepherdr : AutoCloseable {
     private val server = ServerSocket(0, 50, java.net.InetAddress.getByName("127.0.0.1"))
     val port: Int get() = server.localPort
     @Volatile var script: (Ws) -> Unit = {}
+    /** The last link's Authorization header. */
+    @Volatile var authorization: String? = null
     val errors = CopyOnWriteArrayList<Throwable>()
 
     init {
@@ -250,6 +211,7 @@ private class MiniShepherdr : AutoCloseable {
                         val input = BufferedInputStream(s.getInputStream())
                         val headers = generateSequence { line(input) }.takeWhile { it.isNotEmpty() }.drop(1)
                             .associate { it.substringBefore(':').trim().lowercase() to it.substringAfter(':').trim() }
+                        authorization = headers["authorization"]
                         val accept = Wire.acceptFor(headers.getValue("sec-websocket-key"))
                         s.getOutputStream().write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: $accept\r\n\r\n".toByteArray())
                         script(Ws(input, s.getOutputStream()))

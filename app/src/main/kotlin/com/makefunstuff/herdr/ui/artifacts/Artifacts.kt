@@ -103,38 +103,19 @@ fun rememberArtifactShelf(session: HostSession): ArtifactShelf {
     return ArtifactShelf(board, all, problem, read)
 }
 
-/** The pictures Shepherdr's check took, kept while the app runs: by machine, artifact, version and theme. */
-private object ArtifactThumbs {
-    private val kept = object : LinkedHashMap<String, ImageBitmap>(32, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ImageBitmap>?) = size > 48
-    }
-
-    @Synchronized fun get(key: String): ImageBitmap? = kept[key]
-
-    @Synchronized fun put(key: String, image: ImageBitmap) {
-        kept[key] = image
-    }
-}
-
 /**
- * [a]'s picture in the app's light or dark, cropped from its top to fill [modifier]'s box; the page's
- * icon on a quiet tile while there is none (none taken, not read yet, or offline).
+ * [a]'s tile: Shepherdr 3 takes no pictures of a recipe, so a quiet tile with its icon and what it is (a recipe the app
+ * draws, or a panel only the Herdr window runs), filling [modifier]'s box.
  */
 @Composable
 fun ArtifactThumb(machineId: String, board: WorkBoard?, a: V2Artifact, modifier: Modifier, icon: Dp = 20.dp) {
     val c = Herdr.colors
-    val dark = c.dark
-    val key = "$machineId/${a.id}/${a.v}/${if (dark) "dark" else "light"}"
-    val image by produceState(ArtifactThumbs.get(key), key, board, a.thumb) {
-        if (value != null || board == null || !a.thumb) return@produceState
-        value = withContext(Dispatchers.IO) {
-            runCatching { board.artifactThumb(a, dark)?.let { ImageCodec.load(it, 800) } }.getOrNull()
-        }?.also { ArtifactThumbs.put(key, it) }
-    }
-    Box(modifier.clip(HerdrShapes.Tile).background(shepherdrBackground(dark)).hairline(HerdrShapes.Tile, c.line), contentAlignment = Alignment.Center) {
-        val i = image
-        if (i != null) Image(i, null, Modifier.matchParentSize(), contentScale = ContentScale.Crop, alignment = Alignment.TopCenter)
-        else Icon(HerdrIcons.LayoutDashboard, null, Modifier.size(icon), tint = c.muted)
+    Column(
+        modifier.clip(HerdrShapes.Tile).background(c.card).hairline(HerdrShapes.Tile, c.line),
+        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
+    ) {
+        Icon(HerdrIcons.LayoutDashboard, null, Modifier.size(icon), tint = c.muted)
+        if (!a.drawn(a.v)) Text("Opens in the Herdr window", style = MaterialTheme.typography.labelMedium, color = c.muted, modifier = Modifier.padding(top = Space.xs))
     }
 }
 

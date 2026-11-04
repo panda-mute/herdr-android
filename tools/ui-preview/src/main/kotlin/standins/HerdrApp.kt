@@ -79,6 +79,8 @@ class AppContainer(app: Context) {
     /** The coordinator's voice: its settings, and a still voice the scene sets (no sound, no microphone). */
     val voiceSettings = com.makefunstuff.herdr.data.VoiceSettingsStore(java.io.File(app.filesDir, "voice-settings.json"))
     val coordinatorVoice: com.makefunstuff.herdr.voice.CoordinatorVoice = preview.PreviewCoordinatorVoice(preview.PreviewCoordinatorVoice.next)
+    /** Voice calls: a still one the scene sets (no sound, no microphone). */
+    val voiceCalls: com.makefunstuff.herdr.voice.VoiceCalls = preview.PreviewVoiceCalls(preview.PreviewVoiceCalls.next)
     /** The clock the screens read (a turn's "Working for 3m", the away card): the demo's fixed time. */
     val clock: () -> Long = { Demo.NOW }
     val bubbles: Bubbles = PreviewBubbles

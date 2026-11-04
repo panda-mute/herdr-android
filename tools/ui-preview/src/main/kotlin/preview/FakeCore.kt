@@ -147,7 +147,7 @@ class FakeCore(
             title: String = "",
             turn: Int = 0,
             foreground: String = argv.first(),
-            /** Its labels as they are, in place of the desktop app's (Shepherdr 2.1's own). */
+            /** Its labels as they are, in place of the desktop app's (Shepherdr's own). */
             labels: Map<String, String>? = null,
             parent: String? = null,
         ): JsonObject = obj(

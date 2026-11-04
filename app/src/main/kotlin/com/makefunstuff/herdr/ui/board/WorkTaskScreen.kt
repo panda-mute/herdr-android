@@ -64,7 +64,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 
 /**
- * A Shepherdr 2 task without an agent's chat (one not started yet), full screen: where it stands, the
+ * A Shepherdr 3 task without an agent's chat (one not started yet), full screen: where it stands, the
  * cards it waits on (answered here), what it said once ready, its pull request, its brief; Merge at the
  * bottom when it is ready, and Close in ⋯. Read again while open, and at once when the board says it
  * changed. A task with an agent opens as its chat ([TaskChatScreen]).
@@ -140,7 +140,7 @@ internal fun WorkTaskContent(
                     busy?.let { BusyLine(it) }
                     if (t.status == WorkStatus.Ready) PrimaryButton(onClick = onMerge, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp), enabled = busy == null) {
                         Icon(HerdrIcons.GitMerge, null, Modifier.size(18.dp))
-                        Text("Merge")
+                        Text(if (t.accepting) "Accepting…" else "Accept")
                     }
                 }
             },

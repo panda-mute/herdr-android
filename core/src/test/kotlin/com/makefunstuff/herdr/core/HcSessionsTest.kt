@@ -27,21 +27,22 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/**
- * herdr-core sessions besides the default one (Shepherdr 2.1 runs its agents in `shepherdr`), and
- * what changed for the app between Shepherdr 2.0 and 2.1's API.
- */
+/** herdr-core sessions besides the default one, and Shepherdr 3's agents as its labels name them. */
 class HcSessionsTest {
-    /** A coordinator and its task's agent as Shepherdr 2.1 labels them in its own session (names scrubbed). */
+    /**
+     * A space's Assistant and its task's worker as Shepherdr 3.1 labels them (`hc get` on a 3.1.2 machine, ids and
+     * names scrubbed): the Assistant by its space, the worker by its task list's key and number.
+     */
     private val shepherdrTerminals: List<HcTerminal> = HcJson.decodeFromString(
         ListSerializer(HcTerminal.serializer()),
         """
         [
-          {"address":"t17","argv":["claude"],"created_ms":1000,"cwd":"/home/dev/demo","name":"shep-7f9b806595fa38ea","state":"live",
-           "labels":{"shepherdr.chat":"p:abc:demo","shepherdr.role":"coordinator","shepherdr.space":"p:abc:demo","where":"demo / coordinator"},
+          {"address":"t17","argv":["claude"],"created_ms":1000,"cwd":"/home/dev/demo","state":"live",
+           "labels":{"herdr.chat.slot":"coord-dev/sp0a01-x1","herdr.coordinator.space":"sp0a01","herdr.coordinator.tab":"tb0a01","herdr.role":"coordinator",
+             "herdr.space":"sp0a01","herdr.tab":"tb0a01","where":"demo / Assistant"},
            "status":{"app":"claude-code","state":"done"},"status_ms":1500,"turn":3},
-          {"address":"t2d","argv":["claude"],"created_ms":2000,"cwd":"/home/dev/worktrees/demo/work-2","name":"shep-bfb3630f2f6a3568","parent":"t17","state":"live",
-           "labels":{"shepherdr.chat":"DEMO-2/Agent","shepherdr.role":"task","shepherdr.task":"DEMO-2","shepherdr.space":"p:abc:demo","where":"demo / DEMO-2"},
+          {"address":"t2d","argv":["claude"],"created_ms":2000,"cwd":"/home/dev/worktrees/demo/task-2","name":"demo-2-dark-mode","parent":"t17","state":"live",
+           "labels":{"herdr.agent":"claude","herdr.coordinator":"tb0a01","herdr.task":"home-dev-demo#2","herdr.task.space":"sp0a01","where":"demo / Assistant"},
            "status":{"app":"claude-code","state":"blocked","kind":"question"},"status_ms":2500,"turn":0}
         ]
         """,
@@ -70,20 +71,28 @@ class HcSessionsTest {
 
     @Test
     fun shepherdrsAgentsAreCalledByTheirTaskOrSpace() {
-        val shown = HcMapping.snapshot(shepherdrTerminals, "0.1.14", session = "shepherdr")
-        assertEquals(listOf("demo coordinator", "DEMO-2"), shown.agents.map { it.name })
-        assertEquals(listOf("demo coordinator", "DEMO-2"), shown.panes.map { it.label })
-        assertEquals("DEMO-2/Agent", HcMapping.shepherdrChat(shepherdrTerminals[1]))
+        val shown = HcMapping.snapshot(shepherdrTerminals, "0.1.14")
+        assertEquals(listOf("demo Assistant", "DEMO-2"), shown.agents.map { it.name })
+        assertEquals(listOf("demo Assistant", "DEMO-2"), shown.panes.map { it.label })
+        assertEquals("DEMO-2", HcMapping.shepherdrTask(shepherdrTerminals[1]))
+        assertEquals("sp0a01", HcMapping.shepherdrSpace(shepherdrTerminals[0]))
+        // On a machine hc added: the task and space by that machine.
+        val there = shepherdrTerminals.map { it.copy(address = "vm/" + it.address) }
+        assertEquals("vm:DEMO-2", HcMapping.shepherdrTask(there[1]))
+        assertEquals("vm/sp0a01", HcMapping.shepherdrSpace(there[0]))
+        // A name whose number isn't its label's says nothing of its ref.
+        assertNull(HcMapping.shepherdrTask(shepherdrTerminals[1].copy(name = "demo-3-dark-mode")))
+        assertNull(HcMapping.shepherdrTask(shepherdrTerminals[1].copy(name = null)))
         // A terminal Shepherdr didn't start keeps its own name.
         val own = shepherdrTerminals[0].copy(labels = mapOf("where" to "demo / main"), name = "build")
         assertNull(HcMapping.shepherdrName(own))
-        assertEquals("build", HcMapping.snapshot(listOf(own), session = "shepherdr").agents.single().name)
+        assertEquals("build", HcMapping.snapshot(listOf(own)).agents.single().name)
         // Its reviewer carries the task's label too: not called (nor opened as) the task.
-        val reviewer = shepherdrTerminals[1].copy(labels = shepherdrTerminals[1].labels + ("shepherdr.role" to "reviewer"), name = "shep-0000")
+        val reviewer = shepherdrTerminals[1].copy(labels = shepherdrTerminals[1].labels + ("herdr.role" to "reviewer"))
         assertEquals("DEMO-2 reviewer", HcMapping.shepherdrName(reviewer))
-        assertNull(HcMapping.snapshot(listOf(reviewer), session = "shepherdr").agents.single().shepherdrTask)
+        assertNull(HcMapping.snapshot(listOf(reviewer)).agents.single().shepherdrTask)
         assertEquals("DEMO-2", shown.agents.single { it.name == "DEMO-2" }.shepherdrTask)
-        assertEquals("p:abc:demo", shown.agents.single { it.name == "demo coordinator" }.shepherdrSpace)
+        assertEquals("sp0a01", shown.agents.single { it.name == "demo Assistant" }.shepherdrSpace)
         // The task's agent asks: it needs you, as any blocked agent does.
         assertEquals("question", shown.agents.single { it.name == "DEMO-2" }.stateLabels["blocked"])
     }
@@ -213,39 +222,6 @@ class HcSessionsTest {
         return out
     }
 
-    @Test
-    fun shepherdr21IsTheStandaloneApp() {
-        assertFalse(V2Version(version = "2.0.3").standalone)
-        assertTrue(V2Version(version = "2.1.0").standalone)
-        assertTrue(V2Version(version = "v2.10.1").standalone)
-        assertTrue(V2Version(version = "3.0.0").standalone)
-        assertFalse(V2Version(version = "").standalone)
-        val snap = ShepherdrJson.decodeFromString(V2Snapshot.serializer(), """{"terminalTransport":"core","name":"Shepherdr","host":"abc","places":[],"tasks":[]}""")
-        assertEquals("core", snap.terminalTransport)
-    }
-
-    @Test
-    fun aMergeOn21IsTheAnswerOnItsMergeCard() {
-        val task = WorkTask("DEMO-2", "DEMO-2", "Demo", "p:abc:demo", WorkStatus.Ready, chat = "DEMO-2/Agent")
-        val chat = ShepherdrJson.decodeFromString(
-            V2Chat.serializer(),
-            """
-            {"key":"DEMO-2/Agent","messages":[
-              {"id":"q1","question":{"id":"q1","title":"Merge DEMO-2?","choices":[{"label":"Merge"},{"label":"Not yet"}],"to":"DEMO-2/Agent","sent":-1,"closed":"This merge request is no longer current"}},
-              {"id":"q2","question":{"id":"q2","title":"Which name?","choices":[{"label":"A"},{"label":"B"}],"to":"DEMO-2/Agent"}},
-              {"id":"q3","question":{"id":"q3","title":"Merge DEMO-2?","choices":[{"label":"Merge"},{"label":"Not yet"}],"to":"DEMO-2/Agent"}}
-            ]}
-            """,
-        )
-        // A card closed without the human's answer is no longer open; the newest merge card is the one.
-        assertFalse(chat.messages[0].question!!.open)
-        assertEquals("q3", V2Board.mergeCard(task, chat)?.id)
-        assertNull(V2Board.mergeCard(task, chat.copy(messages = chat.messages.take(2))))
-        // An agent's own question that starts with "Merge" is no merge card.
-        val own = chat.messages[2].let { m -> m.copy(question = m.question!!.copy(title = "Merge the two configs?")) }
-        assertNull(V2Board.mergeCard(task, chat.copy(messages = chat.messages.take(2) + own)))
-    }
-
     /** Shepherdr's API as a list of what was sent: answers each request with [answer], a chat with [chat]. */
     private class Recorder(val chat: String, val answer: (String) -> String = { """{"ok":true}""" }) : ShepherdrTransport {
         val sent = ArrayList<Pair<String, String?>>()
@@ -260,35 +236,18 @@ class HcSessionsTest {
     }
 
     @Test
-    fun mergeAndCloseOn21GoWhere21TakesThem() = kotlinx.coroutines.runBlocking {
-        val task = WorkTask("DEMO-2", "DEMO-2", "Demo", "p:abc:demo", WorkStatus.Ready, chat = "DEMO-2/Agent")
-        val chat = """{"key":"DEMO-2/Agent","messages":[{"id":"q3","question":{"id":"q3","title":"Merge DEMO-2?","choices":[{"label":"Merge"},{"label":"Not yet"}],"to":"DEMO-2/Agent"}}]}"""
-        val t21 = Recorder(chat)
-        val b21 = V2WorkBoard(ShepherdrClient(t21), "2.1.0")
-        b21.approve(task)
-        b21.close(task)
-        // Merge is Merge on its card; Close names the task by its agent's chat; no `shepherdr` command.
-        assertEquals(listOf("/api/action", "/api/action"), t21.sent.map { it.first })
-        val (merge, close) = t21.sent.map { ShepherdrJson.parseToJsonElement(it.second!!).toString() }
-        assertTrue(merge.contains("\"type\":\"answer\"") && merge.contains("\"question\":\"q3\"") && merge.contains("\"choice\":0"), merge)
-        assertTrue(close.contains("\"type\":\"close\"") && close.contains("\"chat\":\"DEMO-2/Agent\""), close)
-
-        // A task no agent runs for yet (To do): 2.1 still names it by its agent's chat.
-        val todo = Recorder(chat)
-        V2WorkBoard(ShepherdrClient(todo), "2.1.0").close(task.copy(status = WorkStatus.Todo, chat = ""))
-        assertTrue(todo.sent.single().second!!.contains("\"chat\":\"DEMO-2/Agent\""), todo.sent.toString())
-
-        // No merge card open: said so, nothing sent.
-        val none = Recorder("""{"key":"DEMO-2/Agent","messages":[]}""")
-        assertTrue(runCatching { V2WorkBoard(ShepherdrClient(none), "2.1.0").approve(task) }.isFailure)
-        assertTrue(none.sent.isEmpty())
-
-        // 2.0 as before: the command, and the task's id.
-        val t20 = Recorder(chat) { p -> if (p == "/api/cli") """{"out":"merged\n","code":0}""" else """{"ok":true}""" }
-        val b20 = V2WorkBoard(ShepherdrClient(t20), "2.0.3")
-        b20.approve(task)
-        b20.close(task)
-        assertEquals("/api/cli", t20.sent[0].first)
-        assertTrue(t20.sent[1].second!!.contains("\"chat\":\"DEMO-2\""), t20.sent[1].second)
+    fun acceptAndCloseGoWhere3TakesThem() = kotlinx.coroutines.runBlocking {
+        val task = WorkTask("DEMO-2", "DEMO-2", "Demo", "sp0a01", WorkStatus.Ready, chat = "DEMO-2/worker")
+        val t = Recorder("""{"key":"DEMO-2/worker","messages":[]}""")
+        val board = V2WorkBoard(ShepherdrClient(t), "3.1.2")
+        board.approve(task)
+        board.close(task)
+        // Accept is herdr-task accept, by the task's id; Close names it by its chat, as the task's row menu does.
+        assertEquals(listOf("/api/action", "/api/action"), t.sent.map { it.first })
+        assertEquals(listOf("""{"type":"accept","task":"DEMO-2"}""", """{"type":"close","chat":"DEMO-2/worker"}"""), t.sent.map { it.second })
+        // A task no agent runs for yet (To do): its chat is still its id's.
+        val todo = Recorder("{}")
+        V2WorkBoard(ShepherdrClient(todo), "3.1.2").close(task.copy(status = WorkStatus.Todo, chat = ""))
+        assertEquals("""{"type":"close","chat":"DEMO-2/worker"}""", todo.sent.single().second)
     }
 }

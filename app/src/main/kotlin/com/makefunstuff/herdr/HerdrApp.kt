@@ -163,6 +163,8 @@ class AppContainer(app: Application) {
     /** The coordinator's replies read aloud, and your words heard and sent. */
     val coordinatorVoice: com.makefunstuff.herdr.voice.CoordinatorVoice =
         com.makefunstuff.herdr.voice.AndroidCoordinatorVoice(app, scope, hosts, voiceSettings)
+    /** Voice calls with an Assistant or a task's agent, through Shepherdr's voice agent on the machine. */
+    val voiceCalls: com.makefunstuff.herdr.voice.VoiceCalls = com.makefunstuff.herdr.voice.AndroidVoiceCalls(scope, hosts)
     /** The clock the screens read (a turn's "Working for 3m", the away card). */
     val clock: () -> Long = System::currentTimeMillis
     val bubbles: Bubbles = AndroidBubbles(app)

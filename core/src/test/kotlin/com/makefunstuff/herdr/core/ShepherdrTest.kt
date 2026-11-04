@@ -8,15 +8,21 @@ import com.makefunstuff.herdr.core.board.WorkCard
 import com.makefunstuff.herdr.core.board.WorkStatus
 import com.makefunstuff.herdr.core.board.WorkTask
 import com.makefunstuff.herdr.core.board.WorkTasks
+import com.makefunstuff.herdr.core.shepherdr.Accept
 import com.makefunstuff.herdr.core.shepherdr.BoardDetection
 import com.makefunstuff.herdr.core.shepherdr.CurlTransport
 import com.makefunstuff.herdr.core.shepherdr.ForwardTransport
+import com.makefunstuff.herdr.core.shepherdr.LiveRelay
 import com.makefunstuff.herdr.core.shepherdr.ShepherdrClient
 import com.makefunstuff.herdr.core.shepherdr.ShepherdrJson
+import com.makefunstuff.herdr.core.shepherdr.SpaceChat
+import com.makefunstuff.herdr.core.shepherdr.SpaceChatItem
 import com.makefunstuff.herdr.core.shepherdr.V2Actions
 import com.makefunstuff.herdr.core.shepherdr.V2Board
 import com.makefunstuff.herdr.core.shepherdr.V2Event
 import com.makefunstuff.herdr.core.shepherdr.V2Events
+import com.makefunstuff.herdr.core.shepherdr.V2Evidence
+import com.makefunstuff.herdr.core.shepherdr.V2EvidenceBody
 import com.makefunstuff.herdr.core.shepherdr.V2Snapshot
 import com.makefunstuff.herdr.core.shepherdr.V2Status
 import com.makefunstuff.herdr.core.shepherdr.V2Task
@@ -24,6 +30,7 @@ import com.makefunstuff.herdr.core.shepherdr.V2TaskAgent
 import com.makefunstuff.herdr.core.shepherdr.V2TaskStatus
 import com.makefunstuff.herdr.core.shepherdr.V2Version
 import com.makefunstuff.herdr.core.shepherdr.V2WorkBoard
+import com.makefunstuff.herdr.core.shepherdr.VoiceCall
 import com.makefunstuff.herdr.core.shepherdr.WebSocketLink
 import com.makefunstuff.herdr.core.shepherdr.Wire
 import com.makefunstuff.herdr.core.ssh.CommandResult
@@ -36,8 +43,6 @@ import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import java.io.BufferedInputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
@@ -52,253 +57,357 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
+/** Shepherdr 3's service as the app reads it: `resources/shepherdr` (its README says which answers are captured). */
 class ShepherdrTest {
     private fun fixture(name: String) = javaClass.getResource("/shepherdr/$name")!!.readText()
 
-    // ---- the snapshot and chats, as this machine's Shepherdr 2.0.0 sent them -----------------------
+    /** [name]'s snapshot event as Shepherdr sends it: the file itself, or the snapshot in its list of events. */
+    private fun snapshotEvent(name: String = "snapshot.json"): String {
+        val text = fixture(name)
+        if (!text.trimStart().startsWith("[")) return text
+        return (ShepherdrJson.parseToJsonElement(text) as kotlinx.serialization.json.JsonArray)
+            .first { it.toString().startsWith("""{"type":"snapshot"""") }.toString()
+    }
+
+    private fun snapshot(name: String = "snapshot.json"): V2Snapshot = (V2Events.parse(snapshotEvent(name)) as V2Event.Snapshot).snapshot
+
+    private fun chats(name: String): Map<String, com.makefunstuff.herdr.core.shepherdr.V2Chat> =
+        V2Events.parseAll(fixture(name)).filterIsInstance<V2Event.Chat>().associate { it.chat.key to it.chat }
+
+    // ---- what a running 3.1.2 sent ----------------------------------------------------------------
 
     @Test
-    fun readsTheSnapshotThisMachineSent() {
-        val s = ShepherdrJson.decodeFromString(V2Snapshot.serializer(), fixture("snapshot.json"))
-        assertEquals("devbox", s.host)
-        assertEquals(listOf("p:devbox:~", "p:devbox:herdr-android"), s.places.map { it.id })
-        val home = s.places[0]
-        assertTrue(home.home)
-        assertEquals("p:devbox:~", home.chat)
-        assertEquals(V2Status.Work, home.status)
-        assertEquals("herdr-android", s.places[1].name)
-        assertTrue(s.places[1].githubRemote)
-        assertEquals("devbox", s.machines.single().machine)
-        assertEquals(listOf("HA-1", "HA-2", "HA-3"), s.tasks.map { it.id })
-        val t = s.task("HA-1")!!
-        assertEquals(V2TaskStatus.Work, t.status)
-        assertEquals("p:devbox:herdr-android", t.place)
-        assertEquals("HA-1/Agent", t.agent!!.chat)
-        assertEquals("work/1-shepherdr-2-client-in-core", t.branch)
-        assertEquals(listOf("HA-1"), s.task("HA-2")!!.after)
-        assertEquals(V2TaskStatus.Queued, s.task("HA-2")!!.status)
-        assertTrue(s.asks.isEmpty())
+    fun readsTheHealthOf312() {
+        val v = ShepherdrJson.decodeFromString(V2Version.serializer(), fixture("health.json"))
+        assertEquals("3.1.2", v.version)
+        assertEquals(3, v.major)
+        assertEquals(1, v.minor)
+        assertEquals(BoardApi.V2("3.1.2"), BoardDetection.decide(v, "/home/u/.herdr-projects/data/bin/herdr-projects"))
+        // 2.x isn't spoken any more: a machine still on it reads as herdr-projects' (or none).
+        assertEquals(BoardApi.V1("/x/herdr-projects"), BoardDetection.decide(V2Version(version = "2.1.0"), "/x/herdr-projects"))
+        assertEquals(BoardApi.None, BoardDetection.decide(V2Version(version = "2.1.0"), null))
+        assertEquals(BoardApi.None, BoardDetection.decide(V2Version(version = "nonsense"), null))
+        assertEquals(BoardApi.V1("/x/herdr-projects"), BoardDetection.decide(null, "/x/herdr-projects"))
     }
 
     @Test
-    fun theSnapshotAsTheBoardSeesIt() {
-        val o = V2Board.overview(ShepherdrJson.decodeFromString(V2Snapshot.serializer(), fixture("snapshot.json")))
-        assertEquals(2, o.spaces.size)
+    fun readsTheSnapshot312Sent() {
+        val s = snapshot()
+        assertEquals("devbox", s.host)
+        assertEquals("core", s.terminalTransport)
+        assertEquals(listOf("voice-notes", "homelab", "demo-app"), s.places.map { it.name })
+        val p = s.places.first { it.name == "demo-app" }
+        assertEquals("p:" + p.id, p.chat)
+        assertEquals("Assistant · Claude Code", p.header)
+        assertEquals("|/home/u/Work/demo-app", p.store!!.key)
+        assertTrue(p.assistantTab!!.live)
+        assertEquals(0, p.level)
+        val work = s.task("DEMO-8")!!
+        assertEquals(V2TaskStatus.Work, work.status)
+        assertEquals("6h", work.left)
+        assertEquals(2, work.report!!.progress)
+        assertEquals(359, work.report!!.eta)
+        assertEquals("DEMO-8/worker", work.agent!!.chat)
+        assertTrue(work.agent!!.running)
+        assertEquals("demo-app", work.listName)
+        // A task no space works in: no place, its list's name.
+        val queued = s.task("DEMO-9")!!
+        assertEquals("", queued.place)
+        assertEquals(V2TaskStatus.Queued, queued.status)
+        assertEquals("after DEMO-8", queued.sub)
+        assertTrue(s.needs.isEmpty())
+        assertEquals(0, s.waiting)
+    }
+
+    @Test
+    fun theSnapshot312SentAsTheBoardSeesIt() {
+        val o = V2Board.overview(snapshot())
+        assertEquals(3, o.spaces.size)
         assertFalse(o.spaces.any { it.needsYou })
-        assertEquals(listOf("HA-1", "HA-2", "HA-3"), o.tasks.map { it.id })
+        assertEquals(listOf("DEMO-8", "DEMO-9", "HOME-16", "DEMO-7"), o.tasks.map { it.id })
         val t = o.tasks[0]
         assertEquals(WorkStatus.Work, t.status)
-        assertEquals("Shepherdr 2 client in core", t.title)
-        assertEquals("HA-1/Agent", t.chat)
-        assertEquals("Working", t.line)
-        assertEquals(listOf("HA-2", "HA-3"), o.tasksIn("p:devbox:herdr-android").filter { it.status == WorkStatus.Queued }.map { it.id })
+        assertEquals("Working", t.status.label)
+        assertEquals("6h", t.left)
+        assertEquals(2, t.progress)
+        assertEquals("Reading the 3.1 docs", t.line)
+        // Shepherdr's own second line, its first letter up as its web app shows it.
+        assertEquals("After DEMO-8", o.tasks[1].line)
+        assertEquals("To do", o.tasks[2].status.label)
+        val app = o.spaces.first { it.name == "demo-app" }
+        assertEquals("p:" + app.id, app.chat)
+        assertEquals("|/home/u/Work/demo-app", app.store)
+        // A task no space works in (queued, done) is in its list's, by name.
+        assertEquals(listOf("DEMO-8"), o.tasksIn(app.id).map { it.id })
+        assertEquals(listOf("DEMO-8", "DEMO-9", "DEMO-7"), o.tasks.filter { it.listName == "demo-app" }.map { it.id })
     }
 
     @Test
-    fun whatNeedsYouComesFirstAndMarksItsSpace() {
-        val s = ShepherdrJson.decodeFromString(V2Snapshot.serializer(), fixture("snapshot.json"))
-        val changed = s.copy(
-            tasks = s.tasks.mapIndexed { i, t -> if (i == 2) t.copy(status = V2TaskStatus.Need) else if (i == 1) t.copy(status = V2TaskStatus.Ready) else t },
-            asks = mapOf("p:devbox:~" to "f1"),
-        )
-        val o = V2Board.overview(changed)
-        assertEquals(listOf("HA-3", "HA-2", "HA-1"), o.tasks.map { it.id })
-        assertEquals(listOf("HA-3", "HA-2"), o.needsYou.map { it.id })
-        assertTrue(o.spaces.all { it.needsYou })
+    fun readsTheChats312Sent() {
+        val c = chats("chats.json")
+        val assistant = c.getValue("p:sp00000000000000000000000000000a01")
+        // Its log wasn't found on that machine: the notice Shepherdr shows instead of the conversation.
+        assertEquals("none", assistant.notice)
+        assertEquals("Opus 5.5", assistant.agent!!.modelLabel)
+        val news = assistant.messages.single().news!!
+        assertEquals("DEMO-8", news.ref)
+        assertEquals("started", news.mark)
+        val items = SpaceChat.items("sp00000000000000000000000000000a01", assistant)
+        val u = assertIs<SpaceChatItem.Update>(items.single())
+        assertEquals(WorkStatus.Work, u.status)
+        assertEquals("started · Shepherdr 3 client", u.text)
+        assertEquals(listOf("DEMO-8 started Shepherdr 3 client"), V2Board.thread("x", assistant).lines.map { it.text })
+        val worker = c.getValue("DEMO-8/worker")
+        assertTrue(worker.working)
+        assertEquals("Running ./gradlew -p core test", worker.doing)
+    }
+
+    // ---- what waits on you, in 3.x's shapes -------------------------------------------------------
+
+    @Test
+    fun needsReadyAndMergingInShepherdrsOrder() {
+        val o = V2Board.overview(snapshot("waiting.json"))
+        // Needs you, Ready, Merging, Working (core/tasks.js ORDER); the archived one left out.
+        assertEquals(listOf("DEMO-5", "DEMO-4", "vm:API-2", "DEMO-7", "DEMO-6"), o.tasks.map { it.id })
+        assertEquals(listOf("Needs you", "Ready", "Ready", "Merging", "Working"), o.tasks.map { it.status.label })
+        val api = o.tasks.first { it.id == "vm:API-2" }
+        assertEquals("API-2", api.name)
+        assertTrue(api.accepting)
+        assertEquals("6m", o.tasks.first { it.id == "DEMO-6" }.left)
+        assertEquals(2, o.needs.size)
+        val app = o.spaces.first { it.name == "demo-app" }
+        assertTrue(app.needsYou)
+        assertTrue(app.asks)
+        assertEquals("p:vm:sp0000000000000000000000000000b001", o.spaces[1].chat)
+        assertEquals(4, snapshot("waiting.json").waiting)
     }
 
     @Test
-    fun anArchivedTaskIsLeftOutAndAnUnknownStatusStillReads() {
-        val s = ShepherdrJson.decodeFromString(
-            V2Snapshot.serializer(),
-            """{"places":[],"tasks":[{"id":"A-1","status":"someday","archived":5},{"id":"A-2","status":"weird","newField":{"x":1}}]}""",
-        )
-        assertEquals(V2TaskStatus.Todo, s.tasks[1].status)
-        assertEquals(listOf("A-2"), V2Board.overview(s).tasks.map { it.id })
+    fun aNeedIsItsOwnCardAndAWaitWithNoCardIsAReply() {
+        val cards = V2Board.cards(snapshot("waiting.json").needs)
+        val q = cards[0]
+        assertEquals("DEMO-5/worker", q.chat)
+        assertEquals("DEMO-5", q.task)
+        assertEquals("rq7", q.question.id)
+        assertEquals(listOf("GitHub", "Google", "Email link"), q.question.choices.map { it.label })
+        assertTrue(q.question.choices[0].recommended)
+        val reply = cards[1]
+        assertEquals("m12", reply.replyTo)
+        assertEquals("Should I split the login work into two tasks?", reply.question.title)
+        assertEquals("p:sp0000000000000000000000000000a001", reply.chat)
     }
 
     @Test
-    fun readsTheChatEventThisMachineSent() {
-        val e = V2Events.parse(fixture("chat-event.json")) as V2Event.Chat
-        val c = e.chat
-        assertEquals("p:devbox:herdr-android", c.key)
-        assertEquals(4, c.messages.size)
-        assertTrue(c.messages[0].you)
-        assertFalse(c.messages[1].you)
-        assertTrue(c.messages[2].activity != null && c.messages[2].text == null)
-        val thread = V2Board.thread("p:devbox:herdr-android", c)
-        // The turn's tool steps are no bubble.
-        assertEquals(3, thread.lines.size)
-        assertEquals(listOf(true, false, false), thread.lines.map { it.you })
-        assertTrue(thread.cards.isEmpty())
-        assertFalse(thread.working)
+    fun anAssistantsChatWithEveryKindOfRow() {
+        val chat = chats("waiting.json").getValue("p:sp0000000000000000000000000000a001")
+        assertEquals("Reading the task list", chat.doing)
+        assertTrue(chat.top)
+        val items = SpaceChat.items("sp0000000000000000000000000000a001", chat)
+        val byId = items.associateBy { it.id }
+        assertEquals(SpaceChatItem.Note("m1:b", "New session"), byId["m1:b"])
+        assertEquals("Plan dark mode and a login screen", (byId["m1"] as SpaceChatItem.Words).text)
+        val ready = byId.getValue("tn:DEMO-4:ready:2") as SpaceChatItem.Update
+        assertEquals(WorkStatus.Ready, ready.status)
+        assertTrue(ready.accept)
+        assertEquals("is ready · Dark mode works on every screen", ready.text)
+        assertEquals(SpaceChatItem.Artifact("a1", "demo-coverage", 2), byId["a1"])
+        assertEquals(SpaceChatItem.Note("p1", "Publishing an artifact…"), byId["p1"])
+        assertEquals(SpaceChatItem.Note("ae:9", "Run: npm test · Allowed in the chat"), byId["ae:9"])
+        assertEquals(SpaceChatItem.Note("s1", "Wants the secret GITHUB_TOKEN"), byId["s1"])
+        assertEquals("API Error: overloaded", (byId["e1"] as SpaceChatItem.Words).text)
+        assertTrue((byId["w1"] as SpaceChatItem.Words).waiting)
+        // A shape the app doesn't know: one quiet line, the rest of the chat as it was.
+        assertIs<SpaceChatItem.Unreadable>(byId["z1"])
+        // A worker's ask, headed by its task, answered in its own chat.
+        val thread = V2Board.thread("sp0000000000000000000000000000a001", chat)
+        val ask = thread.cards.first { it.question.id == "rq7" }
+        assertEquals("DEMO-5/worker", ask.chat)
+        assertEquals("DEMO-5", ask.task)
+        val parts = thread.cards.first { it.question.id == "q2" }.question.parts!!
+        assertEquals(listOf("Colour?", "Which screens?"), parts.map { it.title })
+        assertTrue(parts[1].multi)
+        // The view a web page reads is never read here.
+        assertEquals(V2Event.Other("view", kotlinx.serialization.json.JsonNull), V2Events.parse("""{"type":"view","name":"tasks","value":[]}"""))
+        assertEquals("ended", chats("waiting.json").getValue("DEMO-6/worker").notice)
     }
 
-    @Test
-    fun readsQuestionsCardsAndPlansFromShepherdrsDemo() {
-        val events = V2Events.parseAll(fixture("demo-chat-events.json")).filterIsInstance<V2Event.Chat>().associateBy { it.chat.key }
-        val space = events.getValue("p:vm-str:gtm").chat
-        val cards = space.messages.mapNotNull { it.card }
-        assertEquals(listOf("GTM-15", "GTM-14", "GTM-16", "GTM-12"), cards.map { it.task })
-        assertEquals(V2TaskStatus.Ready, cards[0].status)
-        assertEquals(128, cards[0].pr!!.number)
-        val q = space.openQuestions.single()
-        assertEquals("f1", q.id)
-        assertEquals(listOf("Rerun it", "Skip the flaky test", "Leave it for now"), q.choices.map { it.label })
-        val thread = V2Board.thread("p:vm-str:gtm", space)
-        assertEquals(listOf("f1"), thread.cards.map { it.question.id })
-        assertEquals("p:vm-str:gtm", thread.cards[0].chat)
-        assertTrue(thread.lines.any { it.text == "GTM-15 is ready to merge" })
+    // ---- the Accept card -------------------------------------------------------------------------
 
-        val perm = events.getValue("GTM-14/Agent").chat.openQuestions.single()
-        assertEquals("Claude Code asks", perm.asks)
-        val plan = events.getValue("GTM-16/Agent").chat.openQuestions.single()
-        assertEquals("Plan", plan.kind)
-        assertEquals(3, plan.steps!!.size)
-        assertEquals(1, plan.noteRequiredFor)
+    @Test
+    fun theAcceptCardsEvidence() {
+        val e = ShepherdrJson.decodeFromString(V2Evidence.serializer(), fixture("evidence.json"))
+        assertTrue(e.ready)
+        assertEquals("Accept DEMO-4?", Accept.title(e.ref!!))
+        val ev = e.evidence!!
+        assertEquals(3, ev.commits!!.count)
+        assertEquals("3 commits", Accept.commitsLine(ev.commits!!.count))
+        assertEquals("7 files changed", Accept.filesLine(ev.diff!!.files))
+        assertEquals("1 file changed", Accept.filesLine(1))
+        assertEquals("And 5 more", Accept.moreLine(5))
+        assertEquals("passed", ev.checks!!.state)
+        assertEquals("Dark mode · Proof", Accept.proofTitle(ev.proof!!.title))
+        assertEquals("Already accepted.", Accept.whereNow(e.copy(state = "done", accepted_at = 1.0)))
+        assertEquals("Already done.", Accept.whereNow(e.copy(state = "done")))
+        assertEquals("Not ready right now: it's in Working.", Accept.whereNow(e.copy(state = "running", status_text = "Working")))
     }
 
+    /** core/accept.test.js's cases, so the app's card says what the window's and the web's say. */
     @Test
-    fun aNeedsYouCardCarriesItsTasksQuestionsAndAnsweredOnesAreNotOpen() {
-        val chat = V2Events.parse(
-            """{"type":"chat","chat":{"key":"p:m:x","cli":"Claude Code","working":true,"messages":[
-              {"id":"c1","who":"agent","text":"HA-9 needs you","card":{"id":"c1","task":"HA-9","status":"need","text":"needs you",
-                "ask":{"chat":"HA-9/Agent","open":true,"questions":[{"id":"q9","title":"Merge HA-9?","kind":"Form","choices":[{"label":"Merge"},{"label":"Not yet"}],"to":"HA-9 agent"}]}}},
-              {"id":"m2","who":"agent","question":{"id":"q2","title":"Done?","kind":"Form","choices":[{"label":"Yes"}],"to":"x","sent":0}},
-              {"id":"m3","who":"you","text":"hi","waiting":true},
-              {"id":"c4","who":"agent","text":"HA-8 needs you","card":{"id":"c4","task":"HA-8","status":"need","text":"needs you",
-                "ask":{"chat":"HA-8/Agent","open":true,"reply":{"id":"m77","text":"Which port should it use?"}}}}
-            ]}}""",
-        ) as V2Event.Chat
-        val thread = V2Board.thread("p:m:x", chat.chat)
-        assertEquals(WorkCard("HA-9/Agent", chat.chat.messages[0].card!!.ask!!.questions!![0], "HA-9", space = "p:m:x"), thread.cards[0])
-        // A plain question copied here is answered with a reply to its message.
-        val plain = thread.cards[1]
-        assertEquals("HA-8/Agent", plain.chat)
-        assertEquals("m77", plain.replyTo)
-        assertEquals("Which port should it use?", plain.question.title)
-        assertEquals(2, thread.cards.size)
-        assertEquals(listOf(false, false, true, false), thread.lines.map { it.pending })
-        assertTrue(thread.working)
-        assertTrue(chat.chat.openQuestions.isEmpty())
-    }
-
-    @Test
-    fun otherEventsAreKeptAsSent() {
-        val e = V2Events.parse("""{"type":"build","id":"abc"}""")
-        assertEquals("build", (e as V2Event.Other).type)
+    fun theAcceptCardsWordsAsShepherdrsOwn() {
+        // A short summary stays as it is; a long one without details keeps its first sentence up top.
+        assertEquals("Short." to "", Accept.words(V2EvidenceBody(summary = "Short.")))
+        val long = "The board shows every task with its status and progress now. " + "It also reads every space's tasks and keeps them in step with the window, so nothing is lost. ".repeat(2)
+        val (sum, det) = Accept.words(V2EvidenceBody(summary = long))
+        // Cut at the last sentence that ends within the limit.
+        assertEquals("The board shows every task with its status and progress now. It also reads every space's tasks and keeps them in step with the window, so nothing is lost.", sum)
+        // No sentence ends in time: its first words (40 letters where there is no space) and an ellipsis, as accept.js.
+        assertEquals("a".repeat(40) + "…", Accept.words(V2EvidenceBody(summary = "a".repeat(200))).first)
+        assertEquals(long.trim(), det)
+        // Details given: the summary stays whole.
+        assertEquals(long.replace(Regex("\\s+"), " ").trim() to "x", Accept.words(V2EvidenceBody(summary = long, details = "x")))
+        // Plain text as bullets, clear paths as code; Markdown as written.
+        assertEquals("- Fixed the board\n- Tests in `core/src/test/A.kt` pass", Accept.readable("Fixed the board. Tests in core/src/test/A.kt pass."))
+        assertEquals("- a\n- b", Accept.readable("- a\n- b"))
+        assertEquals("One sentence only", Accept.readable("One sentence only"))
     }
 
     // ---- what the app sends ----------------------------------------------------------------------
 
     @Test
     fun actionBodies() {
-        assertEquals("""{"type":"send","chat":"p:devbox:~","text":"hello"}""", V2Actions.send("p:devbox:~", "hello").toString())
+        assertEquals("""{"type":"send","chat":"p:sp1","text":"hello","human":true}""", V2Actions.send("p:sp1", "hello").toString())
         assertEquals(
-            """{"type":"send","chat":"HA-1/Agent","text":"yes","cid":"c1","reply":"m4","space":"p:m:x"}""",
-            V2Actions.send("HA-1/Agent", "yes", reply = "m4", cid = "c1", space = "p:m:x").toString(),
+            """{"type":"send","chat":"DEMO-1/worker","text":"yes","cid":"c1","reply":"m4","human":true}""",
+            V2Actions.send("DEMO-1/worker", "yes", reply = "m4", cid = "c1").toString(),
         )
         assertEquals(
-            """{"type":"answer","chat":"GTM-16/Agent","question":"f6","choice":1,"note":"Fewer pages"}""",
-            V2Actions.answer("GTM-16/Agent", "f6", 1, note = "Fewer pages").toString(),
+            """{"type":"answer","chat":"DEMO-5/worker","question":"rq7","choice":1,"note":"Fewer pages"}""",
+            V2Actions.answer("DEMO-5/worker", "rq7", 1, note = "Fewer pages").toString(),
         )
         assertEquals(
             """{"type":"answer","chat":"c","question":"q","choice":-1,"choices":[0,2],"other":"Both"}""",
             V2Actions.answer("c", "q", -1, choices = listOf(0, 2), note = "", other = "Both").toString(),
         )
+        assertEquals(
+            """{"type":"answer","chat":"c","question":"q2","choice":-1,"answers":["Amber","All, Board"]}""",
+            V2Actions.answer("c", "q2", -1, answers = listOf("Amber", "All, Board")).toString(),
+        )
         assertEquals("""{"type":"react","chat":"c","message":"m1","emoji":"👍"}""", V2Actions.react("c", "m1", "👍").toString())
-        assertEquals("""{"args":["merge","SHE-3"]}""", V2Actions.cli(listOf("merge", "SHE-3")).toString())
-        assertEquals("""{"type":"watch","chats":["p:m:~"],"term":null,"visible":false,"push":null}""", V2Actions.watch(listOf("p:m:~")).toString())
+        assertEquals("""{"type":"accept","task":"vm:API-2"}""", V2Actions.accept("vm:API-2").toString())
+        assertEquals("""{"type":"evidence","task":"DEMO-4"}""", V2Actions.evidence("DEMO-4").toString())
+        assertEquals("""{"type":"close","chat":"DEMO-4/worker"}""", V2Actions.close("DEMO-4/worker").toString())
+        assertEquals("""{"type":"watch","chats":["p:sp1"],"term":null,"visible":false,"push":null}""", V2Actions.watch(listOf("p:sp1")).toString())
+        assertEquals("p:vm:sp9", V2Board.assistantChat("vm/sp9"))
+        assertEquals("p:sp9", V2Board.assistantChat("p:sp9"))
     }
 
     @Test
-    fun aRequestCarriesNoOriginSoTheSameSiteCheckLetsItThrough() {
-        val r = Wire.request("POST", "/api/action", """{"a":"é"}""").toString(Charsets.UTF_8)
-        assertTrue(r.startsWith("POST /api/action HTTP/1.1\r\nHost: 127.0.0.1:7787\r\n"))
+    fun aRequestCarriesTheTokenAndNoOrigin() {
+        val r = Wire.request("POST", "/api/action", """{"a":"é"}""", token = "t0k").toString(Charsets.UTF_8)
+        assertTrue(r.startsWith("POST /api/action HTTP/1.1\r\nHost: 127.0.0.1:7788\r\nAuthorization: Bearer t0k\r\n"), r)
         assertFalse(r.contains("Origin", ignoreCase = true))
         assertTrue(r.contains("Content-Length: 10\r\n"))
         assertTrue(r.endsWith("\r\n\r\n{\"a\":\"é\"}"))
+        assertFalse(Wire.request("GET", "/api/health", null).toString(Charsets.UTF_8).contains("Authorization"))
+    }
+
+    @Test
+    fun theTokenIsReadFromItsFileOnTheMachine() {
+        assertEquals("cat \"\${SHEPHERDR_DATA:-\$HOME/.herdr/shepherdr}/token\" 2>/dev/null; true", BoardDetection.TOKEN_COMMAND)
+        assertEquals("ab12", BoardDetection.token("ab12\n"))
+        assertNull(BoardDetection.token(""))
+        assertNull(BoardDetection.token("No such file or directory here"))
+        // The relay and the curl fallback read it there themselves: it never crosses the command line.
+        val relay = LiveRelay.command(snapshots = true)
+        assertTrue(relay.contains("/.herdr/shepherdr") && relay.contains("Bearer") && relay.contains("ws://127.0.0.1:7788/api/ws"))
+        assertTrue(CurlTransport.command("GET", "/api/health", false, 5).contains("Authorization: Bearer"))
     }
 
     // ---- detection -------------------------------------------------------------------------------
 
     @Test
-    fun v2WinsWhenBothAnswer() {
-        val v2 = ShepherdrJson.decodeFromString(V2Version.serializer(), fixture("version.json"))
-        assertEquals(2, v2.major)
-        assertEquals(BoardApi.V2("2.0.0"), BoardDetection.decide(v2, "/home/u/.herdr-projects/data/bin/herdr-projects"))
-        assertEquals(BoardApi.V2("2.0.0"), BoardDetection.decide(v2, null))
-        assertEquals(BoardApi.V1("/x/herdr-projects"), BoardDetection.decide(null, "/x/herdr-projects"))
-        assertEquals(BoardApi.V1("/x/herdr-projects"), BoardDetection.decide(V2Version(version = "1.9.0"), "/x/herdr-projects"))
-        assertEquals(BoardApi.None, BoardDetection.decide(V2Version(version = "nonsense"), null))
-        assertEquals(BoardApi.None, BoardDetection.decide(null, null))
-    }
-
-    @Test
     fun detectsShepherdrThroughAForwardAndNothingWhereNothingAnswers() = runBlocking {
         FakeShepherdr().use { fake ->
-            fake.on("GET /api/version") { 200 to fixture("version.json") }
+            fake.on("GET /api/health") { 200 to fixture("health.json") }
             ForwardTransport({ ForwardTransport.socket(fake.port, it) }).use { t ->
-                assertEquals("2.0.0", BoardDetection.probe(t)!!.version)
+                assertEquals("3.1.2", BoardDetection.probe(t)!!.version)
             }
         }
         // A port where nothing listens: the SSH channel is refused, the probe says none.
         val dead = ServerSocket(0).use { it.localPort }
         assertNull(BoardDetection.probe(ForwardTransport({ ForwardTransport.socket(dead, it) })))
-        // Something else answers there.
         FakeShepherdr().use { fake ->
-            fake.on("GET /api/version") { 404 to """{"error":"Not found"}""" }
+            // Something else answers there; or a 2.x.
+            fake.on("GET /api/health") { 404 to """{"error":"Not found"}""" }
+            assertNull(BoardDetection.probe(ForwardTransport({ ForwardTransport.socket(fake.port, it) })))
+            fake.on("GET /api/health") { 200 to """{"ok":true,"version":"2.1.0"}""" }
             assertNull(BoardDetection.probe(ForwardTransport({ ForwardTransport.socket(fake.port, it) })))
         }
     }
 
     @Test
     fun curlIsTheFallbackWithItsStatusAtTheEnd() = runBlocking<Unit> {
-        val cmd = CurlTransport.command("POST", "/api/cli", true, 30)
-        assertEquals(
-            "'curl' '-sS' '--max-time' '30' '-X' 'POST' '-H' 'Content-Type: application/json' '--data-binary' '@-' '-w' '\n@@shepherdr-status@@%{http_code}' 'http://127.0.0.1:7787/api/cli'",
-            cmd,
-        )
+        val cmd = CurlTransport.command("POST", "/api/action", true, 30)
+        // One `sh` around curl, its token header read there ([curlSendsTheTokenItReadsThere] runs it).
+        assertTrue(cmd.startsWith("sh -c 'exec "), cmd)
+        assertTrue("http://127.0.0.1:7788/api/action" in cmd && "@@shepherdr-status@@%{http_code}" in cmd && "--data-binary" in cmd, cmd)
+        assertTrue(cmd.endsWith(" -H \"" + CurlTransport.AUTH + "\"'"), cmd)
         val sent = mutableListOf<Pair<String, String>>()
         val curl = CurlTransport { c, stdin, _ ->
             sent += c to stdin
-            CommandResult(0, """{"out":"Merged SHE-3\n","code":0}""" + "\n@@shepherdr-status@@200", "")
+            CommandResult(0, """{"ok":true}""" + "\n@@shepherdr-status@@200", "")
         }
         assertFalse(curl.canStream)
-        val r = ShepherdrClient(curl).cli(listOf("merge", "SHE-3"))
-        assertEquals("Merged SHE-3", r.said)
-        assertEquals("""{"args":["merge","SHE-3"]}""", sent.single().second)
+        ShepherdrClient(curl).accept("DEMO-4")
+        assertEquals("""{"type":"accept","task":"DEMO-4"}""", sent.single().second)
         val down = CurlTransport { _, _, _ -> CommandResult(7, "\n@@shepherdr-status@@000", "curl: (7) Failed to connect") }
-        assertEquals("curl: (7) Failed to connect", assertFailsWith<IOException> { down.http("GET", "/api/version") }.message)
+        assertEquals("curl: (7) Failed to connect", assertFailsWith<IOException> { down.http("GET", "/api/health") }.message)
         assertNull(BoardDetection.probe(down))
         val missing = CurlTransport { _, _, _ -> CommandResult(127, "", "sh: curl: not found") }
-        assertFailsWith<IOException> { missing.http("GET", "/api/version") }
+        assertFailsWith<IOException> { missing.http("GET", "/api/health") }
+    }
+
+    /** The curl fallback, run for real by `sh` with a stand-in `curl` that prints what it got, with a token file. */
+    @Test
+    fun curlSendsTheTokenItReadsThere() = runBlocking<Unit> {
+        val dir = kotlin.io.path.createTempDirectory("curl").toFile()
+        java.io.File(dir, "token").writeText("s3cret\n")
+        val fakeCurl = java.io.File(dir, "curl")
+        fakeCurl.writeText("#!/bin/sh\nfor a in \"\$@\"; do case \"\$a\" in Authorization*) printf '%s' \"\$a\";; esac; done\nprintf '\\n@@shepherdr-status@@200'\n")
+        fakeCurl.setExecutable(true)
+        val r = ProcessBuilder("sh", "-c", CurlTransport.command("GET", "/api/health", false, 5))
+            .apply { environment()["PATH"] = dir.path + ":" + System.getenv("PATH"); environment()["SHEPHERDR_DATA"] = dir.path }.start()
+        val out = r.inputStream.readBytes().toString(Charsets.UTF_8)
+        r.waitFor()
+        assertEquals("Authorization: Bearer s3cret\n@@shepherdr-status@@200", out)
+        dir.deleteRecursively()
     }
 
     @Test
     fun aFileGoesUpAsAFormAndComesBackAsBytes() = runBlocking {
         FakeShepherdr().use { fake ->
-            fake.on("POST /api/upload") { 200 to """{"path":"/home/u/.shepherdr/inbox/home/lq3x9aab12-voice-message-0m07s.m4a"}""" }
-            fake.on("GET /api/file?chat=home&path=%2Fhome%2Fu%2Fx.m4a") { 200 to "AUDIO" }
-            val client = ShepherdrClient(ForwardTransport({ ForwardTransport.socket(fake.port, it) }))
-            val path = client.upload("home", "voice-message-0m07s.m4a", "AUDIO".toByteArray(), "audio/mp4")
-            assertEquals("/home/u/.shepherdr/inbox/home/lq3x9aab12-voice-message-0m07s.m4a", path)
+            fake.on("POST /api/upload") { 200 to """{"path":"/home/u/.config/herdr-app/data/chat-attach/web-lq3x-voice-message-0m07s.m4a","name":"voice-message-0m07s.m4a"}""" }
+            fake.on("GET /api/file?chat=p%3Asp1&path=%2Fhome%2Fu%2Fx.m4a") { 200 to "AUDIO" }
+            val client = ShepherdrClient(ForwardTransport({ ForwardTransport.socket(fake.port, it) }, token = "t0k"))
+            val path = client.upload("voice-message-0m07s.m4a", "AUDIO".toByteArray(), "audio/mp4")
+            assertEquals("/home/u/.config/herdr-app/data/chat-attach/web-lq3x-voice-message-0m07s.m4a", path)
             val form = fake.bodies("POST /api/upload").single()
-            assertTrue("name=\"chat\"\r\n\r\nhome\r\n" in form, form)
             assertTrue("name=\"file\"; filename=\"voice-message-0m07s.m4a\"\r\nContent-Type: audio/mp4\r\n\r\nAUDIO\r\n--" in form, form)
-            assertEquals("AUDIO", String(client.file("home", "/home/u/x.m4a")))
-            assertEquals("x.m4a.gone isn't there any more", assertFailsWith<IOException> { client.file("home", "/home/u/x.m4a.gone") }.message)
+            assertEquals("AUDIO", String(client.file("p:sp1", "/home/u/x.m4a")))
+            assertEquals("x.m4a.gone isn't there any more", assertFailsWith<IOException> { client.file("p:sp1", "/home/u/x.m4a.gone") }.message)
+            assertEquals(listOf("t0k", "t0k", "t0k"), fake.tokens.toList())
         }
     }
 
     @Test
     fun aSendWithFilesNamesThem() {
-        val a = V2Actions.send("home", "", cid = "c1", attachments = listOf("/inbox/a.m4a"))
-        assertEquals("""{"type":"send","chat":"home","text":"","attachments":["/inbox/a.m4a"],"cid":"c1"}""", a.toString())
-        assertFalse("attachments" in V2Actions.send("home", "hi").toString())
+        val a = V2Actions.send("p:sp1", "", cid = "c1", attachments = listOf("/attach/a.m4a"))
+        assertEquals("""{"type":"send","chat":"p:sp1","text":"","attachments":["/attach/a.m4a"],"cid":"c1","human":true}""", a.toString())
+        assertFalse("attachments" in V2Actions.send("p:sp1", "hi").toString())
     }
 
     @Test
@@ -311,68 +420,119 @@ class ShepherdrTest {
         assertContentEquals(head.toByteArray() + data + "\r\n--B--\r\n".toByteArray(), body)
     }
 
-    /** The curl fallback's file command, run for real by `sh` with a stand-in `curl` that echoes what it got. */
-    @Test
-    fun curlCarriesFilesBothWaysAsBase64() = runBlocking<Unit> {
-        val dir = kotlin.io.path.createTempDirectory("curl").toFile()
-        val fakeCurl = java.io.File(dir, "curl")
-        // Writes what came on stdin (the decoded body) to the -o file with a mark, and its status to stdout.
-        fakeCurl.writeText("#!/bin/sh\nout=\nwhile [ \$# -gt 0 ]; do [ \"\$1\" = -o ] && out=\$2; shift; done\n{ printf 'got:'; cat; } > \"\$out\"\nprintf 201\n")
-        fakeCurl.setExecutable(true)
-        val curl = CurlTransport { command, stdin, _ ->
-            val p = ProcessBuilder("sh", "-c", command).apply { environment()["PATH"] = dir.path + ":" + System.getenv("PATH") }.start()
-            p.outputStream.use { it.write(stdin.toByteArray()) }
-            val out = p.inputStream.readBytes().toString(Charsets.UTF_8)
-            val err = p.errorStream.readBytes().toString(Charsets.UTF_8)
-            CommandResult(p.waitFor(), out, err)
-        }
-        val data = ByteArray(300) { it.toByte() }
-        val r = curl.bytes("POST", "/api/upload", data, "multipart/form-data; boundary=B")
-        assertEquals(201, r.status)
-        assertContentEquals("got:".toByteArray() + data, r.body)
-        dir.deleteRecursively()
-    }
-
     // ---- the client over the wire ----------------------------------------------------------------
 
     @Test
-    fun theClientOverASshStylePortForward() = runBlocking {
+    fun theBoardOverASshStylePortForward() = runBlocking {
         FakeShepherdr().use { fake ->
-            fake.on("GET /api/snapshot") { 200 to fixture("snapshot.json") }
-            fake.on("GET /api/waiting") { 200 to """{"count":2,"tags":["HA-1"]}""" }
-            fake.on("POST /api/action") { body -> if (body.contains("\"gone\"")) 200 to """{"ok":false,"error":"That chat is gone."}""" else 200 to "{}" }
-            fake.on("POST /api/cli") { 200 to """{"out":"HA-1 can't merge: its checks failed\n","code":1}""" }
+            fake.onSocket { ws ->
+                ws.sendText("""{"type":"hello","version":"3.1.2"}""")
+                ws.sendText("""{"type":"view","name":"tasks","value":[]}""")
+                ws.sendText(snapshotEvent("waiting.json"))
+                ws.readText()
+            }
+            fake.on("POST /api/action") { body ->
+                when {
+                    body.contains("\"gone\"") -> 400 to "That chat isn't here any more."
+                    body.contains("\"evidence\"") -> 200 to fixture("evidence.json")
+                    body.contains("\"accept\"") && body.contains("API-2") -> 400 to "herdr-task accept failed: its checks failed"
+                    else -> 200 to """{"ok":true}"""
+                }
+            }
             // As MachineConnection.forward does it, with the SSH channel replaced by a socket to the fake.
-            val forward = PortForward("127.0.0.1", 7787, preferred = 0) { _, _ -> fake.channel() }
-            val client = ShepherdrClient(ForwardTransport.over(forward))
-            assertEquals(3, client.snapshot().tasks.size)
-            assertEquals(2, client.waiting().count)
-            client.send("p:devbox:~", "hello")
-            assertEquals("That chat is gone.", assertFailsWith<IOException> { client.send("gone", "hello") }.message)
-            val cli = client.cli(listOf("merge", "HA-1"))
-            assertFalse(cli.ok)
-            val board = V2WorkBoard(client, "2.0.0")
-            val t = board.overview().tasks.first()
-            assertEquals("HA-1 can't merge: its checks failed", assertFailsWith<IOException> { board.approve(t) }.message)
-            assertEquals("""{"args":["merge","HA-1"]}""", fake.bodies("POST /api/cli").last())
-            board.answer(CardAnswer(WorkCard("GTM-16/Agent", V1Cards.plan(t, emptyList())), 0))
-            assertEquals("""{"type":"answer","chat":"GTM-16/Agent","question":"v1:plan","choice":0}""", fake.bodies("POST /api/action").last())
-            // A task's card answered from a space's chat names that space, so its copy there is settled too.
-            board.answer(CardAnswer(WorkCard("HA-9/Agent", V1Cards.plan(t, emptyList()), "HA-9", space = "p:m:x"), 1, note = "Smaller"))
+            val forward = PortForward("127.0.0.1", 7788, preferred = 0) { _, _ -> fake.channel() }
+            val client = ShepherdrClient(ForwardTransport.over(forward, "t0k"))
+            val board = V2WorkBoard(client, "3.1.2")
+            val o = board.overview()
+            assertEquals(5, o.tasks.size)
+            val ready = o.tasks.first { it.id == "DEMO-4" }
+            assertEquals("Ready", board.evidence(ready).status_text)
+            assertEquals("DEMO-4 accepted", board.approve(ready))
+            assertEquals("""{"type":"accept","task":"DEMO-4"}""", fake.bodies("POST /api/action").last())
+            val api = o.tasks.first { it.id == "vm:API-2" }
+            assertEquals("herdr-task accept failed: its checks failed", assertFailsWith<IOException> { board.approve(api) }.message)
+            assertEquals("That chat isn't here any more.", assertFailsWith<IOException> { client.send("gone", "hello") }.message)
+            board.close(o.tasks.first { it.id == "DEMO-7" })
+            assertEquals("""{"type":"close","chat":"DEMO-7/worker"}""", fake.bodies("POST /api/action").last())
+            board.answer(CardAnswer(WorkCard("DEMO-5/worker", V1Cards.plan(ready, emptyList())), 0))
+            assertEquals("""{"type":"answer","chat":"DEMO-5/worker","question":"v1:plan","choice":0}""", fake.bodies("POST /api/action").last())
+            val reply = V2Board.cards(o.needs)[1]
+            board.answer(CardAnswer(reply, -1, other = "Yes, two"))
             assertEquals(
-                """{"type":"answer","chat":"HA-9/Agent","question":"v1:plan","choice":1,"note":"Smaller","space":"p:m:x"}""",
+                """{"type":"send","chat":"p:sp0000000000000000000000000000a001","text":"Yes, two","reply":"m12","human":true}""",
                 fake.bodies("POST /api/action").last(),
             )
-            val plain = com.makefunstuff.herdr.core.shepherdr.V2Question(id = "m77", title = "Which port?", kind = "Reply", other = true)
-            board.answer(CardAnswer(WorkCard("HA-8/Agent", plain, "HA-8", space = "p:m:x", replyTo = "m77"), -1, other = "8080"))
-            assertEquals(
-                """{"type":"send","chat":"HA-8/Agent","text":"8080","reply":"m77","space":"p:m:x"}""",
-                fake.bodies("POST /api/action").last(),
-            )
-            assertFailsWith<IOException> { board.answer(CardAnswer(WorkCard("HA-8/Agent", plain, replyTo = "m77"), -1)) }
-            board.say("p:devbox:~", "hi")
-            assertEquals("""{"type":"send","chat":"p:devbox:~","text":"hi"}""", fake.bodies("POST /api/action").last())
+            assertFailsWith<IOException> { board.answer(CardAnswer(reply, -1)) }
+            board.say("sp0000000000000000000000000000a001", "hi")
+            assertEquals("""{"type":"send","chat":"p:sp0000000000000000000000000000a001","text":"hi","human":true}""", fake.bodies("POST /api/action").last())
+            assertTrue(fake.tokens.all { it == "t0k" })
             forward.close()
+        }
+    }
+
+    @Test
+    fun aRecipeAndItsPicturesComeFromItsMachine() = runBlocking {
+        FakeShepherdr().use { fake ->
+            fake.on("GET /api/artifacts/api-load/recipe?v=1&on=vm") { 200 to fixture("recipe.json") }
+            fake.on("GET /api/artifacts/demo-coverage/recipe?v=2") { 404 to """{"error":"No recipe here."}""" }
+            fake.on("GET /api/artifacts/api-load/file/shots/after%20one.png?v=1&on=vm") { 200 to "PNG" }
+            val board = V2WorkBoard(ShepherdrClient(ForwardTransport({ ForwardTransport.socket(fake.port, it) })))
+            val arts = snapshot("waiting.json").artifacts!!
+            val load = arts.first { it.id == "api-load" }
+            assertEquals(15, board.recipe(load, 1).blocks.size)
+            assertEquals("PNG", String(board.artifactFile(load, 1, "shots/after one.png")!!))
+            assertNull(board.artifactFile(load, 1, "missing.png"))
+            assertFailsWith<com.makefunstuff.herdr.core.shepherdr.ArtifactGone> { board.recipe(arts.first { it.id == "demo-coverage" }, 2) }
+        }
+    }
+
+    @Test
+    fun aVoiceCallCarriesPcmBothWays() = runBlocking {
+        FakeShepherdr().use { fake ->
+            val got = java.util.concurrent.LinkedBlockingQueue<ByteArray>()
+            fake.onSocket { ws ->
+                ws.sendText("""{"type":"state","state":"listening"}""")
+                ws.sendBinary(byteArrayOf(1, 0, 2, 0))
+                ws.readText()
+                got += ws.lastBytes
+                ws.sendText("""{"type":"interrupt"}""")
+                ws.sendText("""{"type":"error","message":"No ElevenLabs key. Add ELEVENLABS_API_KEY in Settings › Secrets."}""")
+                ws.close()
+                ws.readText()
+            }
+            val board = V2WorkBoard(ShepherdrClient(ForwardTransport({ ForwardTransport.socket(fake.port, it) }, token = "t0k")))
+            val call = board.call("sp1")
+            assertEquals(VoiceCall.Event.State("listening"), call.next())
+            assertContentEquals(byteArrayOf(1, 0, 2, 0), (call.next() as VoiceCall.Event.Audio).pcm)
+            // An odd byte at the end is held back: whole samples only.
+            call.send(byteArrayOf(5, 0, 6, 0, 7))
+            assertContentEquals(byteArrayOf(5, 0, 6, 0), got.poll(10, java.util.concurrent.TimeUnit.SECONDS))
+            assertEquals(VoiceCall.Event.Interrupt, call.next())
+            assertEquals("No ElevenLabs key. Add ELEVENLABS_API_KEY in Settings › Secrets.", (call.next() as VoiceCall.Event.Error).message)
+            assertNull(call.next())
+            assertEquals("t0k", fake.tokens.single())
+        }
+    }
+
+    @Test
+    fun aCallsAudioIs16BitLittleEndian() {
+        val pcm = com.makefunstuff.herdr.core.voice.CallState.pcm(floatArrayOf(0f, 1f, -1f, 0.5f))
+        assertContentEquals(byteArrayOf(0, 0, 0xFF.toByte(), 0x7F, 0x01, 0x80.toByte(), 0xFF.toByte(), 0x3F), pcm)
+        val back = com.makefunstuff.herdr.core.voice.CallState.floats(pcm)
+        assertEquals(listOf(0f, 32767f / 32768, -32767f / 32768, 16383f / 32768), back.toList())
+        val c = com.makefunstuff.herdr.core.voice.CallState(on = true, machineId = "m", space = "sp1")
+        assertTrue(c.isFor("m", "sp1", null))
+        assertFalse(c.isFor("m", "sp1", "DEMO-1"))
+        assertEquals("Calling…", c.words)
+    }
+
+    @Test
+    fun dictationIsWrittenDownOnTheMachine() = runBlocking {
+        FakeShepherdr().use { fake ->
+            fake.on("POST /api/dictate") { body -> if (body == "AUDIO") 200 to """{"text":"merge the dark mode task"}""" else 400 to """{"error":"That recording couldn't be read."}""" }
+            val board = V2WorkBoard(ShepherdrClient(ForwardTransport({ ForwardTransport.socket(fake.port, it) })))
+            assertEquals("merge the dark mode task", board.dictate("AUDIO".toByteArray(), "audio/mp4"))
+            assertEquals("That recording couldn't be read.", assertFailsWith<IOException> { board.dictate("x".toByteArray(), "audio/mp4") }.message)
         }
     }
 
@@ -381,11 +541,11 @@ class ShepherdrTest {
         FakeShepherdr().use { fake ->
             val asked = java.util.concurrent.CountDownLatch(1)
             val release = java.util.concurrent.CountDownLatch(1)
-            fake.on("POST /api/cli") { asked.countDown(); release.await(); 200 to """{"out":"","code":0}""" }
+            fake.on("POST /api/action") { asked.countDown(); release.await(); 200 to """{"ok":true}""" }
             val client = ShepherdrClient(ForwardTransport({ ForwardTransport.socket(fake.port, it) }))
-            val call = launch(kotlinx.coroutines.Dispatchers.IO) { client.cli(listOf("checks", "HA-1")) }
+            val call = launch(kotlinx.coroutines.Dispatchers.IO) { client.accept("DEMO-4") }
             assertTrue(asked.await(10, java.util.concurrent.TimeUnit.SECONDS))
-            // Shepherdr still waits on GitHub: cancelling doesn't wait with it.
+            // herdr-task still waits on GitHub: cancelling doesn't wait with it.
             withTimeout(5_000) { call.cancelAndJoin() }
             release.countDown()
         }
@@ -394,9 +554,9 @@ class ShepherdrTest {
     @Test
     fun aServerErrorSaysWhy() = runBlocking {
         FakeShepherdr().use { fake ->
-            fake.on("GET /api/snapshot") { 500 to """{"error":"herdr isn't answering"}""" }
+            fake.on("POST /api/action") { 401 to "no token" }
             val client = ShepherdrClient(ForwardTransport({ ForwardTransport.socket(fake.port, it) }))
-            assertEquals("herdr isn't answering", assertFailsWith<IOException> { client.snapshot() }.message)
+            assertEquals("no token", assertFailsWith<IOException> { client.accept("DEMO-4") }.message)
         }
     }
 
@@ -410,12 +570,12 @@ class ShepherdrTest {
     @Test
     fun theLiveLinkSendsSnapshotsAndTheWatchedChat() = runBlocking {
         FakeShepherdr().use { fake ->
-            val chat = fixture("chat-event.json")
+            val chat = ShepherdrJson.parseToJsonElement(fixture("chats.json")).let { (it as kotlinx.serialization.json.JsonArray)[1].toString() }
             fake.onSocket { ws ->
-                ws.sendText("""{"type":"snapshot","snapshot":${fixture("snapshot.json")}}""")
-                ws.sendText("""{"type":"build","id":"b1"}""")
+                ws.sendText("""{"type":"hello","version":"3.1.2"}""")
+                ws.sendText(snapshotEvent())
                 val watch = ws.readText()
-                assertTrue(watch.contains("\"watch\"") && watch.contains("p:devbox:herdr-android"))
+                assertTrue(watch.contains("\"watch\"") && watch.contains("p:sp00000000000000000000000000000a01"))
                 ws.ping()
                 // A chat in two frames.
                 ws.sendText(chat.substring(0, 100), fin = false)
@@ -426,12 +586,12 @@ class ShepherdrTest {
             }
             val client = ShepherdrClient(ForwardTransport({ ForwardTransport.socket(fake.port, it) }))
             val link = client.live()
+            assertEquals("hello", (link.next() as V2Event.Other).type)
             val first = link.next() as V2Event.Snapshot
-            assertEquals(3, first.snapshot.tasks.size)
-            assertEquals("build", (link.next() as V2Event.Other).type)
-            link.watch(listOf("p:devbox:herdr-android"))
+            assertEquals(4, first.snapshot.tasks.size)
+            link.watch(listOf("p:sp00000000000000000000000000000a01"))
             val c = link.next() as V2Event.Chat
-            assertEquals(4, c.chat.messages.size)
+            assertEquals(1, c.chat.messages.size)
             assertNull(link.next())
             withTimeout(10_000) { while (fake.closedSockets.get() == 0) kotlinx.coroutines.delay(20) }
             assertEquals(listOf("p"), fake.pongs)
@@ -439,45 +599,49 @@ class ShepherdrTest {
     }
 
     @Test
-    fun aChatComesThroughTheLiveLinkAndTheCoordinatorsThreadFollowsIt() = runBlocking {
+    fun anAssistantsChatComesThroughTheLiveLinkAndItsThreadFollowsIt() = runBlocking {
+        val chat = ShepherdrJson.parseToJsonElement(fixture("chats.json")).let { (it as kotlinx.serialization.json.JsonArray)[1].toString() }
         FakeShepherdr().use { fake ->
             fake.onSocket { ws ->
-                ws.sendText("""{"type":"snapshot","snapshot":{"places":[]}}""")
+                ws.sendText(snapshotEvent())
                 ws.readText()
-                ws.sendText(fixture("chat-event.json"))
-                ws.sendText(fixture("chat-event.json").replace("now adding the tasks.", "and one more."))
+                // Opening: the next one says what it found.
+                ws.sendText("""{"type":"chat","chat":{"key":"p:sp00000000000000000000000000000a01","notice":"opening","messages":[]}}""")
+                ws.sendText(chat)
+                ws.sendText(chat.replace("Shepherdr 3 client", "and one more"))
                 // Held open until the client goes.
                 ws.readText()
             }
             val board = V2WorkBoard(ShepherdrClient(ForwardTransport({ ForwardTransport.socket(fake.port, it) })))
-            val thread = board.coordinator("p:devbox:herdr-android")
-            assertEquals(3, thread.lines.size)
-            val two = withTimeout(10_000) { board.coordinatorThreads("p:devbox:herdr-android").take(2).toList() }
-            assertTrue(two[1].lines[1].text.endsWith("and one more."))
+            val thread = board.coordinator("sp00000000000000000000000000000a01")
+            assertEquals("none", thread.v2!!.notice)
+            assertEquals(1, thread.lines.size)
+            val three = withTimeout(10_000) { board.coordinatorThreads("sp00000000000000000000000000000a01").take(3).toList() }
+            assertTrue(three[2].lines[0].text.endsWith("and one more"))
         }
     }
 
     @Test
     fun aTasksOwnChatFollowsItsAgentsChatAndWordsGoThere() = runBlocking {
+        val chat = ShepherdrJson.parseToJsonElement(fixture("chats.json")).let { (it as kotlinx.serialization.json.JsonArray)[2].toString() }
         FakeShepherdr().use { fake ->
             fake.onSocket { ws ->
-                ws.sendText("""{"type":"snapshot","snapshot":{"places":[]}}""")
+                ws.sendText(snapshotEvent())
                 val watch = ws.readText()
-                assertTrue(watch.contains("HA-1/Agent"))
-                ws.sendText(fixture("chat-event.json").replace("p:devbox:herdr-android", "HA-1/Agent"))
+                assertTrue(watch.contains("DEMO-8/worker"))
+                ws.sendText(chat)
                 ws.readText()
             }
             val board = V2WorkBoard(ShepherdrClient(ForwardTransport({ ForwardTransport.socket(fake.port, it) })))
-            val task = V2Board.task(V2Task("HA-1", "Coordinator chat", place = "p:x", agent = V2TaskAgent("HA-1/Agent", cli = "Claude Code")))
-            assertEquals("Claude Code", task.agent)
+            val task = V2Board.task(V2Task("DEMO-8", "Shepherdr 3 client", place = "sp1", agent = V2TaskAgent("DEMO-8/worker", cli = "claude")))
             assertEquals("claude", V2Board.agentKind(task.agent))
-            assertEquals("codex", V2Board.agentKind("Codex"))
             val t = withTimeout(10_000) { board.taskThreads(task).first() }
-            assertEquals("HA-1/Agent", t.v2?.key)
-            assertEquals("p:x", t.space)
+            assertEquals("DEMO-8/worker", t.v2?.key)
+            assertEquals("Running ./gradlew -p core test", t.v2?.doing)
+            assertEquals("sp1", t.space)
             // A task before its agent starts has no chat to write to.
             val e = runCatching { board.tell(task.copy(chat = ""), "Hi") }.exceptionOrNull()
-            assertEquals("HA-1 has no agent yet", e?.message)
+            assertEquals("DEMO-8 has no agent yet", e?.message)
         }
     }
 
@@ -487,13 +651,14 @@ class ShepherdrTest {
             val links = java.util.concurrent.atomic.AtomicInteger()
             fake.onSocket { ws ->
                 val n = links.incrementAndGet()
-                ws.sendText("""{"type":"snapshot","snapshot":{"places":[{"id":"p:m:$n"}]}}""")
-                // The first link drops (Shepherdr restarts); the second stays until the app goes.
+                ws.sendText("""{"type":"snapshot","snapshot":{"places":[{"id":"sp$n"}]}}""")
+                // The first link drops (the service restarts); the second stays until the app goes.
                 if (n == 1) ws.close() else ws.readText()
             }
             val board = V2WorkBoard(ShepherdrClient(ForwardTransport({ ForwardTransport.socket(fake.port, it) })))
             val two = withTimeout(10_000) { board.overviews().take(2).toList() }
-            assertEquals(listOf("p:m:1", "p:m:2"), two.map { it.spaces.single().id })
+            assertEquals(listOf("sp1", "sp2"), two.map { it.spaces.single().id })
+            assertEquals("p:sp1", two[0].spaces.single().chat)
         }
     }
 
@@ -505,22 +670,25 @@ class ShepherdrTest {
     }
 
     @Test
-    fun withoutAForwardAChatIsReadByTheMachinesBun() = runBlocking {
-        val cmd = CurlTransport.chatCommand("p:m:it's", 15)
+    fun withoutAForwardTheSnapshotAndChatsAreReadByTheMachinesBun() = runBlocking {
+        val cmd = CurlTransport.chatCommand("p:it's", 15)
         assertTrue(cmd.startsWith("sh -c "))
-        assertTrue(cmd.contains("bun -e") && cmd.contains("node -e"))
+        assertTrue(cmd.contains("bun -e") && cmd.contains("node -e") && cmd.contains("Bearer"))
         // The key goes in as a JSON string, its quote escaped for the shell.
-        assertTrue(cmd.contains("const k=\"p:m:it"))
-        val event = fixture("chat-event.json").replace("\n", " ")
+        assertTrue(cmd.contains("const k=\"p:it"))
+        assertTrue(CurlTransport.snapshotCommand(15).contains("snapshot"))
+        val chat = ShepherdrJson.parseToJsonElement(fixture("chats.json")).let { (it as kotlinx.serialization.json.JsonArray)[1].toString() }
+        val snap = ShepherdrJson.parseToJsonElement(snapshotEvent()).toString()
         val curl = CurlTransport { c, _, _ ->
-            if (c.contains("bun -e")) CommandResult(0, "login banner\n@@shepherdr-chat@@" + ShepherdrJson.parseToJsonElement(event) + "\n", "")
-            else CommandResult(0, fixture("snapshot.json") + "\n@@shepherdr-status@@200", "")
+            when {
+                c.contains("const k=") -> CommandResult(0, "login banner\n@@shepherdr-chat@@$chat\n", "")
+                else -> CommandResult(0, "@@shepherdr-chat@@$snap\n", "")
+            }
         }
         val board = V2WorkBoard(ShepherdrClient(curl))
-        val thread = board.coordinator("p:devbox:herdr-android")
-        assertEquals(3, thread.lines.size)
+        assertEquals(1, board.coordinator("sp00000000000000000000000000000a01").lines.size)
         // No live link: the flows read again.
-        assertEquals(3, withTimeout(10_000) { board.overviews(everyMs = 10).take(2).toList() }.last().tasks.size)
+        assertEquals(4, withTimeout(10_000) { board.overviews(everyMs = 10).take(2).toList() }.last().tasks.size)
         val none = CurlTransport { _, _, _ -> CommandResult(3, "", "Shepherdr sent no chat x") }
         assertEquals("Shepherdr sent no chat x", assertFailsWith<IOException> { ShepherdrClient(none).chat("x") }.message)
     }
@@ -529,12 +697,12 @@ class ShepherdrTest {
     fun cancellingTheLiveLinkClosesIt() = runBlocking {
         FakeShepherdr().use { fake ->
             fake.onSocket { ws ->
-                ws.sendText("""{"type":"snapshot","snapshot":{"places":[{"id":"p:m:~","home":true}]}}""")
+                ws.sendText("""{"type":"snapshot","snapshot":{"places":[{"id":"sp1"}]}}""")
                 ws.readText()
             }
             val board = V2WorkBoard(ShepherdrClient(ForwardTransport({ ForwardTransport.socket(fake.port, it) })))
             val o = withTimeout(10_000) { board.overviews().first() }
-            assertEquals("p:m:~", o.spaces.single().id)
+            assertEquals("sp1", o.spaces.single().id)
             // The fake's read returned once the app closed its end.
             withTimeout(10_000) { while (fake.closedSockets.get() == 0) kotlinx.coroutines.delay(20) }
         }
@@ -554,7 +722,7 @@ class ShepherdrTest {
     // ---- v1 in the same shapes -------------------------------------------------------------------
 
     @Test
-    fun v1StatusesInV2Words() {
+    fun v1StatusesInShepherdrsWords() {
         assertEquals(WorkStatus.Ready, WorkTasks.status(BoardStatus.Approval))
         for (s in listOf(BoardStatus.ReviewFailed, BoardStatus.PlanReady, BoardStatus.PickOne, BoardStatus.Asks, BoardStatus.AsksOk, BoardStatus.NeedsLogin, BoardStatus.Stopped, BoardStatus.Error)) {
             assertEquals(WorkStatus.Need, WorkTasks.status(s), s.name)
@@ -570,8 +738,8 @@ class ShepherdrTest {
     @Test
     fun pinnedFirstWithinEachStatus() {
         fun t(id: String, s: WorkStatus, pinned: Boolean = false) = WorkTask(id, id, id, "", s, pinned = pinned)
-        val out = WorkTasks.ordered(listOf(t("a", WorkStatus.Done), t("b", WorkStatus.Work), t("c", WorkStatus.Work, true), t("d", WorkStatus.Need)))
-        assertEquals(listOf("d", "c", "b", "a"), out.map { it.id })
+        val out = WorkTasks.ordered(listOf(t("a", WorkStatus.Done), t("b", WorkStatus.Work), t("c", WorkStatus.Work, true), t("d", WorkStatus.Need), t("e", WorkStatus.Merging)))
+        assertEquals(listOf("d", "e", "c", "b", "a"), out.map { it.id })
     }
 
     @Test
@@ -593,12 +761,14 @@ class ShepherdrTest {
     }
 }
 
-/** A stand-in for Shepherdr's server on a loopback port: canned HTTP answers and a scripted live link. */
+/** A stand-in for Shepherdr's service on a loopback port: canned HTTP answers and a scripted live link. */
 private class FakeShepherdr : AutoCloseable {
     private val server = ServerSocket(0, 50, java.net.InetAddress.getByName("127.0.0.1"))
     val port: Int get() = server.localPort
     private val routes = HashMap<String, (String) -> Pair<Int, String>>()
     private val seen = CopyOnWriteArrayList<Pair<String, String>>()
+    /** The token each request came with (`Authorization: Bearer …`), in order; null for none. */
+    val tokens = CopyOnWriteArrayList<String?>()
     private var socketScript: ((FakeSocket) -> Unit)? = null
     val pongs = CopyOnWriteArrayList<String>()
     val closedSockets = java.util.concurrent.atomic.AtomicInteger()
@@ -631,7 +801,8 @@ private class FakeShepherdr : AutoCloseable {
         val (line, headers) = head(input)
         val (method, path) = line.split(' ').let { it[0] to it[1] }
         assertNull(headers["origin"])
-        assertEquals("127.0.0.1:7787", headers["host"])
+        assertEquals("127.0.0.1:7788", headers["host"])
+        tokens += headers["authorization"]?.removePrefix("Bearer ")
         if (headers["upgrade"] == "websocket") {
             val accept = Wire.acceptFor(headers.getValue("sec-websocket-key"))
             s.getOutputStream().write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: $accept\r\n\r\n".toByteArray())
@@ -671,6 +842,11 @@ private class FakeShepherdr : AutoCloseable {
 /** The server's end of a WebSocket: unmasked frames out, masked ones in. */
 private class FakeSocket(private val input: InputStream, private val output: OutputStream, private val pongs: MutableList<String>) {
     fun sendText(text: String, fin: Boolean = true, opcode: Int = 1) = frame(opcode, text.toByteArray(), fin)
+    fun sendBinary(bytes: ByteArray) = frame(2, bytes, true)
+    /** The opcode of the last frame [readText] gave. */
+    var lastOpcode = 0
+    /** The payload of the last frame [readText] gave, as bytes. */
+    var lastBytes = ByteArray(0)
     fun ping() = frame(0x9, "p".toByteArray(), true)
     fun close() = frame(0x8, ByteArray(0), true)
 
@@ -699,6 +875,8 @@ private class FakeSocket(private val input: InputStream, private val output: Out
             val mask = Wire.readExactly(input, 4)
             val p = Wire.readExactly(input, len)
             for (i in p.indices) p[i] = (p[i].toInt() xor mask[i % 4].toInt()).toByte()
+            lastOpcode = b0 and 0x0F
+            lastBytes = p
             when (b0 and 0x0F) {
                 0xA -> pongs += String(p)
                 0x8 -> return ""

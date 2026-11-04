@@ -38,24 +38,19 @@ class WorkBoardScreensTest {
     fun closesATaskAndSaysWhatItHoldsWhenRefused() = runBlocking {
         val ok = Fake { """{"ok":true,"kept":[]}""" }
         assertEquals("HA-2 is done, nothing merged", V2WorkBoard(ShepherdrClient(ok)).close(ready))
-        assertEquals("""POST /api/action {"type":"close","chat":"HA-2"}""", ok.sent.single())
+        assertEquals("""POST /api/action {"type":"close","chat":"HA-2/worker"}""", ok.sent.single())
 
-        val held = Fake { """{"ok":false,"held":["3 commits main lacks","a change not committed"]}""" }
-        assertEquals(
-            "HA-2 holds work main lacks: 3 commits main lacks; a change not committed. Merge or drop it first.",
-            assertFailsWith<IOException> { V2WorkBoard(ShepherdrClient(held)).close(ready) }.message,
-        )
         val done = Fake { """{"ok":false,"error":"HA-2 is Done already (merged)."}""" }
         assertEquals("HA-2 is Done already (merged).", assertFailsWith<IOException> { V2WorkBoard(ShepherdrClient(done)).close(ready) }.message)
     }
 
     @Test
-    fun addsATaskByAskingTheSpacesCoordinator() = runBlocking {
+    fun addsATaskByAskingTheSpacesAssistant() = runBlocking {
         val fake = Fake { "{}" }
-        val said = V2WorkBoard(ShepherdrClient(fake)).addTask("p:m:herdr-android", "  Dark mode for the brief ", "Follow DESIGN.md.\n")
-        assertEquals("Sent to the coordinator: it adds the task", said)
+        val said = V2WorkBoard(ShepherdrClient(fake)).addTask("sp-app", "  Dark mode for the brief ", "Follow DESIGN.md.\n")
+        assertEquals("Sent to the Assistant: it adds the task", said)
         assertEquals(
-            """POST /api/action {"type":"send","chat":"p:m:herdr-android","text":"Please add a task: Dark mode for the brief\n\nFollow DESIGN.md."}""",
+            """POST /api/action {"type":"send","chat":"p:sp-app","text":"Please add a task: Dark mode for the brief\n\nFollow DESIGN.md.","human":true}""",
             fake.sent.single(),
         )
         assertEquals("Please add a task: Just a title", V2Board.addRequest("Just a title", " "))
@@ -64,7 +59,7 @@ class WorkBoardScreensTest {
     @Test
     fun eachStatusHasTheBoardsColour() {
         assertEquals(
-            listOf(BoardTone.Red, BoardTone.Green, BoardTone.Amber, BoardTone.Blue, BoardTone.Pink, BoardTone.Grey, BoardTone.Teal),
+            listOf(BoardTone.Red, BoardTone.Green, BoardTone.Blue, BoardTone.Amber, BoardTone.Pink, BoardTone.Grey, BoardTone.Teal),
             WorkStatus.entries.map { it.tone },
         )
         // The same colour as v1's nearest status, so both boards look alike.
@@ -91,14 +86,14 @@ class WorkBoardScreensTest {
     }
 
     @Test
-    fun aSpaceWhoseCoordinatorAsksSaysSo() {
+    fun aSpaceWhoseAssistantAsksSaysSo() {
         val s = com.makefunstuff.herdr.core.shepherdr.V2Snapshot(
             places = listOf(com.makefunstuff.herdr.core.shepherdr.V2Place("p:m:a", "a"), com.makefunstuff.herdr.core.shepherdr.V2Place("p:m:b", "b")),
             tasks = listOf(com.makefunstuff.herdr.core.shepherdr.V2Task("A-1", status = com.makefunstuff.herdr.core.shepherdr.V2TaskStatus.Ready, place = "p:m:a")),
             asks = mapOf("p:m:a" to "ask:1"),
         )
         val o = V2Board.overview(s)
-        // Its coordinator's question shows even though a task of it waits for you too.
+        // Its Assistant's question shows even though a task of it waits for you too.
         assertEquals(listOf(true, false), o.spaces.map { it.asks })
         assertEquals(listOf(true, false), o.spaces.map { it.needsYou })
     }

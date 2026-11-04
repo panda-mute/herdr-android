@@ -16,10 +16,9 @@ object SpeechText {
         is SpaceChatItem.Words -> if (item.you) null else reply(item.text)
         is SpaceChatItem.Update -> sentence(spokenTask(item.task) + " " + plain(item.text)) +
             item.asks.firstOrNull()?.let { " It asks: " + question(it.question.title, it.question.choices.map { c -> c.label }) }.orEmpty()
-        // A safeguard card is the human's tap, never an answer said aloud: its choices aren't offered.
         is SpaceChatItem.Question -> listOf(
             reply(item.intro),
-            if (item.card.question.safeguard) "A safeguard card waits for your tap in the chat." else question(item.card.question.title, item.card.question.choices.map { it.label }),
+            question(item.card.question.title, item.card.question.choices.map { it.label }),
         ).filter { it.isNotBlank() }.joinToString(" ")
         is SpaceChatItem.Artifact -> listOf(reply(item.intro), "It shared an artifact.").filter { it.isNotBlank() }.joinToString(" ")
         is SpaceChatItem.File -> if (item.you) null else "It sent a file, ${spokenName(item.name)}."

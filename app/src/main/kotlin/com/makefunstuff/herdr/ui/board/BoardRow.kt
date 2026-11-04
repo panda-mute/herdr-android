@@ -53,7 +53,7 @@ import com.makefunstuff.herdr.ui.theme.Space
  * under it), a ring while it only waits its turn (queued, to do).
  */
 @Composable
-internal fun StatusMark(status: WorkStatus, progress: Int?, eta: Int?) {
+internal fun StatusMark(status: WorkStatus, progress: Int?, eta: Int?, left: String? = null) {
     val color = status.color()
     val track = Herdr.colors.line
     Column(Modifier.width(28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -67,7 +67,11 @@ internal fun StatusMark(status: WorkStatus, progress: Int?, eta: Int?) {
             }
             else -> Canvas(Modifier.size(10.dp)) { drawCircle(color) }
         }
-        if (eta != null && status == WorkStatus.Work) Text(
+        // Shepherdr's own words for the minutes left ("6m", "<1m", "2h"), under the dot in amber; else its agent's guess.
+        if (left != null && status == WorkStatus.Work) Text(
+            left, style = CodeStyle.copy(fontSize = 10.sp), color = Herdr.colors.working, maxLines = 1,
+            modifier = Modifier.padding(top = Space.xxs),
+        ) else if (eta != null && status == WorkStatus.Work) Text(
             minutes(eta), style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp), color = Herdr.colors.muted, maxLines = 1,
             modifier = Modifier.padding(top = Space.xxs),
         )
@@ -100,6 +104,7 @@ internal fun BoardRow(
     onClickLabel: String,
     progress: Int? = null,
     eta: Int? = null,
+    left: String? = null,
     agent: String = "",
     onAgent: (() -> Unit)? = null,
     age: String = "",
@@ -132,7 +137,7 @@ internal fun BoardRow(
             .padding(vertical = Space.s),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        StatusMark(status, progress, eta)
+        StatusMark(status, progress, eta, left)
         Spacer(Modifier.width(Space.s))
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -157,18 +162,20 @@ internal fun BoardRow(
     }
 }
 
-/** A Shepherdr 2 task as a [BoardRow]; [space] names its space where the list mixes them. */
+/** A Shepherdr task as a [BoardRow]; [space] names its space where the list mixes them. */
 @Composable
 internal fun WorkTaskRow(t: WorkTask, onOpen: () -> Unit, space: String = "", showWord: Boolean = true) {
     val onAgent = if (t.chat.isNotEmpty()) onOpen else null
     val pr = prNumberOf(t.pr)?.let { "PR #$it" }
     BoardRow(
         name = t.name, title = t.title,
-        line = listOfNotNull(t.line.ifEmpty { null }.takeIf { t.status != WorkStatus.Done }, pr, space.ifEmpty { null }).joinToString(" · "),
+        line = listOfNotNull(
+            (if (t.accepting) "Accepting…" else t.line.ifEmpty { null }).takeIf { t.status != WorkStatus.Done }, pr, space.ifEmpty { null },
+        ).joinToString(" · "),
         status = t.status,
         description = listOf(t.name, t.status.label, t.title, t.line, space).filter { it.isNotEmpty() }.joinToString(", "),
         onOpen = onOpen, onClickLabel = if (onAgent != null) "Open its chat" else "Open details",
-        progress = t.progress, eta = t.eta, agent = t.agent, onAgent = onAgent, age = t.age, pinned = t.pinned, showWord = showWord,
+        progress = t.progress, eta = t.eta, left = t.left, agent = t.agent, onAgent = onAgent, age = t.age, pinned = t.pinned, showWord = showWord,
     )
 }
 
@@ -208,7 +215,7 @@ internal fun CoordinatorAsksRow(s: WorkSpace, onOpen: () -> Unit) {
     val c = Herdr.colors
     Row(
         Modifier.fillMaxWidth().heightIn(min = 56.dp).clip(RoundedCornerShape(8.dp))
-            .combinedClickable(onClickLabel = "Open the coordinator chat", onClick = onOpen).padding(vertical = Space.s),
+            .combinedClickable(onClickLabel = "Open the Assistant chat", onClick = onOpen).padding(vertical = Space.s),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(Modifier.width(28.dp), contentAlignment = Alignment.Center) {
@@ -216,8 +223,8 @@ internal fun CoordinatorAsksRow(s: WorkSpace, onOpen: () -> Unit) {
         }
         Spacer(Modifier.width(Space.s))
         Column(Modifier.weight(1f)) {
-            Text("${s.name}'s coordinator asks you", style = MaterialTheme.typography.titleMedium, color = c.strong, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text("Answer it in the coordinator chat", style = MaterialTheme.typography.bodySmall, color = c.muted, maxLines = 1)
+            Text("${s.name}'s Assistant asks you", style = MaterialTheme.typography.titleMedium, color = c.strong, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text("Answer it in the Assistant chat", style = MaterialTheme.typography.bodySmall, color = c.muted, maxLines = 1)
         }
         Icon(HerdrIcons.ChevronRight, null, tint = c.muted, modifier = Modifier.size(20.dp))
     }

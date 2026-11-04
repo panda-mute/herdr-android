@@ -132,6 +132,8 @@ class SceneData {
     var mic: PreviewMic.Setup = PreviewMic.Setup()
     /** The coordinator's voice as the scene starts (PreviewCoordinatorVoice): off, or on in a chat and what it does. */
     var voice: com.makefunstuff.herdr.core.voice.VoiceState = com.makefunstuff.herdr.core.voice.VoiceState()
+    /** A voice call the scene starts in (`PreviewVoiceCalls`). */
+    var call: com.makefunstuff.herdr.core.voice.CallState = com.makefunstuff.herdr.core.voice.CallState()
     /** Its settings (VoiceSettingsStore), as saved before the app opens. */
     var voiceSettings: com.makefunstuff.herdr.data.VoiceSettingsStore.Settings? = null
     fun host(id: String): FakeMachine = hosts.getValue(id)
@@ -214,6 +216,7 @@ fun render(scene: Scene, dark: Boolean, file: File) {
     PreviewTerminal.selection = data.selection
     PreviewMic.set(data.mic)
     PreviewCoordinatorVoice.next = data.voice
+    PreviewVoiceCalls.next = data.call
     PreviewScanner.hostKeys = data.reachable
     PreviewUnlock.screenLock = data.screenLock
     PreviewUnlock.answer = data.unlockAnswer

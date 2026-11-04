@@ -65,6 +65,7 @@ import com.makefunstuff.herdr.core.host.HostSession
 import com.makefunstuff.herdr.core.host.Images
 import com.makefunstuff.herdr.core.shepherdr.OutgoingLine
 import com.makefunstuff.herdr.core.shepherdr.SpaceChat
+import com.makefunstuff.herdr.core.shepherdr.ChatNotice
 import com.makefunstuff.herdr.core.shepherdr.SpaceChatItem
 import com.makefunstuff.herdr.core.shepherdr.V2ReplyQuote
 import com.makefunstuff.herdr.data.DraftStore
@@ -131,7 +132,7 @@ import kotlinx.coroutines.launch
 import java.util.UUID
 
 /**
- * A space's coordinator on Shepherdr 2, as a chat: the spaces to pick from under the bar (the one you
+ * A space's coordinator on Shepherdr 3, as a chat: the spaces to pick from under the bar (the one you
  * came from, else the home space), the chat live as Shepherdr sends it, with its update cards and
  * question cards answered here, and what waits on you over the composer.
  */
@@ -214,7 +215,8 @@ internal fun SpaceCoordinator(nav: NavController, machineId: String, session: Ho
     /** The question cards an answer is on its way to, by question id. */
     var answering by remember(space?.id) { mutableStateOf<Set<String>>(emptySet()) }
     var chatProblem by remember(space?.id) { mutableStateOf<String?>(null) }
-    var clearingMark by remember(space?.id) { mutableStateOf(false) }
+    /** The task whose Accept card is up. */
+    var accepting by remember(space?.id) { mutableStateOf<String?>(null) }
     LaunchedEffect(board, space?.id) {
         val b = board ?: return@LaunchedEffect
         val id = space?.id ?: return@LaunchedEffect
@@ -276,15 +278,6 @@ internal fun SpaceCoordinator(nav: NavController, machineId: String, session: Ho
         }
     }
 
-    fun clearVoiceMark() {
-        val b = board ?: return
-        val id = space?.id ?: return
-        clearingMark = true
-        scope.launch {
-            runCatching { b.clearVoiceMark(id) }.onFailure { context.toast(it.message ?: "Couldn't clear the voice mark") }
-            clearingMark = false
-        }
-    }
 
     val waits = t?.cards.orEmpty()
     // Under the newest message: only when it says something, else it would be the newest item, and a reader just over it "up the chat".
@@ -299,11 +292,15 @@ internal fun SpaceCoordinator(nav: NavController, machineId: String, session: Ho
     val heard by speech.state.collectAsStateWithLifecycle()
     val voiceHere = heard.on && heard.machineId == machineId && heard.space == space?.id
     val askMic = rememberVoiceMic()
+    // A voice call with this space's Assistant (Shepherdr's voice agent on the machine).
+    val calls = container.voiceCalls
+    val call by calls.state.collectAsStateWithLifecycle()
+    val callHere = call.machineId == machineId && call.space == space?.id && call.task == null && (call.on || call.problem != null)
     Scaffold(
         containerColor = c.ground,
         topBar = {
             if (!typing) HerdrTopBar(
-                "Coordinator",
+                "Assistant",
                 subtitle = listOfNotNull(space?.let(::spaceName), state.machine.label, stateWords(t, state.online, state.status.label())).joinToString(" · "),
                 onBack = { nav.popBackStack() },
                 actions = {
@@ -312,7 +309,16 @@ internal fun SpaceCoordinator(nav: NavController, machineId: String, session: Ho
                         BarIcon(HerdrIcons.LayoutDashboard, "Artifacts", { nav.navigate(Routes.artifacts(machineId, space.id)) })
                     }
                     BarIcon(
-                        HerdrIcons.Headphones, if (voiceHere) "Turn voice off" else "Hear the coordinator",
+                        HerdrIcons.Phone, if (callHere && call.on) "End the call" else "Call the Assistant",
+                        onClick = {
+                            val s = space
+                            if (callHere && call.on) calls.stop()
+                            else if (s != null) askMic { allowed -> if (allowed) calls.start(machineId, s.id, null, "the ${spaceName(s)} Assistant") }
+                        },
+                        enabled = space != null && state.online, selected = callHere && call.on,
+                    )
+                    BarIcon(
+                        HerdrIcons.Headphones, if (voiceHere) "Turn voice off" else "Hear the Assistant",
                         onClick = {
                             val s = space
                             if (voiceHere) speech.stop()
@@ -332,10 +338,7 @@ internal fun SpaceCoordinator(nav: NavController, machineId: String, session: Ho
                 textScale = sizes.chat,
                 composer = {
                     Column {
-                        // Shepherdr 2.1: the voice computer sent to this chat. Pinned over the message box until cleared.
-                        if (t?.v2?.voiceMark != null && !typing) {
-                            VoiceMark(clearingMark, state.online && board != null, Modifier.padding(horizontal = Space.screen).padding(bottom = Space.xs), ::clearVoiceMark)
-                        }
+                        if (callHere && !typing) CallBar(call, Modifier.padding(horizontal = Space.screen).padding(bottom = Space.xs), calls::stop)
                         if (waits.isNotEmpty() && draft.isEmpty()) {
                             WaitsForYou(waits, Modifier.padding(horizontal = Space.screen).padding(bottom = Space.xs)) { card ->
                                 val at = items.indexOfFirst { it.holds(card) }
@@ -358,7 +361,7 @@ internal fun SpaceCoordinator(nav: NavController, machineId: String, session: Ho
                         ChatComposer(
                             draft = draft,
                             onDraft = { draft = it },
-                            placeholder = space?.takeIf { !it.home }?.let { "Tell ${it.name}'s coordinator…" } ?: "Tell the coordinator…",
+                            placeholder = space?.let { "Tell ${it.name}'s Assistant…" } ?: "Tell the Assistant…",
                             onSend = ::sendDraft,
                             enabled = state.online && board != null && space != null,
                             status = when {
@@ -405,7 +408,7 @@ internal fun SpaceCoordinator(nav: NavController, machineId: String, session: Ho
                         ) {
                             if (foot) item(key = "foot") {
                                 Column(verticalArrangement = Arrangement.spacedBy(Space.s)) {
-                                    if (t.working) Working()
+                                    if (t.working) Working("Assistant", t.v2?.doing)
                                     (chatProblem ?: problem)?.let { Notice(it, c.red) }
                                     shared.waitNote?.let { Notice(it, null) }
                                 }
@@ -413,9 +416,14 @@ internal fun SpaceCoordinator(nav: NavController, machineId: String, session: Ho
                             if (items.isEmpty()) {
                                 item(key = "empty") {
                                     Box(Modifier.fillParentMaxSize(), contentAlignment = Alignment.Center) {
-                                        ChatEmpty(HerdrIcons.MessagesSquare, "Nothing said yet", "Tell the coordinator what needs doing and it turns it into tasks.")
+                                        val n = t.v2?.let(ChatNotice::of)
+                                        if (n != null) ChatEmpty(HerdrIcons.SquareTerminal, n.first, n.second.orEmpty())
+                                        else ChatEmpty(HerdrIcons.MessagesSquare, ChatNotice.EMPTY_TITLE, ChatNotice.EMPTY_BODY)
                                     }
                                 }
+                            } else t.v2?.let(ChatNotice::of)?.let { n ->
+                                // Shepherdr's notice instead of the conversation; what it read of the chat still shows.
+                                item(key = "notice") { Notice(listOfNotNull(n.first, n.second).joinToString(". "), null) }
                             }
                             items(items.asReversed(), key = { it.id }) { item ->
                                 Column(verticalArrangement = Arrangement.spacedBy(Space.m)) {
@@ -425,6 +433,8 @@ internal fun SpaceCoordinator(nav: NavController, machineId: String, session: Ho
                                         onAnswer = ::answer,
                                         onReply = { q -> replyTo = q },
                                         onRetry = { w -> outgoing = outgoing.filterNot { "cid:${it.cid}" == w.id }; send(w.text, w.reply) },
+                                        who = "the Assistant",
+                                        onAccept = { id -> accepting = id },
                                         agentOf = { id -> overview?.tasks?.firstOrNull { it.id == id && it.chat.isNotEmpty() }?.agent?.ifEmpty { "agent" } },
                                         // A task opens as its agent's chat, on the board.
                                         onAgent = { id -> panes.openBoard(nav, machineId, id, alone = true) },
@@ -439,6 +449,16 @@ internal fun SpaceCoordinator(nav: NavController, machineId: String, session: Ho
         }
     }
     if (attachMenu) AttachMenu(attach, tray, online = state.online, onDismiss = { attachMenu = false })
+    accepting?.let { id ->
+        // Its task as the board has it; where the board isn't read yet, enough of it for the card, which reads the rest.
+        val task = overview?.tasks?.firstOrNull { it.id == id || it.name == id }
+            ?: com.makefunstuff.herdr.core.board.WorkTask(id, id.substringAfter(':'), "", space?.id.orEmpty(), com.makefunstuff.herdr.core.board.WorkStatus.Ready)
+        com.makefunstuff.herdr.ui.board.AcceptSheet(
+            board, task, onDismiss = { accepting = null },
+            onProof = { proof -> nav.navigate(Routes.artifact(machineId, proof, null)) },
+            onAccepted = { context.toast(it) },
+        )
+    }
 }
 
 /** A space as people say it: the home space is "Home". */
@@ -521,8 +541,9 @@ internal fun ReplyingTo(q: V2ReplyQuote, modifier: Modifier, onCancel: () -> Uni
 }
 
 /**
- * One item of a Shepherdr 2 chat, a space's coordinator's or a task's agent's ([who], as your waiting words
- * say it). [agentOf] names the agent of an update card's task ("Claude Code"), whose chip [onAgent] opens.
+ * One item of a Shepherdr chat, a space's Assistant's or a task's agent's ([who], as your waiting words say it).
+ * [agentOf] names the agent of a news line's task ("Claude Code"), whose chip [onAgent] opens; a ready line's
+ * Accept opens its Accept card ([onAccept]).
  */
 @Composable
 internal fun ChatItem(
@@ -531,15 +552,19 @@ internal fun ChatItem(
     onAnswer: (CardAnswer) -> Unit,
     onReply: (V2ReplyQuote) -> Unit,
     onRetry: (SpaceChatItem.Words) -> Unit,
-    who: String = "the coordinator",
+    who: String = "the Assistant",
     agentOf: (String) -> String? = { null },
     onAgent: (String) -> Unit = {},
+    onAccept: ((String) -> Unit)? = null,
 ) {
     val c = Herdr.colors
     when (item) {
         is SpaceChatItem.Words -> Words(item, onReply, onRetry, who)
         is SpaceChatItem.Update -> Column(verticalArrangement = Arrangement.spacedBy(Space.s)) {
             UpdateRow(item, agentOf(item.task)?.let { a -> a to { onAgent(item.task) } })
+            if (item.accept && onAccept != null) Row(Modifier.fillMaxWidth().padding(start = 20.dp)) {
+                PrimaryButton(com.makefunstuff.herdr.core.shepherdr.Accept.ACCEPT) { onAccept(item.task) }
+            }
             item.asks.forEach { card -> QuestionCard(card, null, card.question.id in answering, onAnswer) }
             item.answered?.let { Text("Answered: $it", style = MaterialTheme.typography.labelMedium, color = c.muted, modifier = Modifier.padding(start = 20.dp)) }
         }
@@ -572,28 +597,6 @@ internal fun ChatItem(
             style = MaterialTheme.typography.labelMedium, color = c.muted,
             modifier = Modifier.fillMaxWidth().padding(horizontal = Space.xs),
         )
-    }
-}
-
-/**
- * Shepherdr 2.1's voice mark: the voice computer sent to this coordinator chat, so its commands that close, delete,
- * remove, archive or merge each wait for your yes on a safeguard card, until you clear the mark here.
- */
-@Composable
-private fun VoiceMark(clearing: Boolean, enabled: Boolean, modifier: Modifier, onClear: () -> Unit) {
-    val c = Herdr.colors
-    Surface(color = c.card, shape = HerdrShapes.Field, modifier = modifier.fillMaxWidth().hairline(HerdrShapes.Field, c.line)) {
-        Row(Modifier.padding(start = Space.m, top = Space.xs, bottom = Space.xs), verticalAlignment = Alignment.CenterVertically) {
-            Icon(HerdrIcons.Mic, null, tint = c.muted, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(Space.m))
-            Text(
-                "Sent to by voice: closing, merging and other changes here wait for your yes on a safeguard card.",
-                style = MaterialTheme.typography.bodySmall, color = c.text, modifier = Modifier.weight(1f).padding(vertical = Space.xs),
-            )
-            QuietButton(onClick = onClear, enabled = enabled && !clearing, color = c.accent) {
-                Text(if (clearing) "Clearing…" else "Clear voice mark")
-            }
-        }
     }
 }
 
@@ -738,38 +741,31 @@ private fun QuestionCard(card: WorkCard, answer: String?, busy: Boolean, onAnswe
     var writing by remember(q.id) { mutableStateOf<Int?>(if (q.kind == "Reply") -2 else null) }
     var words by remember(q.id) { mutableStateOf("") }
     var picks by remember(q.id) { mutableStateOf<Set<Int>>(emptySet()) }
-    /** A safeguard card's choice picked, waiting for Send: a yes to its command is never one stray tap. */
-    var confirming by remember(q.id) { mutableStateOf<Int?>(null) }
+    /** A card that asks several questions: the answer picked for each, in order. */
+    var parts by remember(q.id) { mutableStateOf<Map<Int, Set<Int>>>(emptyMap()) }
     QuietCard(edge = if (open) c.lineStrong else c.line) {
         Column(Modifier.padding(start = Space.l, end = Space.l, top = Space.m, bottom = if (open) Space.xs else Space.m)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     q.asks ?: when {
                         q.kind == "Plan" -> "Plan"
-                        q.safeguard -> "Safeguard"
                         card.task.isNotEmpty() -> "${card.task} asks"
                         else -> "Question"
                     },
                     style = MaterialTheme.typography.labelMedium, color = c.muted, modifier = Modifier.weight(1f),
                 )
-                if (open) StatusBadge("needs you", c.red)
+                if (open) StatusBadge(WorkStatus.Need.label, c.red)
             }
             Spacer(Modifier.size(Space.xs))
             MarkdownText(q.title, style = MaterialTheme.typography.titleMedium, color = c.strong)
-            if (q.safeguard) {
-                if (open) Text(
-                    "This chat was sent to by voice. Allow once runs only this command, once.",
-                    style = MaterialTheme.typography.bodyMedium, color = c.muted, modifier = Modifier.padding(top = Space.xs),
-                )
-                q.screen?.takeIf { it.isNotBlank() }?.let { command ->
-                    // Its command, and what goes on its stdin (up to 8000 characters): all of it, in a box that scrolls.
-                    Text(
-                        command,
-                        style = MaterialTheme.typography.bodySmall, fontFamily = Mono, color = c.text,
-                        modifier = Modifier.padding(top = Space.s).fillMaxWidth().heightIn(max = 240.dp).background(c.panel, HerdrShapes.Field)
-                            .verticalScroll(rememberScrollState()).padding(Space.s),
-                    )
+            // A plan, or what a permission asks to run, in the CLI's own words.
+            q.plan?.takeIf { it.isNotBlank() }?.let { plan ->
+                Box(Modifier.padding(top = Space.s).fillMaxWidth().heightIn(max = 320.dp).background(c.panel, HerdrShapes.Field).verticalScroll(rememberScrollState()).padding(Space.s)) {
+                    MarkdownText(plan, style = MaterialTheme.typography.bodyMedium)
                 }
+            }
+            q.screen?.takeIf { it.isNotBlank() && q.press }?.let { screen ->
+                Text(screen, style = MaterialTheme.typography.bodySmall, fontFamily = Mono, color = c.text, modifier = Modifier.padding(top = Space.s), maxLines = 12)
             }
             q.steps?.takeIf { it.isNotEmpty() }?.let { steps ->
                 Column(Modifier.padding(top = Space.s), verticalArrangement = Arrangement.spacedBy(Space.xs)) {
@@ -810,12 +806,30 @@ private fun QuestionCard(card: WorkCard, answer: String?, busy: Boolean, onAnswe
             }
             return@QuietCard
         }
-        confirming?.let { i ->
-            Column(Modifier.padding(horizontal = Space.l, vertical = Space.s), verticalArrangement = Arrangement.spacedBy(Space.s)) {
-                Text("Send “${q.choices.getOrNull(i)?.label.orEmpty()}”?", style = MaterialTheme.typography.bodyLarge, color = c.strong)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-                    PrimaryButton("Send") { onAnswer(CardAnswer(card, i)) }
-                    SecondaryButton("Back") { confirming = null }
+        q.parts?.takeIf { it.isNotEmpty() }?.let { ps ->
+            // Several questions on one card: a pick for each, then Send with every answer in its words.
+            Column(Modifier.padding(horizontal = Space.l, vertical = Space.s), verticalArrangement = Arrangement.spacedBy(Space.m)) {
+                ps.forEachIndexed { pi, p ->
+                    Column(verticalArrangement = Arrangement.spacedBy(Space.xs)) {
+                        Text(p.header ?: p.title, style = MaterialTheme.typography.titleSmall, color = c.strong)
+                        if (p.header != null) Text(p.title, style = MaterialTheme.typography.bodyMedium, color = c.text)
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(Space.xs), verticalArrangement = Arrangement.spacedBy(Space.xs)) {
+                            p.choices.forEachIndexed { ci, ch ->
+                                val on = ci in parts[pi].orEmpty()
+                                HerdrChip(
+                                    selected = on,
+                                    onClick = {
+                                        val was = parts[pi].orEmpty()
+                                        parts = parts + (pi to if (p.multi) (if (on) was - ci else was + ci) else setOf(ci))
+                                    },
+                                    label = { Text(ch.label) },
+                                )
+                            }
+                        }
+                    }
+                }
+                PrimaryButton("Send", enabled = ps.indices.all { parts[it].orEmpty().isNotEmpty() }) {
+                    onAnswer(CardAnswer(card, -1, answers = ps.mapIndexed { pi, p -> parts[pi].orEmpty().sorted().joinToString(", ") { p.choices[it].label } }))
                 }
             }
             return@QuietCard
@@ -826,7 +840,6 @@ private fun QuestionCard(card: WorkCard, answer: String?, busy: Boolean, onAnswe
             ChoiceRow(choice.label, choice.description, if (q.multi) picked else null) {
                 when {
                     q.multi -> picks = if (picked) picks - i else picks + i
-                    q.safeguard -> confirming = i
                     q.noteRequiredFor == i -> writing = i
                     else -> onAnswer(CardAnswer(card, i))
                 }

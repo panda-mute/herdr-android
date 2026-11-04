@@ -65,41 +65,51 @@ object DemoCore {
     )
 
     /**
-     * devbox's `shepherdr` session, where Shepherdr 2.1 runs its agents (DemoV2.board()'s): each space's
-     * coordinator and the tasks' agents, labelled as Shepherdr labels them, with its own names (`shep-…`).
+     * devbox's herdr-core, where Shepherdr 3 runs its agents (DemoV2.board()'s): each space's Assistant and the tasks'
+     * workers, labelled as Shepherdr 3.1 labels them (`service/actions.ts`, herdr-task's), named as herdr-task names
+     * a worker (`and-21-key-bar-layouts`).
      */
     fun shepherdr(): FakeCore {
-        fun agent(address: String, space: String, tab: String, task: String?, status: JsonObject, statusMs: Long, title: String, parent: String? = null, argv: String = "claude") =
+        fun agent(address: String, space: String, task: String?, status: JsonObject, statusMs: Long, title: String, parent: String? = null, argv: String = "claude") =
             FakeCore.terminal(
-                address, listOf(argv), if (task == null) "$HOME/src/$space" else "$HOME/.shepherdr/worktrees/$space/${task.lowercase()}", NOW - 60 * MIN,
-                name = "shep-" + address.padEnd(16, '0'), status = status, statusMs = statusMs, title = title, turn = 1, parent = parent,
+                address, listOf(argv), if (task == null) "$HOME/src/$space" else "$HOME/.herdr/worktrees/$space/task-${task.substringAfter('-')}", NOW - 60 * MIN,
+                name = task?.let { "${it.lowercase()}-" + title.lowercase().replace(Regex("[^a-z0-9]+"), "-").trim('-') },
+                status = status, statusMs = statusMs, title = title, turn = 1, parent = parent,
                 labels = buildMap {
-                    put("shepherdr.chat", task?.let { "$it/Agent" } ?: "p:devbox:$space")
-                    put("shepherdr.role", if (task == null) "coordinator" else "task")
-                    put("shepherdr.space", "p:devbox:$space")
-                    task?.let { put("shepherdr.task", it) }
-                    put("where", "$space / $tab")
+                    if (task == null) {
+                        put("herdr.role", "coordinator")
+                        put("herdr.coordinator.space", "sp-$space")
+                        put("herdr.coordinator.tab", "tb-$space")
+                        put("herdr.space", "sp-$space")
+                        put("herdr.tab", "tb-$space")
+                    } else {
+                        put("herdr.agent", argv)
+                        put("herdr.task", "home-demo-src-$space#${task.substringAfter('-')}")
+                        put("herdr.task.space", "sp-$space")
+                        put("herdr.coordinator", "tb-$space")
+                    }
+                    put("where", "$space / Assistant")
                 },
             )
         return FakeCore(
             terminals = listOf(
-                agent("t1", "herdr-android", "coordinator", null, status("done", "claude-code", msg = "Queued AND-22 after AND-19"), NOW - 12 * MIN, "herdr-android"),
-                agent("t2", "herdr-android", "AND-21", "AND-21", status("blocked", "claude-code", kind = "question", msg = "Which key bar layout?"), NOW - 3 * MIN, "Key bar layouts", parent = "t1"),
-                agent("t3", "herdr-android", "AND-24", "AND-24", status("blocked", "codex", kind = "question"), NOW - 5 * MIN, "Alert rules", parent = "t1", argv = "codex"),
-                agent("t4", "herdr-android", "AND-19", "AND-19", status("working", "claude-code", msg = "Adding an index on jobs.created_at"), NOW - 1 * MIN, "Speed up /jobs on large tables", parent = "t1"),
-                agent("t5", "herdr-android", "AND-20", "AND-20", status("done", "claude-code", msg = "Ready: PR #212"), NOW - 20 * MIN, "Quiet hours", parent = "t1"),
-                agent("t6", "website", "coordinator", null, status("done", "claude-code"), NOW - 30 * MIN, "website"),
-                agent("t7", "website", "AND-18", "AND-18", status("working", "claude-code", msg = "Merging"), NOW - 2 * MIN, "Blog layout", parent = "t6"),
+                agent("t1", "herdr-android", null, status("done", "claude-code", msg = "Queued AND-22 after AND-19"), NOW - 12 * MIN, "herdr-android"),
+                agent("t2", "herdr-android", "AND-21", status("blocked", "claude-code", kind = "question", msg = "Which key bar layout?"), NOW - 3 * MIN, "Key bar layouts", parent = "t1"),
+                agent("t3", "herdr-android", "AND-24", status("blocked", "codex", kind = "question"), NOW - 5 * MIN, "Alert rules", parent = "t1", argv = "codex"),
+                agent("t4", "herdr-android", "AND-19", status("working", "claude-code", msg = "Adding an index on jobs.created_at"), NOW - 1 * MIN, "Speed up /jobs on large tables", parent = "t1"),
+                agent("t5", "herdr-android", "AND-20", status("done", "claude-code", msg = "Ready: PR #212"), NOW - 20 * MIN, "Quiet hours", parent = "t1"),
+                agent("t6", "website", null, status("done", "claude-code"), NOW - 30 * MIN, "website"),
+                agent("t7", "website", "AND-18", status("working", "claude-code", msg = "Merging"), NOW - 2 * MIN, "Blog layout", parent = "t6"),
             ),
             name = "devbox",
         )
     }
 }
 
-/** devbox runs Shepherdr 2.1: its board, and its agents in herdr-core's `shepherdr` session; no desktop app. */
-fun SceneData.shepherdr21() {
-    host(Demo.DEVBOX).shepherdr = DemoV2.board().apply { version = "2.1.0" }
-    host(Demo.DEVBOX).coreSessions = mapOf("shepherdr" to DemoCore.shepherdr())
+/** devbox runs Shepherdr 3: its board, and its agents in herdr-core beside classic herdr; no desktop app. */
+fun SceneData.shepherdr3() {
+    host(Demo.DEVBOX).shepherdr = DemoV2.board()
+    host(Demo.DEVBOX).core = DemoCore.shepherdr()
 }
 
 /** devbox runs the desktop app's herdr-core next to classic herdr; mac-mini runs only the desktop app. */

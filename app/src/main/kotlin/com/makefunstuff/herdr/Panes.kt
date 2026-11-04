@@ -44,8 +44,8 @@ class Panes(
     }
 
     /**
-     * Opens [agent]'s chat from a list. One Shepherdr 2.1 started ([AgentInfo.shepherdrTask],
-     * [AgentInfo.shepherdrSpace]) on a machine whose board is Shepherdr 2 ([shepherdr]) opens where its
+     * Opens [agent]'s chat from a list. One Shepherdr 3 started ([AgentInfo.shepherdrTask],
+     * [AgentInfo.shepherdrSpace]) on a machine whose board is Shepherdr 3 ([shepherdr]) opens where its
      * cards and replies are: its task's chat, or its space's Coordinator. Its terminal stays on the
      * machine's screen.
      */
@@ -60,7 +60,7 @@ class Panes(
     /** [openAgent] for a pane named by its id alone (a notice, a chat hit, the brief): [host]'s agent there, if it is one. */
     fun openPane(nav: NavController, host: HostState?, machineId: String, paneId: String) {
         val agent = host?.view?.agents?.firstOrNull { it.paneId == paneId }
-        if (agent != null) openAgent(nav, machineId, agent, host.onShepherdr2) else open(nav, Routes.agent(machineId, paneId))
+        if (agent != null) openAgent(nav, machineId, agent, host.onShepherdr) else open(nav, Routes.agent(machineId, paneId))
     }
 
     /**

@@ -152,8 +152,8 @@ fun BoardScreen(nav: NavController, machineId: String, openTask: String? = null,
         return
     }
     val state by session.state.collectAsStateWithLifecycle()
-    // Shepherdr 2: its own board, through its API; herdr-projects 1.x keeps the screen below.
-    if (state.onShepherdr2) {
+    // Shepherdr 3: its own board, through its API; herdr-projects 1.x keeps the screen below.
+    if (state.onShepherdr) {
         WorkBoardScreen(nav, session, machineId, openTask, pane, alone)
         return
     }
@@ -463,7 +463,7 @@ internal fun Progress(p: Int, color: Color, modifier: Modifier = Modifier) {
 
 /**
  * The card's way to its agent: the agent's name with a chat glyph, in amber, a tap target of its own.
- * A Shepherdr 2 task's CLI ("Claude Code") shows as its kind ("claude").
+ * A Shepherdr 3 task's CLI ("Claude Code") shows as its kind ("claude").
  */
 @Composable
 internal fun AgentChip(agent: String, onClick: () -> Unit) {

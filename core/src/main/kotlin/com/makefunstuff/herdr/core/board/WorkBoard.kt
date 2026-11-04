@@ -1,10 +1,13 @@
 package com.makefunstuff.herdr.core.board
 
-import com.makefunstuff.herdr.core.shepherdr.ArtifactMessage
+import com.makefunstuff.herdr.core.shepherdr.Recipe
 import com.makefunstuff.herdr.core.shepherdr.V2Artifact
 import com.makefunstuff.herdr.core.shepherdr.V2Chat
 import com.makefunstuff.herdr.core.shepherdr.V2Choice
+import com.makefunstuff.herdr.core.shepherdr.V2Evidence
+import com.makefunstuff.herdr.core.shepherdr.V2Need
 import com.makefunstuff.herdr.core.shepherdr.V2Question
+import com.makefunstuff.herdr.core.shepherdr.VoiceCall
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -12,7 +15,7 @@ import java.io.IOException
 
 /** Which board a machine runs, as [BoardDetection] found it. */
 sealed interface BoardApi {
-    /** Shepherdr 2: its API on the machine's 127.0.0.1:7787. */
+    /** Shepherdr 3: its service on the machine's 127.0.0.1:7788 ([com.makefunstuff.herdr.core.shepherdr.BoardDetection]). */
     data class V2(val version: String) : BoardApi
     /** herdr-projects 1.x: its launcher at [path]. */
     data class V1(val path: String) : BoardApi
@@ -20,23 +23,28 @@ sealed interface BoardApi {
 }
 
 /**
- * Where a task stands, in one set of words for both boards: Shepherdr 2's own, herdr-projects 1.x's
- * folded into them ([WorkTasks.status]). In the order a list shows them: what needs you first.
+ * Where a task stands, in one set of words for both boards: Shepherdr 3's own (`STATUS` and `ORDER` in its
+ * `core/tasks.js`), herdr-projects 1.x's folded into them ([WorkTasks.status]). In the order a list shows them: what
+ * needs you first.
  */
 enum class WorkStatus(val label: String, val tone: BoardTone, val needsYou: Boolean = false) {
     /** Its agent asks or waits for you. */
-    Need("needs you", BoardTone.Red, true),
-    /** Finished: waits for your yes to merge. */
-    Ready("ready", BoardTone.Green, true),
-    Work("working", BoardTone.Amber),
+    Need("Needs you", BoardTone.Red, true),
+    /** Finished: waits for your Accept, which merges it. */
+    Ready("Ready", BoardTone.Green, true),
     /** On its way into main: nothing for you to do. */
-    Merging("merging", BoardTone.Blue),
-    Queued("queued", BoardTone.Pink),
-    Todo("to do", BoardTone.Grey),
-    Done("done", BoardTone.Teal),
+    Merging("Merging", BoardTone.Blue),
+    Work("Working", BoardTone.Amber),
+    Queued("Queued", BoardTone.Pink),
+    Todo("To do", BoardTone.Grey),
+    Done("Done", BoardTone.Teal),
+    ;
+
+    /** [label] inside a sentence ("AND-7 ready"). */
+    val word: String get() = label.lowercase()
 }
 
-/** A space: a folder with its own coordinator (v2), or the machine's one board (v1, [id] ""). */
+/** A space: a folder with its own Assistant (Shepherdr), or the machine's one board (v1, [id] ""). */
 data class WorkSpace(
     val id: String,
     val name: String,
@@ -53,6 +61,10 @@ data class WorkSpace(
     val asks: Boolean = false,
     /** What its lists hold (v2's `level`): 2 its own, 1 its machine's (a home space), 0 every machine's. */
     val level: Int = 2,
+    /** Where its artifacts are kept (`<machine>|<folder>`), which its worktree spaces share; empty on v1. */
+    val store: String = "",
+    /** Its icon, an emoji the person picked. */
+    val emoji: String? = null,
 )
 
 /** One task, in the same shape from both boards. */
@@ -72,6 +84,12 @@ data class WorkTask(
     val progress: Int? = null,
     /** Its agent's own guess of the minutes left, when it gave one. */
     val eta: Int? = null,
+    /** Working: the minutes left as Shepherdr says them under its row's dot ("6m", "<1m", "2h"). */
+    val left: String? = null,
+    /** Ready, its Accept under way. */
+    val accepting: Boolean = false,
+    /** What its row says it is in: its space's name, else its task list's (a task no space works in). */
+    val listName: String = "",
     /** How long since it last changed, as the board says it ("4m", "yesterday"); none on v1. */
     val age: String = "",
     /** Its agent's chat key (v2); none before its agent starts, and on v1. */
@@ -84,10 +102,15 @@ data class WorkTask(
 )
 
 /**
- * Every space and its tasks, what needs you first; and the [artifacts] agents made, on a Shepherdr that
- * keeps them (null elsewhere: v1, a Shepherdr without them).
+ * Every space and its tasks, what needs you first; the [artifacts] agents made, on a Shepherdr that keeps them (null
+ * elsewhere: v1); and everything Shepherdr says [needs] you, each once (none on v1).
  */
-data class WorkOverview(val spaces: List<WorkSpace>, val tasks: List<WorkTask>, val artifacts: List<V2Artifact>? = null) {
+data class WorkOverview(
+    val spaces: List<WorkSpace>,
+    val tasks: List<WorkTask>,
+    val artifacts: List<V2Artifact>? = null,
+    val needs: List<V2Need> = emptyList(),
+) {
     val needsYou: List<WorkTask> get() = tasks.filter { it.status.needsYou }
     fun tasksIn(space: String): List<WorkTask> = tasks.filter { it.space == space }
 }
@@ -105,13 +128,17 @@ data class WorkCard(
     val replyTo: String = "",
 )
 
-/** Your answer to [card]: [choice] (-1 none), or [choices] on a multi card, with an optional [note] or typed [other]. */
+/**
+ * Your answer to [card]: [choice] (-1 none), or [choices] on a multi card, with an optional [note] or typed [other];
+ * on a card that asks several questions ([V2Question.parts]), [answers], one per question.
+ */
 data class CardAnswer(
     val card: WorkCard,
     val choice: Int,
     val choices: List<Int>? = null,
     val note: String? = null,
     val other: String? = null,
+    val answers: List<String>? = null,
 )
 
 /** A task's details: its brief, what it said, and the cards it waits on. */
@@ -138,15 +165,15 @@ data class CoordinatorThread(
     val working: Boolean = false,
     /** The question cards it waits on, its own and the copies of its tasks'. */
     val cards: List<WorkCard> = emptyList(),
-    /** The chat as Shepherdr 2 sent it (cards, replies, reactions), for a screen that shows more; null on v1. */
+    /** The chat as Shepherdr sent it (cards, replies, reactions), for a screen that shows more; null on v1. */
     val v2: V2Chat? = null,
     /** v1's coordinator as the board sent it; null on v2. */
     val v1: CoordinatorView? = null,
 )
 
 /**
- * The work board on one machine, whichever it runs: what the Board, task and Coordinator screens use.
- * [V1WorkBoard] is herdr-projects 1.x through [BoardClient]; `V2WorkBoard` is Shepherdr 2.
+ * The work board on one machine, whichever it runs: what the Board, task and Assistant screens use.
+ * [V1WorkBoard] is herdr-projects 1.x through [BoardClient]; `V2WorkBoard` is Shepherdr 3's service.
  */
 interface WorkBoard {
     val api: BoardApi
@@ -164,15 +191,19 @@ interface WorkBoard {
 
     suspend fun details(task: WorkTask): WorkTaskDetails
 
-    /** Approves a ready task, which merges it; the board's own sentence. */
+    /** Approves a ready task (Shepherdr's Accept), which merges it; the board's own sentence. */
     suspend fun approve(task: WorkTask): String
+
+    /** What the Accept card shows of a Ready [task]: its summary, changes, checks and proof. */
+    suspend fun evidence(task: WorkTask): V2Evidence = throw IOException("This board has no Accept card")
 
     /** Marks [task] done with nothing merged; refused while it holds work main lacks. */
     suspend fun close(task: WorkTask): String
 
     /**
-     * A new task in [space]: [title], and [brief] for its agent. On Shepherdr 2 only a space's
-     * coordinator makes tasks, so this is a message to it ([V2Board.addRequest]); what was done, in a sentence.
+     * A new task in [space]: [title], and [brief] for its agent. On Shepherdr only a space's Assistant makes tasks,
+     * so this is a message to it ([com.makefunstuff.herdr.core.shepherdr.V2Board.addRequest]); what was done, in a
+     * sentence.
      */
     suspend fun addTask(space: String, title: String, brief: String): String
 
@@ -208,10 +239,13 @@ interface WorkBoard {
         throw IOException("This board takes no files")
 
     /**
-     * Clears [space]'s coordinator chat's voice mark ([com.makefunstuff.herdr.core.shepherdr.V2Chat.voiceMark]): its
-     * commands no longer wait for a safeguard card, and those still open close. Shepherdr 2.1 only.
+     * A voice call with [space]'s Assistant, or with [task]'s agent when one is given (Shepherdr's Voice add-on): the
+     * phone's microphone and speaker, ElevenLabs' voice agent on the machine.
      */
-    suspend fun clearVoiceMark(space: String): Unit = throw IOException("This board keeps no voice marks")
+    suspend fun call(space: String, task: WorkTask? = null): VoiceCall = throw IOException("This board takes no calls")
+
+    /** What was said in [audio], written down on the machine (Shepherdr's dictation, whisper.cpp there). */
+    suspend fun dictate(audio: ByteArray, type: String): String = throw IOException("This board takes no dictation")
 
     /**
      * [task]'s own chat, its agent's ([WorkTask.chat], v2), now and on every change: in a [CoordinatorThread]'s
@@ -236,23 +270,17 @@ interface WorkBoard {
     suspend fun taskFile(task: WorkTask, path: String): ByteArray =
         throw IOException("This board takes no files")
 
-    /** Artifact [a]'s page at version [v] as Shepherdr wraps it, in [dark] or light ([WorkOverview.artifacts]). */
-    suspend fun artifactPage(a: V2Artifact, v: Int, dark: Boolean): String = throw IOException(NO_ARTIFACTS)
+    /** Recipe artifact [a]'s blocks at version [v] ([WorkOverview.artifacts]). */
+    suspend fun recipe(a: V2Artifact, v: Int): Recipe = throw IOException(NO_ARTIFACTS)
 
-    /** Version [v]'s data alone, as JSON text. */
-    suspend fun artifactData(a: V2Artifact, v: Int): String = throw IOException(NO_ARTIFACTS)
-
-    /** The picture Shepherdr took of [a]'s latest version; null where it has none. */
-    suspend fun artifactThumb(a: V2Artifact, dark: Boolean): ByteArray? = null
-
-    /** The font artifacts are set in; null where there is none. */
-    suspend fun artifactFont(): ByteArray? = null
+    /** A picture beside [a]'s recipe at version [v]; null where it isn't there. */
+    suspend fun artifactFile(a: V2Artifact, v: Int, path: String): ByteArray? = null
 
     /**
-     * What you send from version [v] of [a] to its keeper: a page's Send ([ArtifactMessage.Send]), your words,
-     * or a note on what you picked in Mark up ([pick]). Whom it went to ("HA-1 agent").
+     * What you send from version [v] of [a] to its keeper: a recipe's answer ([answer]: a choice, a form, a button),
+     * your words, or a note on one of its blocks ([block], its id). Whom it went to ("HA-1 agent").
      */
-    suspend fun artifactSay(a: V2Artifact, v: Int, text: String, page: Boolean = false, pick: ArtifactMessage.Pick? = null): String =
+    suspend fun artifactSay(a: V2Artifact, v: Int, text: String, answer: Boolean = false, block: String? = null): String =
         throw IOException(NO_ARTIFACTS)
 }
 

@@ -324,17 +324,17 @@ fun TaskCard(
     }
 }
 
-/** A Shepherdr 2 space whose coordinator asks you something, as a card: Open goes to its chat, where the question is. */
+/** A Shepherdr 3 space whose coordinator asks you something, as a card: Open goes to its chat, where the question is. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun CoordinatorCard(w: Waiting.Coordinator, showMachine: Boolean, onOpen: () -> Unit) {
     val c = Herdr.colors
-    WaitingCard(false, onOpen, null, "Open the coordinator chat", emptyList()) {
+    WaitingCard(false, onOpen, null, "Open the Assistant chat", emptyList()) {
         CardHead(
             mark = { Box(Modifier.size(22.dp), contentAlignment = Alignment.Center) { Icon(HerdrIcons.MessagesSquare, null, tint = c.text, modifier = Modifier.size(20.dp)) } },
-            title = "${w.space.name}'s coordinator asks you",
+            title = "${w.space.name}'s Assistant asks you",
             key = null,
-            meta = listOfNotNull("Answer it in the coordinator chat", w.machineLabel.takeIf { showMachine }),
+            meta = listOfNotNull("Answer it in the Assistant chat", w.machineLabel.takeIf { showMachine }),
             badge = { StatusBadge(WorkStatus.Need.label, WorkStatus.Need.color()) },
         )
         FlowRow(Modifier.padding(start = 34.dp, top = Space.m), horizontalArrangement = Arrangement.spacedBy(Space.s)) {
@@ -344,7 +344,7 @@ fun CoordinatorCard(w: Waiting.Coordinator, showMachine: Boolean, onOpen: () -> 
 }
 
 /**
- * A Shepherdr 2 task waiting for you as a card, as its task screen has it: the question its agent asks
+ * A Shepherdr 3 task waiting for you as a card, as its task screen has it: the question its agent asks
  * ([card], once read) with a button per answer, or Merge when it is ready; and Open, its chat. A
  * question that needs more than a tap (several picks, a note, words of your own) is answered there.
  */
@@ -366,10 +366,10 @@ fun WorkWaitingCard(
     val q = card?.question
     // A tap answers it only where the task screen would send that pick as it is.
     // A plan, or choices that explain themselves, are read on the task screen first.
-    val taps = q != null && !q.multi && card.replyTo.isEmpty() && q.choices.size in 1..3 && q.kind != "Plan" && !q.safeguard && q.steps.isNullOrEmpty()
+    val taps = q != null && !q.multi && card.replyTo.isEmpty() && q.choices.size in 1..3 && q.kind != "Plan" && q.parts.isNullOrEmpty() && q.plan.isNullOrBlank() && q.steps.isNullOrEmpty()
     fun tap(i: Int) = if (q?.noteRequiredFor == i) onOpen() else onChoose(card!!, i)
     val actions = if (busy != null) emptyList() else when {
-        work.status == WorkStatus.Ready -> listOf(CustomAccessibilityAction("Merge") { onMerge(); true })
+        work.status == WorkStatus.Ready -> listOf(CustomAccessibilityAction("Accept") { onMerge(); true })
         taps -> q!!.choices.mapIndexed { i, ch -> CustomAccessibilityAction("Answer: ${ch.label}") { tap(i); true } }
         else -> emptyList()
     }
@@ -404,7 +404,7 @@ fun WorkWaitingCard(
             verticalArrangement = Arrangement.spacedBy(Space.s),
         ) {
             when {
-                work.status == WorkStatus.Ready -> AnswerButton("Merge", HerdrIcons.Check, primary = true, enabled = true, onClick = onMerge)
+                work.status == WorkStatus.Ready -> AnswerButton("Accept", HerdrIcons.Check, primary = true, enabled = true, onClick = onMerge)
                 taps -> q!!.choices.forEachIndexed { i, ch ->
                     AnswerButton(ch.label.let { if (it.length <= 24) it else it.take(23).trimEnd() + "…" }, null, primary = false, enabled = true) { tap(i) }
                 }

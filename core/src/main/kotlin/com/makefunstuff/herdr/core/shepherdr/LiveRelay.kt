@@ -24,7 +24,8 @@ interface LiveSocket : java.io.Closeable {
  * on each change, often a few times a second, and closes a link that falls a megabyte behind: over a phone's
  * connection a chat's news waited behind snapshots, or never came. The relay reads them at the machine's own
  * speed and passes on only the newest of each kind (a chat's, the snapshot), only when it changed, and only
- * as fast as the phone takes them; without [snapshots] (a chat screen's link) none at all.
+ * as fast as the phone takes them; without [snapshots] (a chat screen's link) none at all. Shepherdr 3's named views
+ * (`view`: its window's own shapes, a few hundred KB of task rows) are the web app's alone: never passed on.
  */
 class RelayLink internal constructor(private val process: Duplex, private val reader: BufferedReader) : LiveSocket {
     @Volatile private var closed = false
@@ -124,11 +125,21 @@ object LiveRelay {
     }
 
     /**
+     * A WebSocket to [url] with the service's token, read on the machine from its file (`~/.herdr/shepherdr/token`,
+     * or under `SHEPHERDR_DATA`), so it never crosses the phone's link; where it can't be read, none (the service then
+     * refuses, which says so).
+     */
+    fun socket(url: String): String {
+        val u = kotlinx.serialization.json.JsonPrimitive(url).toString()
+        return "(()=>{let t='';try{t=require('fs').readFileSync((process.env.SHEPHERDR_DATA||require('os').homedir()+'/.herdr/shepherdr')+'/token','utf8').trim()}catch{}" +
+            "return new WebSocket($u,t?{headers:{authorization:'Bearer '+t}}:undefined)})()"
+    }
+
+    /**
      * The relay itself. Each event waits under its key (a chat's key, `snapshot`, `build`; anything else is passed
      * on as it is) and only its newest is written, once stdout takes more, unless it is just what was written last.
      */
     fun script(snapshots: Boolean, url: String): String {
-        val u = kotlinx.serialization.json.JsonPrimitive(url).toString()
         return "if(typeof WebSocket==='undefined'){console.error('No WebSocket here');process.exit(5)}" +
             "const out=process.stdout,pending=new Map(),last=new Map(),early=[];let busy=false,closing=false,n=0;" +
             "out.on('error',()=>process.exit(0));" +
@@ -137,8 +148,9 @@ object LiveRelay {
             "if(!out.write(s+'\\n')){busy=true;out.once('drain',()=>{busy=false;pump()})}}" +
             "if(closing&&!busy&&!pending.size)process.exit(0)};" +
             "out.write('$HELLO\\n');" +
-            "const ws=new WebSocket($u);" +
+            "const ws=${socket(url)};" +
             "ws.onmessage=e=>{const s=String(e.data);if(!$snapshots&&s.startsWith('{\"type\":\"snapshot\"'))return;" +
+            "if(s.startsWith('{\"type\":\"view\"'))return;" +
             "let m;try{m=JSON.parse(s)}catch{return}const t=m&&m.type;if(t==='snapshot'&&!$snapshots)return;" +
             "const k=t==='chat'&&m.chat?'chat:'+m.chat.key:t==='terminal'?'terminal:'+m.chat:(t==='snapshot'||t==='build'||t==='update')?t:'once:'+(n++);" +
             "pending.delete(k);pending.set(k,s);pump()};" +

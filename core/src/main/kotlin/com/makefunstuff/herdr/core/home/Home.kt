@@ -35,7 +35,7 @@ data class HomeAgent(
     val finish: Long get() = agent.completionSeq ?: agent.stateChangeSeq
 }
 
-/** A board's tasks as the app last read them on one machine; on Shepherdr 2, [work] is the board as it sent them. */
+/** A board's tasks as the app last read them on one machine; on Shepherdr, [work] is the board as it sent them. */
 data class HomeBoard(val machineId: String, val machineLabel: String, val tasks: List<BoardTask>, val work: WorkOverview? = null)
 
 /** Something on the Needs you list. [key] stays the same while it waits, whatever it waits for. */
@@ -52,7 +52,7 @@ sealed interface Waiting {
     }
 
     /**
-     * A board task waiting for the human, with its agent when one is running on that machine. A Shepherdr 2
+     * A board task waiting for the human, with its agent when one is running on that machine. A Shepherdr
      * task is [work] too ([task] is its v1 row): it is answered and merged through Shepherdr.
      */
     data class Task(
@@ -65,7 +65,7 @@ sealed interface Waiting {
         override val key: String get() = "task/$machineId/${task.id}"
     }
 
-    /** A Shepherdr 2 space whose coordinator asks the human something: it is answered in that coordinator's chat. */
+    /** A Shepherdr space whose Assistant asks the human something: it is answered in that Assistant's chat. */
     data class Coordinator(override val machineId: String, val machineLabel: String, val space: WorkSpace) : Waiting {
         override val key: String get() = "asks/$machineId/${space.id}"
         override val task: BoardTask? get() = null
@@ -107,7 +107,7 @@ data class Home(
     companion object {
         /** [agent]'s task among its own machine's board [tasks], by the names herdr-projects gives them; null when it works on none. */
         fun taskOf(agent: HomeAgent, tasks: List<BoardTask>): BoardTask? {
-            // Shepherdr 2.1 labels its task agents' terminals with their task.
+            // Shepherdr labels its task agents' terminals with their task.
             agent.agent.shepherdrTask?.let { id -> return tasks.firstOrNull { it.id == id && !it.archived } }
             return tasks.firstOrNull { t ->
                 t.machine.isEmpty() && !t.archived && LiveItems.belongs(agent.agent.name.orEmpty(), agent.workspace, t.id, t.name)

@@ -23,7 +23,7 @@ import kotlinx.serialization.json.contentOrNull
 import java.io.IOException
 
 /**
- * Shepherdr 2 as a [WorkBoard]. [connect] gives the machine's client each time (HostSession's
+ * Shepherdr 3's service as a [WorkBoard]. [connect] gives the machine's client each time (HostSession's
  * `awaitShepherdr`), so a link lost with the SSH connection comes back on the new one.
  */
 class V2WorkBoard(private val connect: suspend () -> ShepherdrClient, private val version: String = "") : WorkBoard {
@@ -39,10 +39,11 @@ class V2WorkBoard(private val connect: suspend () -> ShepherdrClient, private va
 
     override suspend fun details(task: WorkTask): WorkTaskDetails {
         val client = connect()
-        val t = client.snapshot().task(task.id) ?: throw IOException("${task.name} isn't on the board any more")
+        val snap = client.snapshot()
+        val t = snap.task(task.id) ?: throw IOException("${task.name} isn't on the board any more")
         val now = V2Board.task(t)
-        // Its cards are in its agent's chat.
-        val cards = if (now.chat.isNotEmpty()) client.chat(now.chat).openQuestions.map { WorkCard(now.chat, it, now.id) } else emptyList()
+        // What it asks: its needs, each once, wherever its card shows.
+        val cards = V2Board.cards(snap.needs.filter { it.task == t.id || now.chat.isNotEmpty() && it.chat == now.chat })
         return WorkTaskDetails(
             task = now,
             brief = t.desc.orEmpty(),
@@ -54,42 +55,34 @@ class V2WorkBoard(private val connect: suspend () -> ShepherdrClient, private va
         )
     }
 
-    /**
-     * Merging is what a yes to a ready task means on Shepherdr 2: `shepherdr merge <id>` on 2.0; on
-     * 2.1, which takes no command from the app, Merge on the merge card its agent put up.
-     */
+    /** Accept (`herdr-task accept`), as the Accept card's: it merges when there is something to merge. */
     override suspend fun approve(task: WorkTask): String {
-        if (!V2Version(version = version).standalone) return cli(listOf("merge", task.id))
-        val client = connect()
-        val chat = agentChat(task)
-        val card = V2Board.mergeCard(task, client.chat(chat))
-            ?: throw IOException("${task.name} has no merge card open: its agent merges it on its own, or asks you in its chat first")
-        client.act(V2Actions.answer(chat, card.id, card.choices.indexOfFirst { it.label.equals("Merge", ignoreCase = true) }.coerceAtLeast(0)))
-        return "Merge sent to ${task.name}: its agent merges it"
+        connect().accept(task.id)
+        return "${task.name} accepted"
     }
 
-    /** `close` (`shepherdr task close`): what it held back is named when it refuses for unmerged work. */
+    override suspend fun evidence(task: WorkTask): V2Evidence = connect().evidence(task.id)
+
+    /** Done with nothing merged (`herdr-task done`), by its chat key as the task's row menu sends it. */
     override suspend fun close(task: WorkTask): String {
-        // 2.1 finds the task by its agent's chat (`HA-1/Agent`, its name before any agent runs too), 2.0 by its id.
-        val o = connect().actRaw(V2Actions.close(if (V2Version(version = version).standalone) task.chat.ifEmpty { "${task.id}/Agent" } else task.id))
+        val o = connect().actRaw(V2Actions.close(task.chat.ifEmpty { V2Board.workerChat(task.id) }))
         if (o.ok) return "${task.name} is done, nothing merged"
         throw IOException(V2Board.closeRefusal(task, o.json))
     }
 
-    /** A message to [space]'s coordinator, which makes the task: Shepherdr 2 makes tasks no other way. */
+    /** A message to [space]'s Assistant, which makes the task: Shepherdr makes tasks no other way. */
     override suspend fun addTask(space: String, title: String, brief: String): String {
         connect().send(chatOf(space), V2Board.addRequest(title, brief))
-        return "Sent to the coordinator: it adds the task"
+        return "Sent to the Assistant: it adds the task"
     }
 
     override suspend fun answer(answer: CardAnswer): String {
         val c = answer.card
-        val space = c.space.ifEmpty { null }
         if (c.replyTo.isNotEmpty()) {
             val text = answer.other?.takeIf { it.isNotBlank() } ?: answer.note?.takeIf { it.isNotBlank() } ?: throw IOException("Write an answer first")
-            connect().act(V2Actions.send(c.chat, text, reply = c.replyTo, space = space))
+            connect().act(V2Actions.send(c.chat, text, reply = c.replyTo))
         } else {
-            connect().act(V2Actions.answer(c.chat, c.question.id, answer.choice, answer.choices, answer.note, answer.other, space))
+            connect().act(V2Actions.answer(c.chat, c.question.id, answer.choice, answer.choices, answer.note, answer.other, answer.answers))
         }
         return ""
     }
@@ -111,7 +104,7 @@ class V2WorkBoard(private val connect: suspend () -> ShepherdrClient, private va
     }
 
     override suspend fun upload(space: String, name: String, data: ByteArray, type: String): String =
-        connect().upload(chatOf(space), name, data, type)
+        connect().upload(name, data, type)
 
     override suspend fun sayFiles(space: String, paths: List<String>, cid: String?): String {
         connect().act(V2Actions.send(chatOf(space), "", cid = cid, attachments = paths))
@@ -120,9 +113,10 @@ class V2WorkBoard(private val connect: suspend () -> ShepherdrClient, private va
 
     override suspend fun file(space: String, path: String): ByteArray = connect().file(chatOf(space), path)
 
-    override suspend fun clearVoiceMark(space: String) {
-        connect().act(V2Actions.voiceClear(chatOf(space)))
-    }
+    override suspend fun call(space: String, task: WorkTask?): VoiceCall =
+        connect().voice(task?.let(::agentChat) ?: chatOf(space))
+
+    override suspend fun dictate(audio: ByteArray, type: String): String = connect().dictate(audio, type)
 
     /** Its agent's chat from the live link, as [coordinatorThreads] follows a space's. */
     override fun taskThreads(task: WorkTask, everyMs: Long): Flow<CoordinatorThread> {
@@ -138,7 +132,7 @@ class V2WorkBoard(private val connect: suspend () -> ShepherdrClient, private va
     }
 
     override suspend fun uploadFor(task: WorkTask, name: String, data: ByteArray, type: String): String =
-        connect().upload(agentChat(task), name, data, type)
+        connect().upload(name, data, type)
 
     override suspend fun tellFiles(task: WorkTask, paths: List<String>, cid: String?): String {
         connect().act(V2Actions.send(agentChat(task), "", cid = cid, attachments = paths))
@@ -147,18 +141,14 @@ class V2WorkBoard(private val connect: suspend () -> ShepherdrClient, private va
 
     override suspend fun taskFile(task: WorkTask, path: String): ByteArray = connect().file(agentChat(task), path)
 
-    override suspend fun artifactPage(a: V2Artifact, v: Int, dark: Boolean): String = connect().artifactPage(a.id, v, dark)
+    override suspend fun recipe(a: V2Artifact, v: Int): Recipe = connect().recipe(a.id, v, a.machine)
 
-    override suspend fun artifactData(a: V2Artifact, v: Int): String = connect().artifactData(a.id, v)
+    override suspend fun artifactFile(a: V2Artifact, v: Int, path: String): ByteArray? = connect().artifactFile(a.id, v, path, a.machine)
 
-    override suspend fun artifactThumb(a: V2Artifact, dark: Boolean): ByteArray? = if (a.thumb) connect().artifactThumb(a.id, dark) else null
-
-    override suspend fun artifactFont(): ByteArray? = connect().artifactFont()
-
-    override suspend fun artifactSay(a: V2Artifact, v: Int, text: String, page: Boolean, pick: ArtifactMessage.Pick?): String {
+    override suspend fun artifactSay(a: V2Artifact, v: Int, text: String, answer: Boolean, block: String?): String {
         val action = when {
-            page -> V2ArtifactActions.send(a, v, text)
-            pick != null -> V2ArtifactActions.note(a, v, text, pick.target())
+            answer -> V2ArtifactActions.send(a, v, text)
+            block != null -> V2ArtifactActions.note(a, v, text, block)
             else -> V2ArtifactActions.say(a, v, text)
         }
         val o = connect().act(action)
@@ -167,15 +157,8 @@ class V2WorkBoard(private val connect: suspend () -> ShepherdrClient, private va
 
     private fun agentChat(task: WorkTask) = task.chat.ifEmpty { throw IOException("${task.name} has no agent yet") }
 
-    /** Runs the `shepherdr` command; its last line, or its own reason in the exception. */
-    suspend fun cli(args: List<String>): String {
-        val r = connect().cli(args)
-        if (!r.ok) throw IOException(r.said.ifEmpty { "shepherdr ${args.firstOrNull().orEmpty()} failed" })
-        return r.said
-    }
-
-    /** A space's coordinator chat key is its id (`Place.chat`, the same in every snapshot). */
-    private fun chatOf(space: String) = space
+    /** A space's Assistant chat key: its id where it is one already (`Place.chat`, `p:<space id>`), else made from it. */
+    private fun chatOf(space: String) = V2Board.assistantChat(space)
 
     /**
      * What [pick] takes from the live link (watching [chats]), as the web screen follows it: linked
@@ -227,7 +210,7 @@ class V2WorkBoard(private val connect: suspend () -> ShepherdrClient, private va
     }
 }
 
-/** Shepherdr 2's snapshot and chats in the [WorkBoard]'s shapes. */
+/** Shepherdr 3's snapshot and chats in the [WorkBoard]'s shapes. */
 object V2Board {
     fun overview(s: V2Snapshot): WorkOverview {
         val tasks = WorkTasks.ordered(s.tasks.filter { it.archived == null }.map(::task))
@@ -237,53 +220,70 @@ object V2Board {
                 name = p.name,
                 machine = p.machine,
                 home = p.home,
-                chat = p.chat.ifEmpty { p.id },
-                needsYou = p.status == V2Status.Need || s.asks.containsKey(p.id) || tasks.any { it.space == p.id && it.status.needsYou },
+                chat = p.chat.ifEmpty { assistantChat(p.id) },
+                needsYou = p.status == V2Status.Need || s.asks.containsKey(p.id) || s.needs.any { it.place == p.id } ||
+                    tasks.any { it.space == p.id && it.status.needsYou },
                 unreachable = p.unreachableSince != null,
-                asks = s.asks.containsKey(p.id),
+                asks = s.asks.containsKey(p.id) || s.needs.any { it.place == p.id && it.task == null },
                 level = p.level,
+                store = p.store?.key.orEmpty(),
+                emoji = p.emoji,
             )
         }
-        return WorkOverview(spaces, tasks, s.artifacts)
+        return WorkOverview(spaces, tasks, s.artifacts, s.needs)
     }
 
     fun task(t: V2Task) = WorkTask(
         id = t.id,
-        name = t.id,
+        name = t.id.substringAfter(':'),
         title = t.name,
         space = t.place,
         status = status(t.status),
-        line = t.report?.msg?.takeIf { it.isNotBlank() } ?: t.sub.orEmpty(),
+        // Shepherdr's own second line (why it needs you, what it waits for, its agent's words), capital first.
+        line = capital(t.sub?.takeIf { it.isNotBlank() } ?: t.report?.msg.orEmpty()),
         pr = t.pr?.url.orEmpty(),
         progress = t.report?.progress,
         eta = t.report?.eta,
+        left = t.left?.takeIf { it.isNotBlank() },
+        accepting = t.accepting,
+        listName = t.listName.orEmpty(),
         age = t.age,
         chat = t.agent?.chat.orEmpty(),
         agent = t.agent?.cli.orEmpty(),
         pinned = t.pinned != null,
     )
 
-    /**
-     * The open merge card in [task]'s agent chat (Shepherdr 2.1 puts one up when a task that asks first
-     * is ready: "Merge HA-1?", Merge or Not yet); null where none is open.
-     */
-    fun mergeCard(task: WorkTask, chat: V2Chat): V2Question? = chat.openQuestions.lastOrNull { q ->
-        // Its exact title only: an agent's own "Merge the two configs?" is no merge card.
-        q.title.trim() == "Merge ${task.id}?" && q.choices.any { it.label == "Merge" }
+    /** Shepherdr's `capital`: its first letter up ("after HERD-3" → "After HERD-3"). */
+    fun capital(s: String): String = s.trim().replaceFirstChar { it.uppercaseChar() }
+
+    /** A task's own chat key (`<task id>/worker`), before its snapshot names it. */
+    fun workerChat(task: String) = "$task/worker"
+
+    /** A space's Assistant chat key: `p:<space id>`, its `/` (another machine's space) as `:`. */
+    fun assistantChat(space: String) = if (space.startsWith("p:")) space else "p:" + space.replace('/', ':')
+
+    /** What Shepherdr says needs you, as cards: a question as its card, a wait with no card as a reply to its words. */
+    fun cards(needs: List<V2Need>): List<WorkCard> = needs.mapNotNull { n ->
+        val task = n.task?.substringAfter(':').orEmpty()
+        when {
+            n.question != null -> WorkCard(n.chat, n.question, task, space = n.place)
+            n.reply != null || n.text != null -> {
+                val q = V2Question(id = n.id, title = n.text.orEmpty(), kind = "Reply", other = true, to = task)
+                WorkCard(n.chat, q, task, space = n.place, replyTo = n.reply.orEmpty())
+            }
+            else -> null
+        }
     }
 
-    /** What a space's coordinator is asked, to add a task: its title, then the brief. */
+    /** What a space's Assistant is asked, to add a task: its title, then the brief. */
     fun addRequest(title: String, brief: String): String = buildString {
         append("Please add a task: ").append(title.trim())
         brief.trim().takeIf { it.isNotEmpty() }?.let { append("\n\n").append(it) }
     }
 
-    /** Why `close` refused, from its answer: the work it holds (`held`), or its own error. */
-    fun closeRefusal(task: WorkTask, o: JsonObject): String {
-        val held = (o["held"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.takeIf(String::isNotBlank) }.orEmpty()
-        if (held.isNotEmpty()) return "${task.name} holds work main lacks: ${held.joinToString("; ")}. Merge or drop it first."
-        return (o["error"] as? JsonPrimitive)?.contentOrNull ?: "Shepherdr refused to close ${task.name}"
-    }
+    /** Why `close` refused, from its answer: its own error. */
+    fun closeRefusal(task: WorkTask, o: JsonObject): String =
+        (o["error"] as? JsonPrimitive)?.contentOrNull ?: "Shepherdr refused to close ${task.name}"
 
     /** An agent's kind from its CLI's name, as the agents' marks are keyed: "Claude Code" is `claude`, "Codex" `codex`. */
     fun agentKind(cli: String): String = cli.trim().substringBefore(' ').lowercase()
@@ -298,24 +298,18 @@ object V2Board {
         V2TaskStatus.Done -> WorkStatus.Done
     }
 
-    /** A coordinator's chat as bubbles: words, cards and questions as their one line; tool steps left out. */
+    /**
+     * An Assistant's (or a task's) chat as bubbles: words and questions as their one line; tool steps left out. Its
+     * cards are the questions still open in it: its own, and its tasks' workers' asks headed by their task ([V2By]).
+     */
     fun thread(space: String, chat: V2Chat): CoordinatorThread {
         val lines = chat.messages.mapNotNull { m ->
             val text = words(m) ?: return@mapNotNull null
             ChatLine(m.you, text, pending = m.waiting)
         }
-        val cards = chat.messages.flatMap { m ->
-            buildList {
-                m.question?.takeIf { it.open }?.let { add(WorkCard(chat.key, it)) }
-                val ask = m.card?.ask?.takeIf { it.open } ?: return@buildList
-                val task = m.card.task.orEmpty()
-                // A task's ask copied here: answered from this space, so its copy here is settled too.
-                ask.questions.orEmpty().filter { it.open }.forEach { add(WorkCard(ask.chat, it, task, space = space)) }
-                ask.reply?.let { r ->
-                    val q = V2Question(id = r.id, title = r.text, kind = "Reply", other = true, to = task)
-                    add(WorkCard(ask.chat, q, task, space = space, replyTo = r.id))
-                }
-            }
+        val cards = chat.messages.mapNotNull { m ->
+            val q = m.question?.takeIf { it.open } ?: return@mapNotNull null
+            WorkCard(q.by?.chat?.takeIf { it.isNotEmpty() } ?: chat.key, q, q.by?.ref.orEmpty(), space = space)
         }
         return CoordinatorThread(space, lines, working = chat.working && !chat.background, cards = cards, v2 = chat)
     }
@@ -323,6 +317,8 @@ object V2Board {
     /** A message's words as one bubble shows them; null for one with none (a turn's tool steps). */
     fun words(m: V2Message): String? = m.text?.let(ShepherdrText::clean)?.takeIf { it.isNotBlank() }
         ?: m.question?.title?.takeIf { it.isNotBlank() }
+        ?: m.news?.let { n -> listOf(n.ref, n.what, n.text).filter { it.isNotBlank() }.joinToString(" ").takeIf { it.isNotBlank() } }
         ?: m.file?.name?.takeIf { it.isNotBlank() }
         ?: m.answered?.takeIf { it.isNotBlank() }
+        ?: m.ended?.takeIf { it.isNotBlank() }
 }

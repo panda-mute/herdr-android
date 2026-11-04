@@ -84,7 +84,7 @@ data class HostState(
     val boardPath: String? = null,
     /** Whether the look for herdr-projects answered since the machine connected, so a null [boardPath] means it isn't there. */
     val boardChecked: Boolean = false,
-    /** Shepherdr 2's version where its API answers on the machine; null where it doesn't (or not checked yet). */
+    /** Shepherdr's version where its service answers on the machine (3.x); null where it doesn't (or not checked yet). */
     val shepherdrVersion: String? = null,
     /** The herdr executable the app runs on the machine; null until it connects, or when it couldn't be probed. */
     val herdr: HerdrChoice? = null,
@@ -130,14 +130,14 @@ data class HostState(
 
     val hasBoard: Boolean get() = boardPath != null
 
-    /** Which board the machine runs: Shepherdr 2 wins over a herdr-projects launcher, which may be an old one left on disk. */
+    /** Which board the machine runs: Shepherdr 3 wins over a herdr-projects launcher, which may be an old one left on disk. */
     val boardApi: BoardApi get() = BoardDetection.decide(shepherdrVersion?.let { V2Version(version = it) }, boardPath)
 
-    /** A work board of either kind there: Shepherdr 2's, or herdr-projects 1.x's. */
+    /** A work board of either kind there: Shepherdr 3's, or herdr-projects 1.x's. */
     val hasWorkBoard: Boolean get() = boardApi != BoardApi.None
 
-    /** It runs Shepherdr 2: its board screens talk to its API ([HostSession.awaitWorkBoard]), never herdr-projects. */
-    val onShepherdr2: Boolean get() = boardApi is BoardApi.V2
+    /** It runs Shepherdr 3: its board screens talk to its service ([HostSession.awaitWorkBoard]), never herdr-projects. */
+    val onShepherdr: Boolean get() = boardApi is BoardApi.V2
 
     /** [machine] with its herdr path set to the chosen binary: what every herdr command should run. */
     val herdrMachine: Machine get() = herdr?.let { machine.copy(herdrPath = it.binary.path) } ?: machine
@@ -158,7 +158,7 @@ data class HerdrCoreState(
     /** Each live terminal's size by its pane id, as the program draws it (the last active viewer set it). */
     val sizes: Map<String, Pair<Int, Int>> = emptyMap(),
     /**
-     * The herdr-core sessions whose agents are in [snapshot] (`default`, Shepherdr 2.1's `shepherdr`);
+     * The herdr-core sessions whose agents are in [snapshot] (`default`, and any other running);
      * empty when it is the default session's alone.
      */
     val sessions: List<String> = emptyList(),
@@ -236,7 +236,7 @@ class HostSession(
     private val refreshRequests = Channel<Unit>(Channel.CONFLATED)
 
     @Volatile private var connection: MachineConnection? = null
-    /** How Shepherdr 2's API is reached on this connection (its port forward), once found; closed with the connection. */
+    /** How Shepherdr's service is reached on this connection (its port forward), once found; closed with the connection. */
     @Volatile private var shepherdr: ShepherdrTransport? = null
     private val shepherdrLock = Mutex()
     @Volatile private var api: HerdrApi? = null
@@ -355,7 +355,7 @@ class HostSession(
         return BoardClient(conn, state.value.herdrMachine, path)
     }
 
-    /** Looks for the board again, for one installed or removed since the machine connected: Shepherdr 2's API, then v1's launcher. */
+    /** Looks for the board again, for one installed or removed since the machine connected: Shepherdr's service, then v1's launcher. */
     suspend fun checkBoard() {
         val conn = connection ?: return
         val v2 = findShepherdr(conn)
@@ -364,23 +364,23 @@ class HostSession(
     }
 
     /**
-     * Looks for the board again every [BOARD_RECHECK_MS] while none answers as Shepherdr 2: one started
-     * after the machine connected (Shepherdr 2.1 replacing 2.0 or herdr-projects) is found without a reconnect.
+     * Looks for the board again every [BOARD_RECHECK_MS] while none answers as Shepherdr: one started
+     * after the machine connected (Shepherdr 3's service replacing herdr-projects) is found without a reconnect.
      */
     private suspend fun recheckBoard(): Nothing {
         while (true) {
             delay(BOARD_RECHECK_MS)
-            // On Shepherdr 2 its version only, which says how to merge (2.0 → 2.1 while connected).
-            if (!state.value.onShepherdr2) runCatching { checkBoard() }
+            // On Shepherdr its version only (an update while connected).
+            if (!state.value.onShepherdr) runCatching { checkBoard() }
             else connection?.let { conn -> runCatching { findShepherdr(conn) }.getOrNull()?.let { v -> _state.update { it.copy(shepherdrVersion = v.version) } } }
         }
     }
 
-    /** Shepherdr 2 on this machine, over the connection's one port forward to it. */
+    /** Shepherdr's service on this machine, over the connection's one port forward to it. */
     suspend fun awaitShepherdr(timeoutMs: Long = 20_000): ShepherdrClient {
         val conn = awaitConnection(timeoutMs)
         shepherdr?.let { return ShepherdrClient(it) }
-        findShepherdr(conn) ?: throw IOException("Shepherdr 2 isn't running on ${machine.label}")
+        findShepherdr(conn) ?: throw IOException("Shepherdr 3 isn't running on ${machine.label}")
         return ShepherdrClient(shepherdr ?: throw IOException(statusMessage()))
     }
 
@@ -397,7 +397,7 @@ class HostSession(
         }
     }
 
-    /** Keeps the transport that still answers, else finds one; null where Shepherdr 2 doesn't answer. */
+    /** Keeps the transport that still answers, else finds one; null where Shepherdr 3 doesn't answer. */
     private suspend fun findShepherdr(conn: MachineConnection): V2Version? = shepherdrLock.withLock {
         shepherdr?.let { t ->
             BoardDetection.probe(t)?.let { return@withLock it }
@@ -669,14 +669,14 @@ class HostSession(
      * answers, the session starts over with both.
      */
     private suspend fun herdrCoreOnly(conn: MachineConnection, m: Machine, missing: ConnectError.HerdrMissing): Nothing = coroutineScope {
-        // Any session's core: Shepherdr 2.1 runs its agents in a session of its own.
+        // Any session's core.
         val probe = HcDetection.find(conn)?.takeIf { it.running || it.others.isNotEmpty() } ?: throw missing
         val why = missing.message ?: "herdr is missing"
         val attention = HostStatus.Attention(why, HostStatus.Attention.Kind.Herdr)
         // Online for herdr-core: what classic herdr showed before it stopped is kept but not shown ([HostState.view]).
         _state.update { it.copy(status = attention, classicMissing = why) }
         followHerdrCore(conn, probe)
-        // Shepherdr 2.1 runs on herdr-core alone: its board is looked for here as beside classic herdr.
+        // Shepherdr 3 runs on herdr-core alone: its board is looked for here as beside classic herdr.
         launch { checkBoard() }
         launch { recheckBoard() }
         // Online for herdr-core while it answers; what classic herdr lacks while it doesn't.
@@ -717,7 +717,7 @@ class HostSession(
 
     /**
      * Follows herdr-core, never failing the session: each of its sessions whose core runs (the
-     * default one, and others such as Shepherdr 2.1's `shepherdr`), found again a minute after one was
+     * default one, and any other), found again a minute after one was
      * missing, empty or its line dropped (the desktop app or Shepherdr starts later, hc updates), 3 s
      * after a followed one went. Keeps [HostState.herdrCore] up to date from their events.
      */
@@ -732,8 +732,7 @@ class HostSession(
             probe = null
             val wanted: List<String?> = buildList {
                 if (found?.running == true) add(null)
-                // Shepherdr 2.1's own session first: a preview's never pushes it past the cap.
-                found?.others.orEmpty().sortedBy { it.name != SHEPHERDR_SESSION }.take(MAX_OTHER_SESSIONS).forEach { add(it.name) }
+                found?.others.orEmpty().take(MAX_OTHER_SESSIONS).forEach { add(it.name) }
             }
             val keys = wanted.map(::coreKey).toSet()
             // Gone since: what was kept of them goes too.
@@ -908,7 +907,7 @@ private const val HERDR_CORE_RETRY_MS = 60_000L
 /** How soon herdr-core is looked for again after a followed core went. */
 private const val HERDR_CORE_BACK_MS = 3_000L
 
-/** How often a machine without Shepherdr 2 looks for it again ([HostSession.checkBoard]). */
+/** How often a machine without Shepherdr looks for it again ([HostSession.checkBoard]). */
 private const val BOARD_RECHECK_MS = 120_000L
 
 /** How long the first look at herdr-core waits for each session's first snapshot. */
@@ -920,8 +919,6 @@ private const val HERDR_CORE_FIRST_LOOK_MS = 15_000L
  */
 private const val MAX_OTHER_SESSIONS = 3
 
-/** The herdr-core session Shepherdr 2.1 runs its agents in. */
-private const val SHEPHERDR_SESSION = "shepherdr"
 
 /** How long a machine with only herdr-core waits before looking for classic herdr again (the Attention retry's). */
 private const val CLASSIC_RECHECK_MS = 120_000L

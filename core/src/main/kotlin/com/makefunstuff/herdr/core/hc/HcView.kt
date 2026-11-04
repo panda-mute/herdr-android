@@ -98,10 +98,14 @@ object HcMapping {
     private const val SPACE = "herdr.space"
     private const val TAB = "herdr.tab"
     private const val WHERE = "where"
-    private const val SHEPHERDR_TASK = "shepherdr.task"
-    private const val SHEPHERDR_ROLE = "shepherdr.role"
-    private const val SHEPHERDR_CHAT = "shepherdr.chat"
-    private const val SHEPHERDR_SPACE = "shepherdr.space"
+    // Shepherdr 3's labels on the agents it starts (`service/actions.ts`, herdr-task's): a task's worker and reviewers
+    // carry its key (`<list>#<n>`), an Assistant its space.
+    private const val TASK = "herdr.task"
+    private const val ROLE = "herdr.role"
+    private const val ASSISTANT_SPACE = "herdr.coordinator.space"
+    private const val ASSISTANT_TAB = "herdr.coordinator.tab"
+    private const val ASSISTANT = "herdr.coordinator"
+    private const val TASK_SPACE = "herdr.task.space"
 
     /**
      * The hc address of a pane id from [snapshot], or null when it isn't one of herdr-core's: `t7`
@@ -156,31 +160,42 @@ object HcMapping {
     }
 
     /**
-     * What Shepherdr 2.1 calls the agent it started (its labels `shepherdr.task`, `shepherdr.role`):
-     * the task (`HA-12`) or `<space> coordinator`, in place of the terminal's machine-made name
-     * (`shep-7f9b…`); null for any other terminal.
+     * The task a Shepherdr 3 agent works on, as people say it (`HERD-8`; `vm:HERD-8` on a machine hc added), or null.
+     * Its label holds the task list's key and number (`data-jpl-Work-app#8`), not its ref: the ref's letters come from
+     * the name herdr-task gives its worker (`herd-8-dark-mode`), taken only when its number is the label's.
      */
-    fun shepherdrName(t: HcTerminal): String? {
-        // The task for its own agent and its reviewers; its browsers carry the task's label too, and keep their names.
-        val task = t.labels[SHEPHERDR_TASK]?.takeIf { it.isNotBlank() }
-        when (t.labels[SHEPHERDR_ROLE]) {
-            "task" -> task?.let { return it }
-            "reviewer" -> task?.let { return "$it reviewer" }
-        }
-        if (t.labels[SHEPHERDR_ROLE] != "coordinator") return null
-        val space = t.labels[WHERE]?.split(" / ", limit = 2)?.firstOrNull()?.takeIf { it.isNotBlank() }
-        return if (space != null) "$space coordinator" else "Coordinator"
+    fun shepherdrTask(t: HcTerminal): String? {
+        val n = t.labels[TASK]?.substringAfterLast('#', "")?.takeIf { it.isNotEmpty() && it.all(Char::isDigit) } ?: return null
+        val m = Regex("""^([A-Za-z][A-Za-z0-9]*)-(\d+)(?:-|$)""").find(t.name.orEmpty()) ?: return null
+        if (m.groupValues[2] != n) return null
+        return machineOf(t.address)?.let { "$it:" }.orEmpty() + m.groupValues[1].uppercase() + "-" + n
     }
 
-    /** The Shepherdr chat of the agent Shepherdr 2.1 started in [t] (`HA-12/Agent`, or a space id for a coordinator); null for any other. */
-    fun shepherdrChat(t: HcTerminal): String? = t.labels[SHEPHERDR_CHAT]?.takeIf { it.isNotBlank() }
+    /** The space whose Assistant runs in [t] (its id, `vm/<id>` on a machine hc added), or null. */
+    fun shepherdrSpace(t: HcTerminal): String? {
+        if (t.labels[ROLE] != "coordinator") return null
+        val space = t.labels[ASSISTANT_SPACE]?.takeIf { it.isNotBlank() } ?: return null
+        return machineOf(t.address)?.takeIf { '/' !in space }?.let { "$it/" }.orEmpty() + space
+    }
+
+    /**
+     * What Shepherdr 3 calls the agent it started: its task (`HERD-8`, `HERD-8 reviewer`) or `<space> Assistant`, in
+     * place of the terminal's name; null for any other terminal.
+     */
+    fun shepherdrName(t: HcTerminal): String? {
+        shepherdrTask(t)?.let { task -> return if (t.labels[ROLE] == "reviewer") "${task.substringAfter(':')} reviewer" else task.substringAfter(':') }
+        shepherdrSpace(t) ?: return null
+        val space = t.labels[WHERE]?.split(" / ", limit = 2)?.firstOrNull()?.takeIf { it.isNotBlank() }
+        return if (space != null) "$space Assistant" else "Assistant"
+    }
 
     /** Where the desktop app put it, from its labels; null where it didn't. */
     private fun own(t: HcTerminal, scope: String): Place? {
         val where = t.labels[WHERE]?.takeIf { it.isNotBlank() }
         val names = where?.split(" / ", limit = 2)
-        val space = t.labels[SPACE]?.takeIf { it.isNotBlank() }
-        val tab = t.labels[TAB]?.takeIf { it.isNotBlank() }
+        // A Shepherdr worker names its space and its Assistant's tab, where the desktop app shows it.
+        val space = listOf(SPACE, TASK_SPACE, ASSISTANT_SPACE).firstNotNullOfOrNull { t.labels[it]?.takeIf(String::isNotBlank) }
+        val tab = listOf(TAB, ASSISTANT_TAB, ASSISTANT).firstNotNullOfOrNull { t.labels[it]?.takeIf(String::isNotBlank) }
         if (space == null && where == null) return null
         val remote = machineOf(t.address)?.let { "$it/" }.orEmpty()
         val spaceId = scope + remote + (space ?: "where:${names!![0]}")
@@ -246,8 +261,8 @@ object HcMapping {
                 stateChangeSeq = t.statusMs ?: t.createdMs,
                 completionSeq = t.turn.takeIf { it > 0 },
                 cwd = t.foreground?.cwd ?: t.cwd,
-                shepherdrTask = t.labels[SHEPHERDR_TASK]?.takeIf { it.isNotBlank() && t.labels[SHEPHERDR_ROLE] == "task" },
-                shepherdrSpace = t.labels[SHEPHERDR_SPACE]?.takeIf { it.isNotBlank() && t.labels[SHEPHERDR_ROLE] == "coordinator" },
+                shepherdrTask = shepherdrTask(t)?.takeIf { t.labels[ROLE] != "reviewer" },
+                shepherdrSpace = shepherdrSpace(t),
             )
         }
         // The desktop app's spaces first, the terminals it doesn't show after them.

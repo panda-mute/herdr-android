@@ -84,8 +84,8 @@ class TallyStore(private val file: File, private val machines: MachineStore, pri
                 if (hosts.isForeground) {
                     for (s in hosts.hosts.value) {
                         val id = s.machine.id
-                        // A Shepherdr 2 machine's herdr-projects launcher is an old one left on disk: its list isn't the board.
-                        if (!s.online || !s.hasBoard || s.onShepherdr2 || now() - (read[id] ?: 0) < BOARD_MS) continue
+                        // A Shepherdr 3 machine's herdr-projects launcher is an old one left on disk: its list isn't the board.
+                        if (!s.online || !s.hasBoard || s.onShepherdr || now() - (read[id] ?: 0) < BOARD_MS) continue
                         read[id] = now()
                         launch {
                             try {

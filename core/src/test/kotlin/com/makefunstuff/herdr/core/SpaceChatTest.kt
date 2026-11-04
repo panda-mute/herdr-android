@@ -19,6 +19,15 @@ class SpaceChatTest {
 
     private fun chat(json: String) = (V2Events.parse("""{"type":"chat","chat":$json}""") as V2Event.Chat).chat
 
+    /** A task's chat as Shepherdr 3's service sends it (`service/compat.ts` chat()): words, then a run of tool calls. */
+    private val live = """{"key":"DEMO-1/worker","working":false,"cli":"claude","top":true,"messages":[
+          {"id":"u1","who":"you","at":1793820000000,"text":"Read the v3 API and list its routes."},
+          {"id":"a1","who":"agent","at":1793820005000,"text":"Reading it now."},
+          {"id":"t1","who":"agent","at":1793820080605,"activity":{"id":"t1","at":1793820000000,"end":1793820080605,"steps":7,"summary":"Read 5 files, ran 2 commands",
+            "rows":[{"key":"r1","kind":"read","text":"Inspected v3 API routes and types"},{"key":"r2","kind":"run","text":"Ran bun test"}]}},
+          {"id":"a2","who":"agent","at":1793820090000,"text":"Fourteen routes: `/api/health`, `/api/action`…"}
+        ]}"""
+
     @Test
     fun shepherdrsLinesAndAgentTagsAreNoOnesWords() {
         assertEquals("", ShepherdrText.clean("""<shepherdr><news task="HA-1" event="merged">HA-1 merged</news></shepherdr>"""))
@@ -32,7 +41,7 @@ class SpaceChatTest {
 
     @Test
     fun theLiveChatAsTheScreenShowsIt() {
-        val c = (V2Events.parse(fixture("chat-event.json")) as V2Event.Chat).chat
+        val c = chat(live)
         val items = SpaceChat.items(c.key, c)
         // The turn's tool steps show nothing.
         assertEquals(3, items.size)
@@ -135,13 +144,13 @@ class SpaceChatTest {
 
     @Test
     fun aTasksChatFoldsEachTurnsStepsToOneLine() {
-        val c = (V2Events.parse(fixture("chat-event.json")) as V2Event.Chat).chat
-        // The coordinator's chat leaves them out; a task's agent chat shows each turn's as one line.
+        val c = chat(live)
+        // The Assistant's chat leaves them out; a task's agent chat shows each turn's as one line.
         assertEquals(3, SpaceChat.items(c.key, c).size)
         val items = SpaceChat.items(c.key, c, steps = true)
         assertEquals(4, items.size)
         val s = items[2] as SpaceChatItem.Steps
-        assertEquals("Inspected v2 API routes and types", s.rows.first())
+        assertEquals("Inspected v3 API routes and types", s.rows.first())
         assertEquals(80_605L, s.millis)
         assertEquals("1m", SpaceChat.took(s.millis!!))
         assertTrue(s.steps >= s.rows.size)

@@ -142,7 +142,7 @@ fun AgentScreen(nav: NavController, machineId: String, paneId: String) {
     val activity = agent?.let { it.title?.takeIf { t -> t.isNotBlank() } ?: it.terminalTitle?.takeIf { t -> t.isNotBlank() } }
 
     val name = agent?.let { it.name?.takeIf { n -> n.isNotBlank() } ?: it.displayName } ?: pane?.displayName ?: paneId
-    // The task it works on, from the boards as last read (Shepherdr 2's too): it names the chat and its sheet.
+    // The task it works on, from the boards as last read (Shepherdr 3's too): it names the chat and its sheet.
     val boards = com.makefunstuff.herdr.ui.board.rememberBoards()
     val task = remember(boards, agent, snapshot) {
         val a = agent ?: return@remember null
