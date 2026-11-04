@@ -291,10 +291,8 @@ fun ChatComposer(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     if (voice != null && hearing) RecordingInfo(voice, voiceState)
-                    else {
-                        leading?.invoke(this)
-                        Spacer(Modifier.weight(1f))
-                    }
+                    // The controls on the left take what the buttons on the right leave, and shrink to fit it.
+                    else Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) { leading?.invoke(this) }
                     if (status != null && !hearing) {
                         Text(
                             status,

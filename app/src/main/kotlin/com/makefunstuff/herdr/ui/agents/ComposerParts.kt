@@ -257,13 +257,13 @@ fun fileRows(files: List<String>): List<CompletionRow> = files.map { path ->
  * on a quiet fill; a tap opens its details.
  */
 @Composable
-fun ModelPillButton(pill: ModelPill, onClick: () -> Unit) {
+fun ModelPillButton(pill: ModelPill, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val c = Herdr.colors
     val shape = RoundedCornerShape(50)
     val percent = pill.percent
     val words = pill.title + (percent?.let { " · $it%" } ?: "")
     Box(
-        Modifier.heightIn(min = 48.dp).clip(shape).clickable(role = Role.Button, onClickLabel = "Model details", onClick = onClick)
+        modifier.heightIn(min = 48.dp).clip(shape).clickable(role = Role.Button, onClickLabel = "Model details", onClick = onClick)
             .semantics { contentDescription = "Model ${pill.title}" + (pill.percent?.let { ", context $it% full" } ?: "") },
         contentAlignment = Alignment.Center,
     ) {
@@ -275,7 +275,9 @@ fun ModelPillButton(pill: ModelPill, onClick: () -> Unit) {
                 ContextRing(percent, Modifier.size(14.dp))
                 Spacer(Modifier.width(Space.xs + Space.xxs))
             }
-            Text(words, style = MaterialTheme.typography.labelLarge, color = c.text, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 180.dp))
+            Text(words, style = MaterialTheme.typography.labelLarge, color = c.text, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                // Gives up width before the buttons beside it do.
+                modifier = Modifier.weight(1f, fill = false).widthIn(max = 180.dp))
         }
     }
 }

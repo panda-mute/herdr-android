@@ -568,7 +568,7 @@ fun AgentScreen(nav: NavController, machineId: String, paneId: String) {
                         },
                         leading = {
                             ComposerIconButton(HerdrIcons.Plus, "Attach files", enabled = !attach.uploading, onClick = { attachMenu = true })
-                            pill?.let { ModelPillButton(it) { modelSheet = true } }
+                            pill?.let { ModelPillButton(it, Modifier.weight(1f, fill = false)) { modelSheet = true } }
                         },
                         attachments = { ComposerTray(tray) },
                         voice = voice.recorder,
