@@ -302,3 +302,19 @@ class HeldTest {
         assertEquals(listOf("go on", "test"), QuickReplies(replies = listOf("  go   on ", "", "test", "go on")).shown)
     }
 }
+
+class HeldDeliveredTest {
+    private fun user(id: String, text: String) = com.makefunstuff.herdr.core.chat.ChatItem.User(id, text)
+    private fun held(id: String, text: String, known: List<String> = emptyList()) = com.makefunstuff.herdr.core.chat.HeldMessage(id, text, 0, known)
+
+    @Test
+    fun heldWordsTheAgentAlreadyHasStopWaiting() {
+        // Shown as a new user message, or queued by the agent: delivered.
+        assertEquals(setOf("h1"), Held.delivered(listOf(held("h1", "加入支持", known = listOf("u1"))), listOf(user("u1", "hi"), user("u2", "加入支持")), emptyList()))
+        assertEquals(setOf("h1"), Held.delivered(listOf(held("h1", "run the tests")), emptyList(), listOf("run the tests")))
+        // A copy the chat already showed when it was held is an older message.
+        assertEquals(emptySet(), Held.delivered(listOf(held("h1", "continue", known = listOf("u1"))), listOf(user("u1", "continue")), emptyList()))
+        // Two held alike, one copy seen: only one goes.
+        assertEquals(setOf("h1"), Held.delivered(listOf(held("h1", "continue"), held("h2", "continue")), listOf(user("u2", "continue")), emptyList()))
+    }
+}

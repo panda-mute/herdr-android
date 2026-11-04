@@ -328,6 +328,9 @@ fun AgentScreen(nav: NavController, machineId: String, paneId: String) {
         }
     }
 
+    /** The user messages the chat shows now: a held message's copy among them came before it. */
+    fun userIds(): List<String> = state.items.filterIsInstance<com.makefunstuff.herdr.core.chat.ChatItem.User>().map { it.id }
+
     /** Sends what is typed, or a quick [reply] (the draft and its pictures stay as they are). */
     fun send(reply: String? = null) {
         val typed = reply ?: draft
@@ -340,7 +343,7 @@ fun AgentScreen(nav: NavController, machineId: String, paneId: String) {
         val at = container.clock()
         // While it works, the words wait above the composer rather than land in the middle of its turn.
         if (Held.holds(status, named = agent != null)) {
-            container.composer.hold(chatKey, text, at)
+            container.composer.hold(chatKey, text, at, userIds())
             if (reply == null) {
                 draft = DraftStore.afterSend(draft, typed)
                 tray.sent(pictures)
@@ -390,7 +393,7 @@ fun AgentScreen(nav: NavController, machineId: String, paneId: String) {
     suspend fun deliverVoice(remote: String) {
         val text = Attachments.mention(remote)
         if (Held.holds(status, named = agent != null) || status == AgentStatus.Blocked) {
-            container.composer.hold(chatKey, text, container.clock())
+            container.composer.hold(chatKey, text, container.clock(), userIds())
             return
         }
         chat.addPending(text)
@@ -441,6 +444,12 @@ fun AgentScreen(nav: NavController, machineId: String, paneId: String) {
     val machineNow = now + ahead
     // Messages the agent queued while it works (none once it stops: it takes them at once then).
     val queued = if (state.source == AgentChat.Source.Transcript && (status == AgentStatus.Working || status == AgentStatus.Blocked)) state.queued else emptyList()
+    // Held words the agent already has (sent from elsewhere, or typed although the send failed) stop waiting here.
+    LaunchedEffect(held, state.items, state.queued, state.source) {
+        if (held.isEmpty() || state.source != AgentChat.Source.Transcript) return@LaunchedEffect
+        val users = state.items.filterIsInstance<com.makefunstuff.herdr.core.chat.ChatItem.User>()
+        Held.delivered(held, users, state.queued).forEach { container.composer.drop(chatKey, it) }
+    }
     // One sent from here that it has queued shows as queued, once: no longer on its way.
     val onTheWay = remember(state.pending, queued) {
         val left = queued.toMutableList()

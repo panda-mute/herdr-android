@@ -25,9 +25,9 @@ class ComposerStore(private val file: File) {
     fun held(key: String): List<HeldMessage> = _state.value.held[key].orEmpty()
 
     /** Holds [text] at the end of [key]'s list. */
-    fun hold(key: String, text: String, at: Long): HeldMessage {
+    fun hold(key: String, text: String, at: Long, known: List<String> = emptyList()): HeldMessage {
         val ids = held(key).map { it.id }.toSet()
-        val m = HeldMessage(generateSequence(ids.size) { it + 1 }.map { "$at-$it" }.first { it !in ids }, text, at)
+        val m = HeldMessage(generateSequence(ids.size) { it + 1 }.map { "$at-$it" }.first { it !in ids }, text, at, known)
         change { it.copy(held = it.held + (key to (it.held[key].orEmpty() + m))) }
         return m
     }

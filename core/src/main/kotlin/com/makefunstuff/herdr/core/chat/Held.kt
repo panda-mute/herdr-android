@@ -10,7 +10,13 @@ import kotlinx.serialization.Serializable
  * were away never goes later without you.
  */
 @Serializable
-data class HeldMessage(val id: String, val text: String, val at: Long)
+data class HeldMessage(
+    val id: String,
+    val text: String,
+    val at: Long,
+    /** Ids of the user messages the chat showed when it was held: a copy among them is older. */
+    val known: List<String> = emptyList(),
+)
 
 object Held {
     /** What Send does now: hold the message while a named agent works (its words would land mid-turn). */
@@ -30,6 +36,23 @@ object Held {
             AgentStatus.Blocked -> "Held: $agent asks you something first$n"
             else -> "$agent is ready: review and send$n"
         }
+    }
+
+    /**
+     * The held messages the agent already has, by any way (sent from another phone or the
+     * computer, or typed although the send reported a failure): those whose words are a user
+     * message the chat didn't show when they were held, or a message it queued. Each copy counts once.
+     */
+    fun delivered(held: List<HeldMessage>, users: List<ChatItem.User>, queued: List<String>): Set<String> {
+        val usedUsers = HashSet<String>()
+        val usedQueued = HashSet<Int>()
+        return held.filter { m ->
+            val user = users.firstOrNull { it.id !in m.known && it.id !in usedUsers && SentMatch.same(m.text, it.text) }
+            if (user != null) { usedUsers += user.id; return@filter true }
+            val q = queued.indices.firstOrNull { it !in usedQueued && SentMatch.same(m.text, queued[it]) }
+            if (q != null) { usedQueued += q; return@filter true }
+            false
+        }.map { it.id }.toSet()
     }
 
     /** True once the agent is ready for the held words: the caption takes the accent. */
