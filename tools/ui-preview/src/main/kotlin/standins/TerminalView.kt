@@ -117,11 +117,12 @@ class TerminalView(context: Context) : View(context) {
 
     @Composable
     override fun Content(modifier: Modifier) {
+        // Within its bounds, as an Android View draws: clear() would wipe the whole window's layer, the Find bar above too.
         Canvas(modifier.clipToBounds()) {
             drawRevision.longValue // redraw on invalidate()
+            drawRect(androidx.compose.ui.graphics.Color(painter.palette.background))
             drawIntoCanvas { c ->
                 val canvas = c.nativeCanvas
-                canvas.clear(painter.palette.background)
                 val emu = emulator ?: return@drawIntoCanvas
                 val pad = PAD * density
                 synchronized(emu.lock) {

@@ -57,7 +57,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.navigation.NavController
 import androidx.navigation.compose.currentBackStackEntryAsState
-import com.makefunstuff.herdr.BoardChoice
 import com.makefunstuff.herdr.LocalPanes
 import com.makefunstuff.herdr.Routes
 import com.makefunstuff.herdr.core.board.CardAnswer
@@ -66,10 +65,8 @@ import com.makefunstuff.herdr.core.board.WorkOverview
 import com.makefunstuff.herdr.core.board.WorkSpace
 import com.makefunstuff.herdr.core.board.WorkStatus
 import com.makefunstuff.herdr.core.board.WorkTask
-import com.makefunstuff.herdr.core.board.WorkTasks
 import com.makefunstuff.herdr.core.guard.Guarded
 import com.makefunstuff.herdr.core.host.HostSession
-import com.makefunstuff.herdr.core.push.Alerts
 import com.makefunstuff.herdr.ui.common.EmptyState
 import com.makefunstuff.herdr.ui.common.LocalContainer
 import com.makefunstuff.herdr.ui.common.LocalGuard
@@ -105,7 +102,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-/** The board's colour for this status, in the current theme: the same as v1's nearest status. */
+/** The board's colour for this status, in the current theme. */
 @Composable
 @ReadOnlyComposable
 fun WorkStatus.color(): Color = Herdr.colors.tone(tone)
@@ -114,6 +111,26 @@ fun WorkStatus.color(): Color = Herdr.colors.tone(tone)
 private sealed interface WorkPending {
     data class Close(val task: WorkTask) : WorkPending
     data object Add : WorkPending
+}
+
+/**
+ * The work board on one machine: Shepherdr 3's ([WorkBoardScreen]). With [alone],
+ * [openTask] was opened from elsewhere (the Tasks tab): closing it goes back there. With [accept] (its Finished
+ * alert), its Accept card opens over it while it is Ready.
+ */
+@Composable
+fun BoardScreen(nav: NavController, machineId: String, openTask: String? = null, alone: Boolean = false, accept: Boolean = false) {
+    val session = LocalContainer.current.hosts.session(machineId)
+    if (session == null) {
+        EmptyState("Machine not found", "It may have been removed.")
+        return
+    }
+    val state by session.state.collectAsStateWithLifecycle()
+    when {
+        state.onShepherdr -> WorkBoardScreen(nav, session, machineId, openTask, alone, accept)
+        state.online && !state.boardChecked -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { LoadingState("Looking for Shepherdr") }
+        else -> EmptyState("No work board", "Shepherdr 3 isn't running on ${state.machine.label}. Its tasks show here once it is.", icon = HerdrIcons.SquareKanban)
+    }
 }
 
 /**
@@ -128,8 +145,8 @@ internal fun WorkBoardScreen(
     session: HostSession,
     machineId: String,
     openTask: String? = null,
-    pane: BoardChoice? = null,
     alone: Boolean = false,
+    accept: Boolean = false,
 ) {
     val container = LocalContainer.current
     val panes = LocalPanes.current
@@ -143,10 +160,6 @@ internal fun WorkBoardScreen(
     var problem by remember { mutableStateOf<String?>(null) }
     var loaded by remember { mutableStateOf(board != null) }
     var openId by rememberSaveable { mutableStateOf(openTask) }
-    if (pane != null) LaunchedEffect(pane.machine, pane.task) {
-        if (pane.machine == machineId) pane.task?.let { openId = it; pane.task = null }
-    }
-    LaunchedEffect(openId) { openId?.let { container.inbox.dismiss(Alerts.taskTag(machineId, it)) } }
     var pending by remember { mutableStateOf<WorkPending?>(null) }
     var busy by remember { mutableStateOf<String?>(null) }
     var refusal by remember { mutableStateOf<String?>(null) }
@@ -159,7 +172,7 @@ internal fun WorkBoardScreen(
         problem = null
         loaded = true
         container.boards.put(machineId, o)
-        container.tally.tasks(machineId, o.tasks.map(WorkTasks::row))
+        container.tally.tasks(machineId, o.tasks)
     }
 
     // Followed while the screen is in front: the live link's snapshots, and a read now after an action.
@@ -200,15 +213,23 @@ internal fun WorkBoardScreen(
 
     /** The Ready task whose Accept card is up. */
     var acceptFor by remember { mutableStateOf<WorkTask?>(null) }
-    // Shepherdr's Accept: its card first, which says what you approve; the fingerprint then, as for v1's Approve and merge.
+    // Shepherdr's Accept: its card first, which says what you approve; the fingerprint then.
     fun merge(t: WorkTask) {
         acceptFor = t
+    }
+    // From a task's Finished alert: its Accept card, once, as soon as the board says it is Ready.
+    var acceptAsked by rememberSaveable { mutableStateOf(accept) }
+    LaunchedEffect(board, acceptAsked) {
+        if (!acceptAsked) return@LaunchedEffect
+        val t = board?.tasks?.firstOrNull { it.id == openTask } ?: return@LaunchedEffect
+        if (t.status == WorkStatus.Ready) acceptFor = t
+        acceptAsked = false
     }
     fun answer(a: CardAnswer, t: WorkTask) = act("Answering", t) { it.answer(a).ifEmpty { "Answered" } }
     /** [space]'s coordinator chat; the home space's without one. */
     fun openCoordinator(space: String? = null) {
         val route = Routes.coordinator(machineId, space)
-        if (pane != null) panes.open(nav, route) else nav.navigate(route)
+        nav.navigate(route)
     }
 
     val o = board
@@ -224,9 +245,9 @@ internal fun WorkBoardScreen(
             containerColor = Herdr.colors.ground,
             topBar = {
                 HerdrTopBar(
-                    "Board",
+                    "Tasks",
                     subtitle = "${state.machine.label} · ${if (o == null) "Shepherdr" else "${needsYou.size + asking.size} need you"}",
-                    onBack = if (pane == null) ({ nav.popBackStack() }) else null,
+                    onBack = { nav.popBackStack() },
                 ) {
                     BarIcon(HerdrIcons.MessagesSquare, "Assistant chat", { openCoordinator() })
                     BarIcon(HerdrIcons.RefreshCw, "Read the board again", { readNow.trySend(Unit) })
@@ -306,14 +327,12 @@ internal fun WorkBoardScreen(
         }
 
         val open = o?.tasks?.firstOrNull { it.id == openId }
-        val middle by nav.currentBackStackEntryAsState()
-        val middleCloses = pane != null && middle?.destination?.route != Routes.AGENTS
         // A task with an agent opens as its agent's chat; one not started yet as its details.
         if (openId != null && open != null && open.chat.isNotEmpty()) {
             TaskChatScreen(
-                session, machineId, open, space = spaceName(open.space), busy = busy,
-                onBack = { if (alone && pane == null && openId == openTask) nav.popBackStack() else openId = null },
-                backEnabled = !middleCloses,
+                nav, session, machineId, open, space = spaceName(open.space), busy = busy,
+                onBack = { if (alone && openId == openTask) nav.popBackStack() else openId = null },
+                backEnabled = true,
                 onMerge = { merge(open) },
                 onClose = { pending = WorkPending.Close(open) },
                 artifacts = o?.artifacts,
@@ -324,8 +343,8 @@ internal fun WorkBoardScreen(
         } else if (openId != null && open != null) {
             WorkTaskScreen(
                 session, open, space = spaceName(open.space), busy = busy,
-                onBack = { if (alone && pane == null && openId == openTask) nav.popBackStack() else openId = null },
-                backEnabled = !middleCloses,
+                onBack = { if (alone && openId == openTask) nav.popBackStack() else openId = null },
+                backEnabled = true,
                 onMerge = { merge(open) },
                 onClose = { pending = WorkPending.Close(open) },
                 onAnswer = { a -> answer(a, open) },
@@ -336,7 +355,7 @@ internal fun WorkBoardScreen(
             AcceptSheet(
                 board, o?.tasks?.firstOrNull { it.id == t.id } ?: t, onDismiss = { acceptFor = null },
                 onProof = { id -> nav.navigate(Routes.artifact(machineId, id, null)) },
-                onAccepted = { context.toast(it); readNow.trySend(Unit) },
+                onAccepted = { context.toast(it); readNow.trySend(Unit); container.changes.accepted(machineId, t) },
                 confirm = { run -> guard.run(Guarded.Merge, "Accept ${t.name}?", t.title) { view.confirmTap(); run() } },
             )
         }
@@ -377,7 +396,7 @@ internal const val ADD_THROUGH_COORDINATOR =
 
 /**
  * [AddWorkTaskPanel] for [session]'s board from elsewhere (the Board tab): its spaces as last read, or read
- * now when they weren't yet, so a task never goes to a herdr-projects 1.x left on disk.
+ * now when they weren't yet.
  */
 @Composable
 internal fun AddWorkTask(session: HostSession, read: WorkOverview?, onDismiss: () -> Unit, onSend: (WorkSpace, String, String) -> Unit) {

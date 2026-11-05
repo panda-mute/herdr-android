@@ -21,7 +21,7 @@ import kotlin.test.assertTrue
 
 /**
  * What the Board and task screens read from a real Shepherdr 3, over SSH as the app reaches it: the
- * board from the live link, each task's details and the cards it waits on, and the rows the brief reads.
+ * board from the live link, each task's details and the cards it waits on.
  * Read only: nothing is merged, closed, added or answered. Runs only with HERDR_LIVE_KEY and
  * HERDR_LIVE_SHEPHERDR (the machine, `user@host[:port]`) set.
  */
@@ -41,7 +41,7 @@ class LiveWorkBoardScreensTest {
             try {
                 session.start()
                 val s = withTimeout(60_000) { session.state.first { it.online && it.boardChecked } }
-                assertTrue(s.onShepherdr && s.hasWorkBoard, "the Board screen takes the v2 way there")
+                assertTrue(s.onShepherdr, "the Board screen takes Shepherdr's way there")
                 val board = session.awaitWorkBoard()
                 // The Board screen follows the live link: its first snapshot comes at once.
                 val o = withTimeout(30_000) { board.overviews().take(1).toList().single() }
@@ -60,9 +60,6 @@ class LiveWorkBoardScreensTest {
                             },
                     )
                 }
-                // The brief and the Board tab read the same tasks as rows.
-                val rows = o.tasks.map(WorkTasks::row)
-                assertEquals(o.tasks.count { it.status.needsYou }, rows.count { it.needsYou })
             } finally {
                 session.stop()
                 scope.cancel()

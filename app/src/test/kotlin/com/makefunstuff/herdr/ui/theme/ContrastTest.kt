@@ -55,9 +55,13 @@ class ContrastTest {
         need("scheme onPrimary on primary", s.onPrimary, s.primary)
         // The chosen lens: its amber glyph on the neutral pill.
         need("accent mark on hover", h.accent, h.hover, 3.0)
-        // The toast is the web UI's in-app alert: island black in both themes.
-        need("toast text", Color(0xFFF5F5F7), Color.Black)
-        need("toast error mark", Color(0xFFFF8A80), Color.Black, 3.0)
+        // The toast: strong text on the chrome, framed in amber (red for an error).
+        need("toast text", h.strong, h.panel)
+        need("toast error mark", h.red, h.panel, 3.0)
+        // The amber frame of what is in focus shows against the ground.
+        need("focus frame", h.accent, h.ground, 3.0)
+        // The shown space's slot: its name in amber on the selected fill (its number is ink on the amber fill, onPrimary on primary).
+        need("chosen slot name", h.accent, h.selected)
         // The terminal: its text and cursor on its ground.
         val term = h.terminalPalette()
         need("terminal text", Color(term.foreground), Color(term.background))
@@ -68,24 +72,24 @@ class ContrastTest {
     @Test fun dark() = check("dark", Dark, DarkHerdr)
     @Test fun light() = check("light", Light, LightHerdr)
 
-    /** The web UI's `:root` and `[data-theme="light"]` values, verbatim. */
-    @Test fun tokensAreTheWebUiTokens() {
+    /** The dark theme is the desktop's workbench (herdr-app/themes/workbench.json), value for value. */
+    @Test fun darkIsTheWorkbenchTheme() {
         fun hex(c: Color) = "#%06X".format(c.value.toLong().ushr(32).toInt() and 0xFFFFFF)
         assertEquals(
-            listOf("#12100E", "#181613", "#211E1A", "#2A2621", "#1C1916", "#2D2924", "#3E3830", "#D8D0C3", "#9B9183", "#F2EBDF", "#F0A830", "#F0A830", "#1B1407", "#9B9183", "#6CB8D6", "#FF7B70", "#93C36B"),
-            DarkHerdr.run { listOf(ground, panel, card, hover, input, line, lineStrong, text, muted, strong, accent, primary, onPrimary, idle, working, red, done) }.map(::hex),
+            // background, chrome, surface, input, border, selected, foreground, muted, dim, accent, accent_foreground, working, blocked, done
+            listOf("#0D0F10", "#0A0D0C", "#1B1F21", "#090A0B", "#4E5B57", "#1E3A40", "#DFE4E1", "#8FA3A8", "#66727A", "#FFB000", "#0B0D0E", "#FFB000", "#FF5A4A", "#5FD38A"),
+            DarkHerdr.run { listOf(ground, panel, card, input, lineStrong, selected, text, muted, off, accent, onPrimary, working, red, done) }.map(::hex),
         )
-        assertEquals(
-            listOf("#EEEAE2", "#FAF8F3", "#F2EEE6", "#E8E2D6", "#FFFDF9", "#DCD4C6", "#C5BAA8", "#2A251F", "#685E52", "#16120D", "#8C5000", "#C57D12", "#1B1407", "#685E52", "#155A72", "#A82323", "#2F6317"),
-            LightHerdr.run { listOf(ground, panel, card, hover, input, line, lineStrong, text, muted, strong, accent, primary, onPrimary, idle, working, red, done) }.map(::hex),
-        )
+        assertEquals("#23404A", hex(DarkHerdr.termSelection))
     }
 
-    /** No agent or board state is amber: amber is the one chrome colour. */
-    @Test fun statesAreNeverAmber() {
+    /** Work is the console's own amber, as on the desktop; the other states never are, and none is another's colour. */
+    @Test fun statesKeepTheirColours() {
         for (h in listOf(DarkHerdr, LightHerdr)) {
-            AgentStatus.entries.forEach { assertTrue(it.name, h.status(it) != h.accent && h.status(it) != h.primary) }
-            BoardTone.entries.forEach { assertTrue(it.name, h.tone(it) != h.accent && h.tone(it) != h.primary) }
+            assertEquals(h.accent, h.status(AgentStatus.Working))
+            val others = listOf(AgentStatus.Blocked, AgentStatus.Done, AgentStatus.Idle).map { h.status(it) }
+            others.forEach { assertTrue(it != h.accent && it != h.primary) }
+            assertEquals(others.size, others.toSet().size)
         }
     }
 }

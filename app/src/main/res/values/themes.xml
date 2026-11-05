@@ -39,4 +39,20 @@
         <item name="android:textColor">@color/widget_text</item>
         <item name="android:textSize">14sp</item>
     </style>
+
+    <!-- A row's button in the Needs you widget: square, its label in mono, as the app's buttons. -->
+    <style name="HerdrWidgetButton">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">36dp</item>
+        <item name="android:layout_marginStart">8dp</item>
+        <item name="android:ellipsize">end</item>
+        <item name="android:fontFamily">@font/geist_mono_medium</item>
+        <item name="android:gravity">center</item>
+        <item name="android:maxLines">1</item>
+        <item name="android:maxWidth">112dp</item>
+        <item name="android:minWidth">64dp</item>
+        <item name="android:paddingHorizontal">10dp</item>
+        <item name="android:textSize">12sp</item>
+        <item name="android:visibility">gone</item>
+    </style>
 </resources>

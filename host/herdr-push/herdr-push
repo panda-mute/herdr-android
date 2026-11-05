@@ -1,33 +1,26 @@
 #!/usr/bin/env python3
-# version: 9
-"""herdr-push: tells your phone when a herdr agent or a work board task needs you.
+# version: 11
+"""herdr-push: tells your phone when a herdr agent needs you.
 
 It runs on the machine with herdr, watches its agents (`herdr api snapshot`, and the Herdr desktop
-app's in herdr-core, read on its socket where a core runs) and, where the board is installed, its
-tasks (`herdr-projects list --json`), and sends a push to every phone that subscribed (Herdr for
-Android sets this up over SSH) when:
+app's in herdr-core, read on its socket where a core runs), and sends a push to every phone that
+subscribed (Herdr for Android sets this up over SSH) when:
 
   - an agent becomes blocked (it asks something) or finishes, and when that is over again;
-  - a board task starts waiting for you (ready to approve, review failed, plan ready, pick one,
-    asks you, stopped, went wrong), and when it no longer does;
-  - for a phone that asked for Live Updates: which agents and board tasks are running, with their
-    stage and progress, as that changes (a few times a minute at most);
+  - for a phone that asked for Live Updates: which agents are working, as that changes (a few times
+    a minute at most);
   - the machine runs low on RAM (under 10% available) or on a disk, naming what uses the most, and
     when it has room again. It also keeps the last hour of RAM and CPU readings for the app's chart.
-  - an AI quick command that the app started there ends (done, failed, or at its limit), with the
-    start of its answer;
   - an AI provider the machine uses passes 80% or 95% of a limit, or runs out (Claude Code's and
     Codex's 5-hour and weekly limits, an API key's limit, as herdr-usage reads them where the app put
-    it), and when the limit is reset; and when the board's fallback takes a task over from one agent
-    to another because of a limit ("codex took over from claude: out of allowance until 17:00");
-  - a task or an agent a phone watches ("tell me when API-3's checks pass") changes, for that phone.
+    it), and when the limit is reset;
+  - an agent a phone watches ("tell me when claude finishes") changes, for that phone.
 
 Each push says whether someone is at this machine: how long ago someone typed in a herdr client here
 (its terminal's last input, as `w` reads it, or the presence file being touched), and whether a
 desktop session here is unlocked. A phone can then keep quiet while you sit at the machine.
 
-It also keeps a journal of the last week: each time a board task is done, starts waiting for you,
-goes wrong, starts or is added, and each time an agent finishes or asks something. The app reads it
+It also keeps a journal of the last week: each time an agent finishes or asks something. The app reads it
 (`herdr-push journal`) for its brief of what happened while you weren't looking.
 
 A push goes to the phone's UnifiedPush address (a push app such as ntfy gives it), sealed with a key
@@ -70,7 +63,7 @@ import urllib.parse
 import urllib.request
 import zlib
 
-VERSION = "9"
+VERSION = "11"
 NAME = "herdr-push"
 
 HOME = os.path.expanduser("~")
@@ -86,21 +79,17 @@ LOG = os.path.join(STATE_DIR, NAME + ".log")
 PRESENT = os.path.join(STATE_DIR, "present")
 
 INTERVAL = float(os.environ.get("HERDR_PUSH_INTERVAL", "4"))
-BOARD_EVERY = int(os.environ.get("HERDR_PUSH_BOARD_EVERY", "3"))  # ticks between board reads
 # ntfy and most push servers take 4 KB; the sealed text stays under this.
 MAX_SEALED = 3800
 SCREEN_CHARS = 1600
 
-NEEDS_YOU_STAGES = ("pick", "stopped", "nosummary")
-
-# Live Updates: what is running goes out at once when something starts, stops or moves on a stage;
-# progress and the "doing now" line at most every LIVE_MINOR seconds; and again every LIVE_KEEP
+# Live Updates: what is working goes out at once when an agent starts or stops; its name and title
+# at most every LIVE_MINOR seconds; and again every LIVE_KEEP
 # seconds while anything runs, so the phone knows the machine still watches (it drops what it hasn't
 # heard about for a while). Push servers count each push (ntfy.sh: a few hundred a day).
 LIVE_MINOR = float(os.environ.get("HERDR_PUSH_LIVE_MINOR", "90"))
 LIVE_KEEP = float(os.environ.get("HERDR_PUSH_LIVE_KEEP", "1800"))
-LIVE_MAX = 10  # agents, and tasks, in one push
-QUEUED_STAGES = ("queued", "after")
+LIVE_MAX = 10  # agents in one push
 
 # Health: every HEALTH_EVERY seconds (0: never) a look at RAM, CPU and the disks. The rules are the
 # app's (core/…/health/HealthRules.kt): RAM is low under 10% available and fine again from 15%; a
@@ -115,19 +104,11 @@ DF = os.environ.get("HERDR_PUSH_DF")  # a file with `df -kPT`'s output, read ins
 SKIP_FS = {"tmpfs", "devtmpfs", "squashfs", "overlay", "efivarfs", "proc", "sysfs", "cgroup", "cgroup2", "devfs", "autofs",
            "ramfs", "nsfs", "fusectl", "debugfs", "tracefs", "securityfs", "pstore", "bpf", "configfs", "mqueue", "hugetlbfs",
            "binfmt_misc", "nullfs", "fdescfs", "rpc_pipefs", "fuse.portal", "fuse.gvfsd-fuse", "iso9660", "udf"}
-# The journal: what tasks and agents did, for the app's brief. Kept JOURNAL_DAYS, at most JOURNAL_MAX
+# The journal: what agents did, for the app's brief. Kept JOURNAL_DAYS, at most JOURNAL_MAX
 # entries per herdr session, in its own file (state.json is written every few seconds).
 JOURNAL = os.path.join(STATE_DIR, "journal.json")
 JOURNAL_DAYS = float(os.environ.get("HERDR_PUSH_JOURNAL_DAYS", "8"))
 JOURNAL_MAX = 600
-
-# Quick commands: each run the app starts has a folder here (core/…/quick/QuickCommands.kt); an AI
-# one (a prompt) that ends is told once, unless it ended over QUICK_FRESH seconds ago (the watcher
-# was stopped) or it was stopped from the app.
-QUICK_DIR = os.environ.get("HERDR_PUSH_QUICK") or os.path.join(
-    os.environ.get("XDG_STATE_HOME") or os.path.join(HOME, ".local", "state"), "herdr-android", "quick")
-QUICK_ENDED = ("done", "failed", "stopped", "limit")
-QUICK_FRESH = 3600
 
 # Usage: every USAGE_EVERY seconds (0: never) the providers' limits, from herdr-usage (host/herdr-usage,
 # which the app puts in ~/.local/share/herdr-usage). The marks are the app's (core/…/usage/UsageRules.kt):
@@ -136,10 +117,6 @@ QUICK_FRESH = 3600
 USAGE_EVERY = float(os.environ.get("HERDR_PUSH_USAGE_EVERY", "300"))
 USAGE_CLEAR = 70.0  # a rolling window's warning comes down under this (UsageRules.CLEAR)
 USAGE_SCRIPT = os.environ.get("HERDR_PUSH_USAGE") or os.path.join(HOME, ".local", "share", "herdr-usage", "herdr-usage")
-# A hand-over is told when the board gave this reason (its words: "out of allowance until 17:00"),
-# not when an agent ran out of room in its context, and only while it's news.
-LIMIT_WHY = re.compile(r"allowance|quota|rate.?limit|usage limit|credits?\b|balance|spend", re.I)
-TAKEOVER_FRESH = 1800
 
 SKIP_MOUNTS = ("/boot", "/dev", "/proc", "/sys", "/run", "/snap", "/var/lib/docker", "/var/snap", "/System/Volumes/",
                "/private/var/vm", "/Volumes/Recovery")
@@ -205,7 +182,7 @@ def subscribers():
     return [s for s in subs if isinstance(s, dict) and s.get("id") and s.get("endpoint") and s.get("key")]
 
 
-# ---- herdr and the board -------------------------------------------------------------------------
+# ---- herdr ---------------------------------------------------------------------------------------
 
 def find_herdr(sub):
     for c in (sub.get("herdr"), shutil.which("herdr"), os.path.join(HOME, ".local", "bin", "herdr")):
@@ -214,21 +191,12 @@ def find_herdr(sub):
     return None
 
 
-def find_board(sub):
-    for c in (sub.get("board"), os.path.join(HOME, ".herdr-projects", "data", "bin", "herdr-projects"),
-              shutil.which("herdr-projects"), os.path.join(HOME, ".local", "bin", "herdr-projects")):
-        if c and os.access(c, os.X_OK):
-            return c
-    return None
-
-
 class Source:
-    """One herdr session on this machine, with the board next to it: what a group of phones watch."""
+    """One herdr session on this machine: what a group of phones watch."""
 
-    def __init__(self, session, herdr, board):
+    def __init__(self, session, herdr):
         self.session = session or "default"
         self.herdr = herdr
-        self.board = board
         # herdr-core, read for the default session only (its agents belong to the machine, not a herdr session).
         self.core = None
 
@@ -272,42 +240,6 @@ class Source:
             log("can't read", pane, e)
             return None
         return trim_screen(text)
-
-    def tasks(self):
-        """`list --json` with each task's short key from the plain list, matched as the app does."""
-        tasks = json.loads(self.run([self.board, "list", "--json"], timeout=30) or "[]")
-        if not isinstance(tasks, list):
-            return []
-        try:
-            plain = self.run([self.board, "list"], timeout=30)
-        except Exception:  # noqa: BLE001
-            plain = ""
-        rows = [l.strip().split(" ")[0] for l in plain.splitlines() if l.strip()]
-        keyed = len(rows) == len(tasks)
-        out = []
-        for i, t in enumerate(tasks):
-            if not isinstance(t, dict) or not t.get("id"):
-                continue
-            key = ""
-            if keyed and "-" in rows[i] and rows[i].rsplit("-", 1)[1] == str(t["id"]).rsplit("/", 1)[-1]:
-                key = rows[i]
-            out.append((key, t))
-        return out
-
-
-    def review_rounds(self, task_id):
-        """How many times the board sends work back by itself for this task (`review.rounds`), or None."""
-        try:
-            out = self.run([self.board, "show", task_id], timeout=30)
-        except Exception as e:  # noqa: BLE001 - the chip then shows the round alone
-            log("can't read the settings of", task_id, e)
-            return None
-        for line in out.splitlines():
-            parts = line.split()
-            if len(parts) >= 2 and parts[0] == "review.rounds" and parts[1].isdigit():
-                return int(parts[1])
-        return None
-
 
 # ---- herdr-core (the Herdr desktop app's runtime) -------------------------------------------------
 
@@ -397,6 +329,15 @@ def hc_agent_name(t):
     return fg if fg in HC_KNOWN else None
 
 
+def hc_task(t):
+    """The Shepherdr 3 task a terminal's agent works on, as people say it (`HERD-8`), or None: its label holds the
+    task list's key and number (`data-jpl-Work-app#8`), the ref's letters come from the name herdr-task gives its
+    worker (`herd-8-dark-mode`), as the app reads it (core/hc/HcView.kt shepherdrTask)."""
+    n = ((t.get("labels") or {}).get("herdr.task") or "").rpartition("#")[2]
+    m = re.match(r"^([A-Za-z][A-Za-z0-9]*)-(\d+)(?:-|$)", t.get("name") or "")
+    return m.group(1).upper() + "-" + n if n.isdigit() and m and m.group(2) == n else None
+
+
 def hc_snapshot(terminals):
     """Live terminals as herdr's snapshot has agents: pane ids `hc:<address>`, the desktop app's spaces
     and tabs from its labels (`herdr.space`, `herdr.tab`, `where`), the rest in "Other terminals"."""
@@ -442,6 +383,10 @@ def hc_snapshot(terminals):
              "state_change_seq": t.get("status_ms") or t.get("created_ms") or 0}
         if t.get("turn"):
             a["completion_seq"] = t["turn"]
+        # A task's agent: the phone has its task's own alert from Shepherdr ("HERD-8 · Needs you"), one per task.
+        task = hc_task(t)
+        if task:
+            a["shepherdr_task"] = task
         snap["agents"].append(a)
     return snap
 
@@ -495,64 +440,13 @@ def agent_events(source, snap, seen, first):
     return events
 
 
-def needs_you(task):
-    return not task.get("archivedAt") and (task.get("state") in ("blocked", "error") or task.get("stage") in NEEDS_YOU_STAGES)
-
-
-def task_sig(task):
-    review = task.get("review") or {}
-    return json.dumps([task.get("state"), task.get("stage"), task.get("kind"), task.get("reviewRound"),
-                       review.get("pass", review.get("meets")), bool(task.get("mergeFailed") or task.get("prFailure"))])
-
-
-def task_events(tasks, seen, first):
-    """Tasks that started waiting for you (or wait for something else now), and ones that stopped."""
-    events = []
-    now = {}
-    for key, t in tasks:
-        sig = task_sig(t) if needs_you(t) else ""
-        now[t["id"]] = sig
-        before = seen.get(t["id"], "")
-        if first or sig == before:
-            continue
-        if sig or before:
-            events.append({"type": "task", "key": key, "task": t})
-    for tid, before in seen.items():
-        if tid not in now and before:
-            events.append({"type": "task", "key": "", "task": {"id": tid, "state": "gone"}})
-    seen.clear()
-    seen.update(now)
-    return events
-
-
 def watched(group, field):
-    """What the phones of [group] watch ([field]: watch_tasks or watch_panes), each with the phones watching it."""
+    """What the phones of [group] watch ([field]: watch_panes), each with the phones watching it."""
     out = {}
     for s in group:
         for w in s.get(field) or []:
             out.setdefault(str(w), []).append(s["id"])
     return out
-
-
-def watch_task_events(tasks, seen, watching, told):
-    """Watched tasks whose state or stage changed, for the phones watching them. [told]: tasks every phone hears of anyway."""
-    events = []
-    now = {}
-    for key, t in tasks:
-        tid = t["id"]
-        if tid not in watching:
-            continue
-        sig = json.dumps([t.get("state"), t.get("stage"), t.get("kind"), bool(t.get("archivedAt"))])
-        now[tid] = sig
-        before = seen.get(tid)
-        if before is not None and sig != before and tid not in told:
-            events.append({"type": "task", "key": key, "task": t, "for": watching[tid]})
-    for tid, before in seen.items():
-        if tid not in now and tid in watching:
-            events.append({"type": "task", "key": "", "task": {"id": tid, "state": "gone"}, "for": watching[tid]})
-    seen.clear()
-    seen.update(now)
-    return events
 
 
 def watch_agent_events(snap, seen, watching, told):
@@ -579,23 +473,6 @@ def watch_agent_events(snap, seen, watching, told):
 
 # ---- what is running (Live Updates) --------------------------------------------------------------
 
-def running_task(task):
-    """A task whose agent works on it now: not waiting for you, not queued, not another machine's."""
-    return (task.get("state") == "working" and not needs_you(task) and not task.get("archivedAt")
-            and task.get("stage") not in QUEUED_STAGES and ":" not in str(task.get("id", "")))
-
-
-def stage_group(stage):
-    """The part of a task's run a board stage belongs to; a new part restarts the time shown."""
-    if stage in ("checking", "pushing"):
-        return "check"
-    if stage in ("reviewing", "reviewneeds"):
-        return "review"
-    if stage == "merging":
-        return "land"
-    return "work"
-
-
 def _short(text, n=160):
     text = str(text or "")
     return text if len(text) <= n else text[:n - 1] + "…"
@@ -613,7 +490,6 @@ def live_agents(snap, st, now):
         keep = ("pane_id", "workspace_id", "tab_id", "agent", "name", "title", "display_agent", "agent_status", "state_change_seq")
         agent = {k: (_short(a[k]) if isinstance(a[k], str) else a[k]) for k in keep if a.get(k) is not None}
         ws = next((w for w in snap.get("workspaces", []) if w.get("workspace_id") == a.get("workspace_id")), {})
-        # The workspace's label: the board names a task's workspace after it, which ties its agents (worker, reviewer) to it.
         out.append({"agent": agent, "where": _short(location(snap, a), 80), "workspace": _short(ws.get("label"), 80), "since": since[pane]})
     working = {e["agent"]["pane_id"] for e in out}
     for pane in list(since):
@@ -622,66 +498,25 @@ def live_agents(snap, st, now):
     return out[:LIVE_MAX]
 
 
-def live_tasks(source, tasks, st, now):
-    """The running tasks, each with when its current part of the run started and its most reviews."""
-    since = st.setdefault("live_tasks_since", {})
-    rounds = st.setdefault("review_rounds", {})
-    out = []
-    for key, t in tasks:
-        if not running_task(t):
-            continue
-        tid = t["id"]
-        group = stage_group(t.get("stage"))
-        if (since.get(tid) or [None])[0] != group:
-            since[tid] = [group, int(now)]
-        keep = ("id", "title", "state", "stage", "msg", "progress", "eta", "reviewRound", "app")
-        task = {k: (_short(t[k]) if isinstance(t[k], str) else t[k]) for k in keep if t.get(k) is not None}
-        item = {"key": key, "task": task, "since": since[tid][1]}
-        if group == "review":
-            known = rounds.get(tid)
-            if not known or now - known[1] > 3600:
-                known = rounds[tid] = [source.review_rounds(tid), int(now)]
-            if known[0] is not None:
-                # The first review, then one after each time the work went back.
-                item["reviews"] = known[0] + 1
-        out.append(item)
-    running = {i["task"]["id"] for i in out}
-    for tid in list(since):
-        if tid not in running:
-            del since[tid]
-    for tid in list(rounds):
-        if tid not in running:
-            del rounds[tid]
-    return out[:LIVE_MAX]
-
-
 def live_sigs(event):
-    """What starts, stops or changes stage (sent at once), and that with the rest (sent now and then)."""
+    """What starts or stops (sent at once), and that with the rest (sent now and then)."""
     major, minor = [], []
     for e in event.get("agents", []):
         a = e["agent"]
         major.append(["a", a.get("pane_id")])
         minor.append(["a", a.get("pane_id"), a.get("name"), a.get("title")])
-    for e in event.get("tasks", []):
-        t = e["task"]
-        major.append(["t", t.get("id"), stage_group(t.get("stage")), t.get("reviewRound"), e.get("reviews")])
-        minor.append(["t", t.get("id"), t.get("stage"), t.get("progress"), t.get("eta"), t.get("msg")])
     return json.dumps(major), json.dumps(minor)
 
 
-def live_event(st, agents, tasks, now, first):
-    """The live event to send now, or None: [agents] and [tasks] are None when not looked at this time."""
+def live_event(st, agents, now, first):
+    """The live event to send now, or None: [agents] is None when not looked at this time."""
     if agents is not None:
         st["live_agents"] = agents
-    if tasks is not None:
-        st["live_tasks"] = tasks
     event = {"type": "live", "agents": st.get("live_agents", [])}
-    if "live_tasks" in st:
-        event["tasks"] = st["live_tasks"]
     major, minor = live_sigs(event)
     sent = st.get("live_sent") or {}
     since = now - float(sent.get("at") or 0)
-    busy = bool(event["agents"] or event.get("tasks"))
+    busy = bool(event["agents"])
     due = (first or not sent or major != sent.get("major")
            or (minor != sent.get("minor") and since >= LIVE_MINOR)
            or (busy and since >= LIVE_KEEP))
@@ -910,134 +745,7 @@ def usage_look(st, now):
     return events
 
 
-def board_data(board):
-    """The board's data folder: its launcher lives in `<data>/bin`."""
-    if board and board.replace(os.sep, "/").endswith("/data/bin/herdr-projects"):
-        return os.path.dirname(os.path.dirname(board))
-    return os.path.join(HOME, ".herdr-projects", "data")
-
-
-def takeover_events(board, tasks, seen, first, now):
-    """Tasks the board's fallback handed to another agent because of a limit, since the last look."""
-    data = board_data(board)
-    events = []
-    keep = {}
-    for key, t in tasks:
-        tid = str(t.get("id", ""))
-        if not tid or ":" in tid or t.get("archivedAt"):
-            continue
-        path = os.path.join(data, "tasks", tid, "task.json")
-        try:
-            m = os.path.getmtime(path)
-        except OSError:
-            continue
-        rec = seen.get(tid) or {}
-        if rec.get("m") == m:
-            keep[tid] = rec
-            continue
-        doc = read_json(path, {})
-        hand = [h for h in (doc.get("handovers") or []) if isinstance(h, dict)] if isinstance(doc, dict) else []
-        newest = max([float(h.get("at") or 0) for h in hand] or [0])
-        if not first:
-            new = [h for h in hand if float(h.get("at") or 0) > float(rec.get("at") or 0)
-                   and now * 1000 - float(h.get("at") or 0) < TAKEOVER_FRESH * 1000 and LIMIT_WHY.search(str(h.get("why") or ""))]
-            if new:
-                h = new[-1]
-                events.append({"type": "takeover", "key": key, "task": {"id": tid, "title": _short(t.get("title") or "", 120)},
-                               "role": h.get("role") or "", "from": str(h.get("from") or ""), "to": str(h.get("to") or ""),
-                               "why": _short(str(h.get("why") or ""), 160), "at": int(float(h.get("at") or 0))})
-        keep[tid] = {"m": m, "at": max(newest, float(rec.get("at") or 0))}
-    seen.clear()
-    seen.update(keep)
-    return events
-
-
-# ---- quick commands ------------------------------------------------------------------------------
-
-def quick_look(st, now):
-    """The AI quick commands that ended since the last look, as events; the first look only learns."""
-    try:
-        ids = sorted(os.listdir(QUICK_DIR))[-200:]
-    except OSError:
-        ids = []
-    first = "seen" not in st
-    seen = st.get("seen") or {}
-    events, keep = [], {}
-    for rid in ids:
-        run = os.path.join(QUICK_DIR, rid)
-        status = read_json(os.path.join(run, "status.json"), None)
-        if not isinstance(status, dict) or status.get("state") not in QUICK_ENDED:
-            continue
-        state = status["state"]
-        keep[rid] = state
-        if first or seen.get(rid) == state or state == "stopped":
-            continue
-        if now - float(status.get("ended") or now) > QUICK_FRESH:
-            continue
-        meta = read_json(os.path.join(run, "meta.json"), {})
-        if not isinstance(meta, dict) or meta.get("kind") != "prompt":
-            continue
-        answer = ""
-        try:
-            with open(os.path.join(run, "answer.md"), encoding="utf-8", errors="replace") as f:
-                answer = f.read(600)
-        except OSError:
-            pass
-        events.append({"type": "quick", "id": rid, "name": _short(meta.get("name") or rid, 80), "state": state,
-                       "error": _short(status.get("error") or "", 200), "text": _short(answer.strip(), 300),
-                       "cwd": meta.get("cwd") or ""})
-    st["seen"] = keep
-    return events
-
-
 # ---- the journal (the app's brief) ---------------------------------------------------------------
-
-def task_phase(task):
-    """What the brief tells apart about a task: done, waiting for you (and on what), queued, working, to do."""
-    if task.get("archivedAt"):
-        return "archived"
-    if task.get("state") == "done":
-        return "done"
-    if needs_you(task):
-        return "needs " + task_sig(task)
-    if task.get("stage") in QUEUED_STAGES:
-        return "queued"
-    if task.get("state") == "working":
-        return "working"
-    return "todo"
-
-
-def small_task(task):
-    """A task as the journal keeps it: what the app needs to name it and tell how it stands."""
-    keep = ("id", "title", "state", "stage", "kind", "msg", "pr", "research", "reviewRound", "app",
-            "mergeFailed", "syncBlocked", "prFailure", "prState", "archivedAt")
-    out = {k: (_short(task[k], 240) if isinstance(task[k], str) else task[k]) for k in keep if task.get(k) is not None}
-    review = task.get("review")
-    if isinstance(review, dict):
-        out["review"] = {k: review[k] for k in ("pass", "meets") if k in review}
-    return out
-
-
-def journal_tasks(tasks, seen, first, now):
-    """A journal entry for each task whose phase changed (or that is new) since the last look. Updates [seen]."""
-    entries = []
-    now_seen = {}
-    for key, t in tasks:
-        tid = str(t.get("id", ""))
-        # Another machine's task: that machine keeps its own journal.
-        if not tid or ":" in tid:
-            continue
-        phase = task_phase(t)
-        now_seen[tid] = phase
-        before = seen.get(tid)
-        if first or phase == before:
-            continue
-        entries.append({"at": int(now), "type": "task", "key": key, "task": small_task(t),
-                        "was": before.split(" ")[0] if before else "new"})
-    seen.clear()
-    seen.update(now_seen)
-    return entries
-
 
 def journal_agents(snap, seen, first, now):
     """A journal entry for each agent that finished or started asking since the last look. Updates [seen]."""
@@ -1194,9 +902,8 @@ def messages(events, present=None):
     out, batch = [], []
     for ev in events:
         # One live event can't be split: what is running goes out shortest first, and the rest is left off.
-        while ev.get("type") == "live" and _too_big(host, [ev]) and (ev.get("agents") or ev.get("tasks")):
-            longer = "tasks" if len(ev.get("tasks") or []) >= len(ev.get("agents") or []) else "agents"
-            ev[longer] = ev[longer][:-1]
+        while ev.get("type") == "live" and _too_big(host, [ev]) and ev.get("agents"):
+            ev["agents"] = ev["agents"][:-1]
         if batch and _too_big(host, batch + [ev]):
             out.append(batch)
             batch = []
@@ -1228,8 +935,6 @@ def shows(event):
         return True  # a phone's watch: it may be what it waited for
     if event.get("type") == "agent":
         return event["agent"].get("agent_status") in ("blocked", "done")
-    if event.get("type") == "task":
-        return needs_you(event["task"])
     if event.get("type") == "live":
         return False
     if event.get("type") == "health":
@@ -1284,7 +989,7 @@ def send(sub, events, record, present=None):
 def sources(subs):
     out = {}
     for s in subs:
-        src = Source(s.get("session"), find_herdr(s), find_board(s))
+        src = Source(s.get("session"), find_herdr(s))
         out.setdefault(src.key, (src, []))[1].append(s)
     return out
 
@@ -1349,10 +1054,9 @@ def tick(state, n, dry_run=False, now=None):
     for key, (src, group) in srcs.items():
         st = state.setdefault("sessions", {}).setdefault(key, {})
         live = any(s.get("live") for s in group)
-        watch_tasks = watched(group, "watch_tasks")
         watch_panes = watched(group, "watch_panes")
         events = []
-        agents = tasks = None
+        agents = None
         # What the journal saw last; its first look only learns how things stand.
         jst = st.setdefault("journal", {})
         noted = []
@@ -1399,24 +1103,6 @@ def tick(state, n, dry_run=False, now=None):
                 if st.get("problem") != str(e):
                     log("herdr session %s:" % key, e)
                 st["problem"] = str(e)
-        if src.board and (n % BOARD_EVERY == 0 or "tasks" not in st):
-            try:
-                first = "tasks" not in st
-                listed = src.tasks()
-                told = task_events(listed, st.setdefault("tasks", {}), first)
-                events += told
-                events += watch_task_events(listed, st.setdefault("watch_tasks", {}), watch_tasks, {e["task"]["id"] for e in told})
-                try:
-                    learn = "handovers" not in st or first
-                    events += takeover_events(src.board, listed, st.setdefault("handovers", {}), learn, now)
-                except Exception as e:  # noqa: BLE001 - a nicety next to the tasks
-                    log("hand-overs:", e)
-                learn = "tasks" not in jst or first
-                noted += journal_tasks(listed, jst.setdefault("tasks", {}), learn, now)
-                if live:
-                    tasks = live_tasks(src, listed, st, now)
-            except Exception as e:  # noqa: BLE001
-                log("board:", e)
         try:
             if noted:
                 journal_add(key, noted, now)
@@ -1427,11 +1113,11 @@ def tick(state, n, dry_run=False, now=None):
         except Exception as e:  # noqa: BLE001 - the journal is a nicety next to the pushes
             log("journal:", e)
         if live:
-            ev = live_event(st, agents, tasks, now, first="live_sent" not in st)
+            ev = live_event(st, agents, now, first="live_sent" not in st)
             if ev is not None:
                 events.append(ev)
         else:
-            for k in ("live_sent", "live_agents", "live_tasks", "live_agents_since", "live_tasks_since", "review_rounds"):
+            for k in ("live_sent", "live_agents", "live_agents_since"):
                 st.pop(k, None)
         if not events:
             continue
@@ -1466,17 +1152,6 @@ def tick(state, n, dry_run=False, now=None):
                 record = state.setdefault("phones", {}).setdefault(sub["id"], {})
                 if not dry_run and not gone(record, sub):
                     send(sub, usage, record, here)
-        try:
-            quick = quick_look(state.setdefault("quick", {}), now)
-        except Exception as e:  # noqa: BLE001 - a nicety next to the agents
-            log("quick commands:", e)
-            quick = []
-        if quick:
-            sent["@quick"] = quick
-            for sub in subs:
-                record = state.setdefault("phones", {}).setdefault(sub["id"], {})
-                if not dry_run and not gone(record, sub):
-                    send(sub, quick, record, here)
     return sent
 
 
@@ -2246,7 +1921,7 @@ def cmd_subscribe():
     if len(key) != 32 or not sub.get("id") or not endpoint.startswith(("https://", "http://")):
         out({"ok": False, "msg": "a subscription needs an id, an http(s) endpoint and a 32-byte key"})
         return 2
-    keep = ("id", "name", "endpoint", "key", "session", "herdr", "board", "live", "watch_tasks", "watch_panes")
+    keep = ("id", "name", "endpoint", "key", "session", "herdr", "live", "watch_panes")
     entry = {k: sub[k] for k in keep if sub.get(k)}
     entry["since"] = time.time()
     subs = [s for s in subscribers() if s["id"] != entry["id"]] + [entry]
@@ -2461,7 +2136,7 @@ def cmd_journal(session, since):
 
 
 SYSTEMD = """[Unit]
-Description=herdr-push: tells your phone when a herdr agent or board task needs you
+Description=herdr-push: tells your phone when a herdr agent needs you
 After=network-online.target
 
 [Service]

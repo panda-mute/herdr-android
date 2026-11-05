@@ -1,5 +1,7 @@
 package com.makefunstuff.herdr.ui.agents
 
+import androidx.compose.ui.graphics.RectangleShape
+
 import com.makefunstuff.herdr.ui.theme.Mono
 import com.makefunstuff.herdr.core.chat.VoiceNote
 import com.makefunstuff.herdr.core.chat.VoiceNotes
@@ -25,7 +27,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -262,7 +263,7 @@ private fun ThoughtHead(row: ChatRow.Thought, onToggle: () -> Unit) {
         if (row.live) com.makefunstuff.herdr.core.chat.Thinking.tail(text, 3) else com.makefunstuff.herdr.core.chat.Thinking.preview(text)
     }
     Column(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(Radius.m))
+        Modifier.fillMaxWidth().clip(RectangleShape)
             .clickable(onClickLabel = if (row.open) "Fold the reasoning" else "Read the reasoning", onClick = onToggle)
             .padding(horizontal = Space.xs, vertical = 6.dp),
     ) {
@@ -407,7 +408,7 @@ private fun ToolGroup(tools: List<ChatItem.Tool>, lines: Map<String, ToolLine>) 
                 "▸ $hidden earlier actions",
                 style = MaterialTheme.typography.labelLarge,
                 color = Herdr.colors.muted,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp).clip(RoundedCornerShape(Radius.m)).clickable { showAll = true }
+                modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp).clip(RectangleShape).clickable { showAll = true }
                     .padding(horizontal = Space.xs, vertical = Space.s),
             )
         }
@@ -426,7 +427,7 @@ private fun ToolRow(tool: ChatItem.Tool, line: ToolLine?) {
     val diffs = line?.diffs ?: tool.diffs
     // An edit's diff is all it did; a command or a script that applies a patch keeps its words and output too.
     val onlyDiff = diffs.isNotEmpty() && EditCalls.isEdit(tool.name)
-    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(Radius.m)).clickable { open = !open }.padding(horizontal = Space.xs, vertical = 6.dp)) {
+    Column(Modifier.fillMaxWidth().clip(RectangleShape).clickable { open = !open }.padding(horizontal = Space.xs, vertical = 6.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             ToolStateIcon(tool.state)
             Spacer(Modifier.width(Space.s))
@@ -562,7 +563,7 @@ private fun TurnHead(head: ChatRow.Head, onToggle: () -> Unit) {
                     } else Modifier,
                 )
                 .heightIn(min = 40.dp)
-                .clip(RoundedCornerShape(Radius.m))
+                .clip(RectangleShape)
                 .clickable(onClickLabel = if (head.open) "Fold this turn's work" else "Show this turn's work", onClick = onToggle)
                 .padding(horizontal = Space.xs, vertical = Space.s),
         ) {

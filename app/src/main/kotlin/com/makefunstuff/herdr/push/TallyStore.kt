@@ -1,21 +1,19 @@
 package com.makefunstuff.herdr.push
 
 import com.makefunstuff.herdr.core.api.SessionSnapshot
-import com.makefunstuff.herdr.core.board.BoardTask
+import com.makefunstuff.herdr.core.board.WorkTask
 import com.makefunstuff.herdr.core.push.Counts
 import com.makefunstuff.herdr.core.push.PushEvent
 import com.makefunstuff.herdr.core.push.Tally
 import com.makefunstuff.herdr.core.push.TallyState
 import com.makefunstuff.herdr.data.HostManager
 import com.makefunstuff.herdr.data.MachineStore
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import java.io.File
 
@@ -40,7 +38,7 @@ class TallyStore(private val file: File, private val machines: MachineStore, pri
     fun agents(machineId: String, snapshot: SessionSnapshot) = change { Tally.withAgents(it, machineId, snapshot, now()) }
 
     /** The board's whole task list on [machineId]. */
-    fun tasks(machineId: String, tasks: List<BoardTask>) = change { Tally.withTasks(it, machineId, tasks, now()) }
+    fun tasks(machineId: String, tasks: List<WorkTask>) = change { Tally.withTasks(it, machineId, tasks, now()) }
 
     /** A push from [machineId]. */
     fun pushed(machineId: String, events: List<PushEvent>) = change { Tally.withPush(it, machineId, events, now()) }
@@ -59,12 +57,8 @@ class TallyStore(private val file: File, private val machines: MachineStore, pri
     @Synchronized
     fun agentWaiting(): Boolean = Tally.agentWaiting(state, ids(), now())
 
-    /**
-     * While the app is on screen: what it sees of each machine's agents, and each board's tasks read
-     * now and then (every [BOARD_MS]), so the widget is right after the app was used. [onBoard] hears
-     * each board read.
-     */
-    fun start(scope: CoroutineScope, hosts: HostManager, onBoard: (String, List<BoardTask>) -> Unit = { _, _ -> }) {
+    /** While the app is on screen: what it sees of each machine's agents, so the widget is right after the app was used. */
+    fun start(scope: CoroutineScope, hosts: HostManager) {
         scope.launch {
             hosts.hosts.collect { states ->
                 if (!hosts.isForeground) return@collect
@@ -79,27 +73,8 @@ class TallyStore(private val file: File, private val machines: MachineStore, pri
             }
         }
         scope.launch {
-            val read = HashMap<String, Long>()
             while (true) {
                 if (hosts.isForeground) {
-                    for (s in hosts.hosts.value) {
-                        val id = s.machine.id
-                        // A Shepherdr 3 machine's herdr-projects launcher is an old one left on disk: its list isn't the board.
-                        if (!s.online || !s.hasBoard || s.onShepherdr || now() - (read[id] ?: 0) < BOARD_MS) continue
-                        read[id] = now()
-                        launch {
-                            try {
-                                val session = hosts.session(id) ?: return@launch
-                                val list = withTimeout(30_000) { session.awaitBoard().tasks() }
-                                tasks(id, list)
-                                onBoard(id, list)
-                            } catch (e: CancellationException) {
-                                if (e !is kotlinx.coroutines.TimeoutCancellationException) throw e
-                            } catch (_: Throwable) {
-                                // The board didn't answer: the next round, or the board screen, tells.
-                            }
-                        }
-                    }
                     // What works and wasn't confirmed stops counting; while closed, the widget's own half-hourly update sees to it.
                     recount()
                 }
@@ -135,7 +110,6 @@ class TallyStore(private val file: File, private val machines: MachineStore, pri
     }
 
     private companion object {
-        const val BOARD_MS = 5L * 60 * 1000
         const val SAVE_MS = 60_000L
     }
 }

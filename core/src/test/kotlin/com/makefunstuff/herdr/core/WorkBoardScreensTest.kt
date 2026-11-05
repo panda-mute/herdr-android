@@ -1,6 +1,5 @@
 package com.makefunstuff.herdr.core
 
-import com.makefunstuff.herdr.core.board.BoardStatus
 import com.makefunstuff.herdr.core.board.BoardTone
 import com.makefunstuff.herdr.core.board.WorkStatus
 import com.makefunstuff.herdr.core.board.WorkTask
@@ -18,7 +17,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
-/** What the Board and task screens add to the work board: close, a task through the coordinator, the colours, v1's row shape. */
+/** What the Board and task screens add to the work board: close, a task through the coordinator, the colours. */
 class WorkBoardScreensTest {
     /** Answers `POST /api/action` with [answer] and keeps each body sent. */
     private class Fake(private val answer: (String) -> String) : ShepherdrTransport {
@@ -62,27 +61,6 @@ class WorkBoardScreensTest {
             listOf(BoardTone.Red, BoardTone.Green, BoardTone.Blue, BoardTone.Amber, BoardTone.Pink, BoardTone.Grey, BoardTone.Teal),
             WorkStatus.entries.map { it.tone },
         )
-        // The same colour as v1's nearest status, so both boards look alike.
-        assertEquals(BoardStatus.Approval.tone, WorkStatus.Ready.tone)
-        assertEquals(BoardStatus.Working.tone, WorkStatus.Work.tone)
-        assertEquals(BoardStatus.Done.tone, WorkStatus.Done.tone)
-    }
-
-    @Test
-    fun aV2TaskInV1sRowShape() {
-        fun row(s: WorkStatus) = WorkTasks.row(ready.copy(status = s))
-        assertEquals(BoardStatus.Approval, row(WorkStatus.Ready).status)
-        assertEquals(BoardStatus.Asks, row(WorkStatus.Need).status)
-        assertEquals(BoardStatus.Working, row(WorkStatus.Work).status)
-        assertEquals(BoardStatus.Working, row(WorkStatus.Merging).status)
-        assertEquals(BoardStatus.Queued, row(WorkStatus.Queued).status)
-        assertEquals(BoardStatus.Todo, row(WorkStatus.Todo).status)
-        assertEquals(BoardStatus.Done, row(WorkStatus.Done).status)
-        assertTrue(row(WorkStatus.Ready).needsYou)
-        val r = row(WorkStatus.Ready)
-        assertEquals("HA-2", r.name)
-        assertEquals("60", r.prNumber)
-        assertEquals("", r.machine)
     }
 
     @Test

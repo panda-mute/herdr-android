@@ -1,6 +1,5 @@
 package com.makefunstuff.herdr.core
 
-import com.makefunstuff.herdr.core.board.AgentChoices
 import com.makefunstuff.herdr.core.push.Alert
 import com.makefunstuff.herdr.core.push.AlertChange
 import com.makefunstuff.herdr.core.push.Alerts
@@ -218,35 +217,14 @@ class UsageTest {
     }
 
     @Test
-    fun theBoardsAgents() {
-        val c = AgentChoices.parse(
-            """
-            motd
-            * worker.agent              claude/claude-opus-5-5              you
-            * worker.fallback           pi/anthropic/claude-opus-5-5, pi/deepseek/deepseek-flash, pi/llama.cpp/qwen3.8-27b:medium  you
-            * reviewer.agent            claude/claude-opus-5-5              you
-              reviewer.fallback         none                                built in
-              plan.agent                none                                built in
-            """.trimIndent(),
-        )
-        assertEquals("claude/claude-opus-5-5", c.worker)
-        assertEquals(listOf("pi/anthropic/claude-opus-5-5", "pi/deepseek/deepseek-flash", "pi/llama.cpp/qwen3.8-27b:medium"), c.workerFallback)
-        assertEquals(emptyList(), c.reviewerFallback)
-        assertEquals(4, c.workers.size)
-        assertEquals(AgentChoices(), AgentChoices.parse("herdr-projects: unknown command"))
-    }
-
-    @Test
-    fun warningsAndTakeovers() {
+    fun warnings() {
         val msg = PushMessages.parse(
             """{"v":1,"host":"devbox","at":5,"events":[
               {"type":"usage","provider":"claude","name":"Claude Code","level":95,
                "limit":{"id":"session","name":"5-hour session","percent":96.0,"resets":${now + 3 * 3600 + 18 * 60},"window":18000}},
-              {"type":"usage","provider":"claude","name":"Claude Code","level":0,"limit":{"id":"session","name":"5-hour session","percent":3.0}},
-              {"type":"takeover","key":"AND-49","task":{"id":"herdr-android/49","title":"Usage page"},"role":"worker",
-               "from":"claude/opus","to":"codex/gpt-6.1-sol","why":"out of allowance until 17:00","at":1792222000000}]}""",
+              {"type":"usage","provider":"claude","name":"Claude Code","level":0,"limit":{"id":"session","name":"5-hour session","percent":3.0}}]}""",
         )
-        val (warn, back, take) = assertNotNull(msg).events
+        val (warn, back) = assertNotNull(msg).events
         val w = assertIs<PushEvent.Usage>(warn)
         assertEquals(95, w.level)
         val alert = assertIs<AlertChange.Show>(Alerts.usage("m1", "devbox", w, now)).alert
@@ -262,13 +240,6 @@ class UsageTest {
         assertFalse(out.alert.sig == alert.sig)
         val near = Alerts.usage("m1", "devbox", w.copy(level = 80, limit = w.limit.copy(percent = 81.0)), now) as AlertChange.Show
         assertEquals("Claude Code at 81% of its 5-hour session limit", near.alert.title)
-
-        val t = assertIs<PushEvent.Takeover>(take)
-        val ta = assertIs<AlertChange.Show>(Alerts.of("m1", "devbox", t)).alert
-        assertEquals("AND-49: codex/gpt-6.1-sol took over from claude/opus", ta.title)
-        assertEquals("out of allowance until 17:00", ta.text)
-        assertEquals("herdr-android/49", ta.taskId)
-        assertEquals(Alert.Kind.Limits, ta.kind)
         assertEquals(Alert.Kind.Limits, alert.kind)
     }
 
@@ -415,7 +386,7 @@ class UsageTest {
     // ---- herdr-push's warnings -----------------------------------------------------------------------
 
     @Test
-    fun herdrPushWarnsAtEachMarkOnceAndTellsTakeovers() {
+    fun herdrPushWarnsAtEachMarkOnce() {
         assumeTrue(python(), "python3 isn't installed")
         val dir = Files.createTempDirectory("herdr-push-usage").toFile()
         val received = CopyOnWriteArrayList<String>()
@@ -429,14 +400,6 @@ class UsageTest {
         try {
             val fake = File(dir, "fake").apply { mkdirs() }
             val herdr = File(fake, "herdr").apply { writeText("#!/bin/sh\necho '{\"result\":{\"snapshot\":{\"agents\":[]}}}'\n"); setExecutable(true) }
-            // The board's launcher in its data folder, as the board installs it; one task at work.
-            val data = File(dir, "board/data")
-            val board = File(data, "bin/herdr-projects").apply {
-                parentFile.mkdirs()
-                writeText("#!/bin/sh\necho '[{\"id\":\"herdr-android/49\",\"title\":\"Usage page\",\"state\":\"working\",\"stage\":\"working\"}]'\n")
-                setExecutable(true)
-            }
-            val record = File(data, "tasks/herdr-android/49/task.json").apply { parentFile.mkdirs(); writeText("""{"handovers":[]}""") }
             // Claude's 5-hour session (its % and when it resets), and a rolling estimated window once there is one.
             val percent = File(fake, "percent").apply { writeText("50") }
             val resets = File(fake, "resets")
@@ -478,7 +441,7 @@ class UsageTest {
             }
             assertEquals(0, sh(HerdrPush.installCommand(), HerdrPush.script))
             val key = PushSeal.newKey()
-            val sub = HerdrPush.subscription(HerdrPush.subscriberId("phone1", "m1"), "Pixel", "http://127.0.0.1:${server.address.port}/up", key, "default", herdr.path, board.path)
+            val sub = HerdrPush.subscription(HerdrPush.subscriberId("phone1", "m1"), "Pixel", "http://127.0.0.1:${server.address.port}/up", key, "default", herdr.path)
             assertEquals(0, sh(HerdrPush.command("subscribe"), sub))
             fun once() { Thread.sleep(30); assertEquals(0, sh(HerdrPush.command("once"))) }
             fun events(i: Int) = assertNotNull(PushMessages.open(received[i], mapOf("m1" to key))).second.events
@@ -516,22 +479,6 @@ class UsageTest {
             rolling.writeText("60"); once()
             rolling.writeText("81"); once()
             assertEquals(listOf("week 80", "week 0", "week 80"), told().drop(before))
-            val pushes = received.size
-
-            // The board's fallback hands the task over because of a limit: told once. Running out of room isn't a limit.
-            val ms = System.currentTimeMillis()
-            record.writeText(
-                """{"handovers":[{"at":${ms - 1000},"role":"worker","from":"claude","to":"claude/opus","why":"out of allowance"},
-                   {"at":$ms,"role":"worker","from":"claude/opus","to":"codex/gpt-6.1-sol","why":"out of allowance until 17:00"}]}""",
-            )
-            once(); once()
-            assertEquals(pushes + 1, received.size)
-            val t = assertIs<PushEvent.Takeover>(events(pushes).single())
-            assertEquals(listOf("herdr-android/49", "claude/opus", "codex/gpt-6.1-sol", "out of allowance until 17:00"), listOf(t.taskId, t.from, t.to, t.why))
-            record.writeText("""{"handovers":[{"at":${ms + 5},"role":"worker","from":"codex","to":"pi","why":"it ran out of room (context or output limit)"}]}""")
-            record.setLastModified(System.currentTimeMillis() + 2000)
-            once()
-            assertEquals(pushes + 1, received.size)
         } finally {
             server.stop(0)
             dir.deleteRecursively()

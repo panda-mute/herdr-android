@@ -1,5 +1,0 @@
-@@herdr-facts task
-{"id": "llm-eval/3", "stage": "pick", "stat": "", "from": "origin/HEAD"}
-@@herdr-facts note
-Two attempts at the tokenizer fix finished. A keeps the old vocabulary and patches the merges; B retrains the merges on the new corpus.
-@@herdr-facts end

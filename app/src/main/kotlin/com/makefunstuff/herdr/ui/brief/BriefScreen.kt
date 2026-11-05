@@ -45,8 +45,7 @@ import com.makefunstuff.herdr.LocalPanes
 import com.makefunstuff.herdr.Routes
 import com.makefunstuff.herdr.brief.BriefWindow
 import com.makefunstuff.herdr.brief.Reading
-import com.makefunstuff.herdr.core.board.BoardStatus
-import com.makefunstuff.herdr.core.board.WorkTasks
+import com.makefunstuff.herdr.core.board.WorkStatus
 import com.makefunstuff.herdr.core.brief.Brief
 import com.makefunstuff.herdr.core.brief.BriefItem
 import com.makefunstuff.herdr.core.brief.BriefMachine
@@ -144,7 +143,6 @@ fun BriefScreen(nav: NavController) {
                         }
                     }
                 }
-                section("Went wrong", brief.failed)
                 section("Waits for you", brief.waiting)
                 section("Done", brief.done)
                 section("Your agents finished", brief.finished)
@@ -191,9 +189,8 @@ private fun Head(brief: Brief, zone: ZoneId, reading: Boolean, onRead: () -> Uni
 private fun BriefItem.color(): Color {
     val c = Herdr.colors
     return when (kind) {
-        BriefItem.Kind.Failed -> c.red
-        BriefItem.Kind.Waiting -> BoardStatus.entries.firstOrNull { it.name == board }?.let { c.tone(WorkTasks.status(it).tone) } ?: c.red
-        BriefItem.Kind.Merged, BriefItem.Kind.Report, BriefItem.Kind.Done, BriefItem.Kind.Finished -> c.done
+        BriefItem.Kind.Waiting -> WorkStatus.entries.firstOrNull { it.name == board }?.let { c.tone(it.tone) } ?: c.red
+        BriefItem.Kind.Merged, BriefItem.Kind.Done, BriefItem.Kind.Finished -> c.done
         BriefItem.Kind.Working -> c.working
     }
 }
@@ -206,7 +203,7 @@ private fun BriefItem.color(): Color {
 private fun ItemRow(i: BriefItem, brief: Brief, zone: ZoneId, showMachine: Boolean, reading: Boolean, onOpen: () -> Unit) {
     val c = Herdr.colors
     val color = i.color()
-    val needsYou = i.kind == BriefItem.Kind.Failed || i.kind == BriefItem.Kind.Waiting
+    val needsYou = i.kind == BriefItem.Kind.Waiting
     // A line that only says what the badge says ("Merged") is left out.
     val detail = remember(i.detail, i.status) { Markdown.plain(i.detail).takeUnless { it.equals(i.status, ignoreCase = true) }.orEmpty() }
     val time = when {
@@ -240,7 +237,7 @@ private fun ItemRow(i: BriefItem, brief: Brief, zone: ZoneId, showMachine: Boole
                     )
                     Spacer(Modifier.width(Space.s))
                     // A task's badge in the one word for its state, as on the boards.
-                    StatusBadge(BoardStatus.entries.firstOrNull { it.name == i.board }?.word ?: i.status, color)
+                    StatusBadge(WorkStatus.entries.firstOrNull { it.name == i.board }?.word ?: i.status, color)
                     Spacer(Modifier.weight(1f))
                     if (meta.isNotEmpty()) Text(
                         meta, style = MaterialTheme.typography.labelMedium, color = c.faint, maxLines = 1, overflow = TextOverflow.Ellipsis,

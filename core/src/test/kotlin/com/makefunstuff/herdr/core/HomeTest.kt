@@ -4,14 +4,13 @@ import com.makefunstuff.herdr.core.api.AgentInfo
 import com.makefunstuff.herdr.core.api.ApiCaller
 import com.makefunstuff.herdr.core.api.ApiConnection
 import com.makefunstuff.herdr.core.api.HerdrApi
-import com.makefunstuff.herdr.core.board.BoardAction
-import com.makefunstuff.herdr.core.board.BoardStatus
-import com.makefunstuff.herdr.core.board.BoardTask
-import com.makefunstuff.herdr.core.board.BoardTasks
+import com.makefunstuff.herdr.core.board.WorkOverview
+import com.makefunstuff.herdr.core.board.WorkSpace
+import com.makefunstuff.herdr.core.board.WorkStatus
+import com.makefunstuff.herdr.core.board.WorkTask
 import com.makefunstuff.herdr.core.chat.AgentInput
 import com.makefunstuff.herdr.core.chat.BlockedPrompt
 import com.makefunstuff.herdr.core.chat.ClassicAgentPort
-import com.makefunstuff.herdr.core.home.BoardGroup
 import com.makefunstuff.herdr.core.home.Home
 import com.makefunstuff.herdr.core.home.HomeAgent
 import com.makefunstuff.herdr.core.home.HomeBoard
@@ -31,73 +30,67 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class HomeTest {
-    private fun task(json: String, key: String = ""): BoardTask = BoardTasks.task(Json.parseToJsonElement(json).jsonObject, key)!!
+    private fun task(id: String, title: String, status: WorkStatus) = WorkTask(id = id, name = id, title = title, space = "s1", status = status)
 
-    private val approve = task("""{"id":"herdr-android/9","title":"Last answered","state":"blocked","stage":"approval","kind":"permission","review":{"pass":true}}""", "AND-9")
-    private val asks = task("""{"id":"api-server/3","title":"Speed up /jobs","state":"blocked","stage":"working","kind":"question"}""", "API-3")
-    private val failed = task("""{"id":"website/4","title":"Install page","state":"blocked","stage":"approval","kind":"permission","review":{"pass":false}}""", "WEB-4")
-    private val working = task("""{"id":"herdr-android/6","title":"Screenshots","state":"working","stage":"working","progress":3}""", "AND-6")
-    private val todo = task("""{"id":"herdr-android/10","title":"Haptics","state":"idle","stage":""}""", "AND-10")
-    private val done = task("""{"id":"herdr-android/2","title":"Native chat","state":"done","stage":"done"}""", "AND-2")
+    private val ready = task("HA-9", "Last answered", WorkStatus.Ready)
+    private val asks = task("HA-3", "Speed up /jobs", WorkStatus.Need)
+    private val working = task("HA-6", "Screenshots", WorkStatus.Work)
+    private val todo = task("HA-10", "Haptics", WorkStatus.Todo)
+    private val done = task("HA-2", "Native chat", WorkStatus.Done)
 
     private fun agent(
         pane: String, status: String, name: String = "claude", workspace: String = "src", seq: Long = 1, completion: Long? = null, machine: String = "devbox",
+        task: String? = null,
     ) = HomeAgent(
         machine, machine,
-        AgentInfo(name = name, agent = "claude", agentStatusRaw = status, workspaceId = pane.substringBefore(':'), tabId = "t", paneId = pane, stateChangeSeq = seq, completionSeq = completion),
+        AgentInfo(
+            name = name, agent = "claude", agentStatusRaw = status, workspaceId = pane.substringBefore(':'), tabId = "t", paneId = pane, stateChangeSeq = seq,
+            completionSeq = completion, shepherdrTask = task,
+        ),
         "$workspace › main",
     )
 
-    private fun board(vararg tasks: BoardTask, machine: String = "devbox") = HomeBoard(machine, machine, tasks.toList())
-
-    @Test
-    fun aTasksAgentIsItsWorkerBeforeItsReviewer() {
-        val reviewer = agent("w1:p2", "working", name = "sw-herdr-android-9-r")
-        val worker = agent("w1:p1", "idle", name = "sw-herdr-android-9")
-        assertEquals("w1:p1", Home.agentOf(listOf(reviewer, worker), approve)?.agent?.paneId)
-        assertEquals("w1:p2", Home.agentOf(listOf(reviewer, agent("w2:p1", "idle", name = "other")), approve)?.agent?.paneId)
-        assertEquals(null, Home.agentOf(listOf(agent("w2:p1", "idle", name = "other")), approve))
-    }
+    private fun board(vararg tasks: WorkTask, machine: String = "devbox", asks: Boolean = false) =
+        HomeBoard(machine, machine, WorkOverview(listOf(WorkSpace("s1", "herdr-android", asks = asks)), tasks.toList()))
 
     @Test
     fun anAgentAndItsTaskShowOnce() {
         val home = Home.of(
             listOf(
-                agent("w2:p1", "blocked", name = "sw-api-server-3", seq = 5),
-                agent("w1:p1", "idle", name = "sw-herdr-android-9"),
-                agent("w4:p1", "working", name = "sw-herdr-android-6"),
+                agent("w2:p1", "blocked", seq = 5, task = "HA-3"),
+                agent("w1:p1", "idle", task = "HA-9"),
+                agent("w4:p1", "working", task = "HA-6"),
             ),
-            listOf(board(approve, asks, failed, working, todo, done)),
+            listOf(board(ready, asks, working, todo, done)),
         )
-        // The blocked agent stands for its asking task; the approval carries its (idle) agent, which isn't listed again.
-        assertEquals(listOf("agent/devbox/w2:p1", "task/devbox/herdr-android/9", "task/devbox/website/4"), home.needsYou.map { it.key })
+        // The blocked agent stands for its asking task; the ready one carries its (idle) agent, which isn't listed again.
+        assertEquals(listOf("agent/devbox/w2:p1", "task/devbox/HA-9"), home.needsYou.map { it.key })
         val question = assertIs<Waiting.Question>(home.needsYou[0])
-        assertEquals("API-3", question.task?.name)
+        assertEquals("HA-3", question.task?.name)
         assertEquals("w1:p1", assertIs<Waiting.Task>(home.needsYou[1]).agent?.agent?.paneId)
-        assertNull(assertIs<Waiting.Task>(home.needsYou[2]).agent)
         assertTrue(home.idle.isEmpty())
-        // A working agent keeps its task, for its key and progress.
-        assertEquals("AND-6", home.working.single().task?.name)
+        // A working agent keeps its task, for its name and progress.
+        assertEquals("HA-6", home.working.single().task?.name)
     }
 
     @Test
     fun aTasksWorkspaceTiesItsAgentToIt() {
-        val home = Home.of(listOf(agent("w1:p1", "blocked", name = "claude", workspace = "API-3 Speed up /jobs")), listOf(board(asks)))
-        assertEquals("API-3", home.needsYou.single().task?.name)
+        val home = Home.of(listOf(agent("w1:p1", "blocked", name = "claude", workspace = "HA-3 Speed up /jobs")), listOf(board(asks)))
+        assertEquals("HA-3", home.needsYou.single().task?.name)
+        // Another task's id at the start of a longer word isn't this one.
+        assertNull(Home.taskOf(agent("w1:p1", "blocked", workspace = "HA-30 Other"), listOf(asks)))
     }
 
     @Test
-    fun waitingTasksComeInTheBoardsOrder() {
-        val home = Home.of(emptyList(), listOf(board(asks, failed, approve)))
-        assertEquals(listOf(BoardStatus.Approval, BoardStatus.ReviewFailed, BoardStatus.Asks), home.needsYou.map { it.task?.status })
+    fun readyTasksWaitFirst() {
+        val home = Home.of(emptyList(), listOf(board(asks, ready, working)))
+        assertEquals(listOf(WorkStatus.Ready, WorkStatus.Need), home.needsYou.map { it.task?.status })
     }
 
     @Test
-    fun anotherMachinesTaskWaitsOnce() {
-        val shown = task("""{"id":"vm:herdr-android/9","title":"Last answered","state":"blocked","stage":"approval","kind":"permission","review":{"pass":true}}""")
-        val home = Home.of(emptyList(), listOf(board(shown), board(approve, machine = "vm")))
-        assertEquals(listOf("task/vm/herdr-android/9"), home.needsYou.map { it.key })
-        assertEquals(1, BoardGroup.waiting(listOf(board(shown), board(approve, machine = "vm"))))
+    fun anAssistantThatAsksWaitsAfterTheTasks() {
+        val home = Home.of(emptyList(), listOf(board(ready, asks = true)))
+        assertEquals(listOf("task/devbox/HA-9", "asks/devbox/s1"), home.needsYou.map { it.key })
     }
 
     @Test
@@ -128,28 +121,6 @@ class HomeTest {
         val a = agent("w1:p1", "done", seq = 4, completion = null)
         assertEquals(4L, a.finish)
         assertFalse(Home.of(listOf(a), emptyList(), mapOf(a.key to 4L)).idle.single().new)
-    }
-
-    @Test
-    fun boardGroupsByMachine() {
-        val groups = BoardGroup.of(listOf(board(working, asks, todo, done, approve), board(failed, machine = "gpu")))
-        assertEquals(listOf("devbox", "gpu"), groups.map { it.machineId })
-        assertEquals(listOf("herdr-android/9", "api-server/3"), groups[0].needsYou.map { it.id })
-        assertEquals(listOf("herdr-android/6"), groups[0].working.map { it.id })
-        assertEquals(listOf("herdr-android/10"), groups[0].todo.map { it.id })
-        assertEquals(1, groups[0].done)
-        assertEquals(listOf("gpu"), BoardGroup.of(listOf(board(working), board(failed, machine = "gpu")), machine = "gpu").map { it.machineId })
-    }
-
-    @Test
-    fun aWaitingTaskOffersItsAnswer() {
-        assertEquals(BoardAction.Approve to "Approve and merge", Home.answer(approve))
-        assertEquals(BoardAction.Review to "Fix", Home.answer(failed))
-        assertEquals(BoardAction.Tell to "Reply", Home.answer(asks))
-        val mergeFailed = task("""{"id":"a/1","title":"x","state":"blocked","stage":"approval","kind":"permission","mergeFailed":true}""")
-        assertEquals(BoardAction.Fix to "Fix", Home.answer(mergeFailed))
-        assertNull(Home.answer(task("""{"id":"a/2","title":"x","state":"blocked","stage":"pick","kind":"permission"}""")))
-        assertNull(Home.answer(working))
     }
 
     @Test

@@ -1,5 +1,7 @@
 package com.makefunstuff.herdr.ui.settings
 
+import androidx.compose.ui.graphics.RectangleShape
+
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,7 +17,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -114,7 +115,7 @@ fun QuickRepliesScreen(nav: NavHostController) {
                                 modifier = Modifier.weight(1f).semantics { contentDescription = "Reply ${i + 1}" },
                             )
                             Box(
-                                Modifier.size(48.dp).clip(CircleShape)
+                                Modifier.size(48.dp).clip(RectangleShape)
                                     .clickable(role = Role.Button, onClick = { set(replies.replies.toMutableList().also { it.removeAt(i) }) })
                                     .semantics { contentDescription = "Remove “$r”" },
                                 contentAlignment = Alignment.Center,

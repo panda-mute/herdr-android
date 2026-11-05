@@ -1,5 +1,7 @@
 package com.makefunstuff.herdr.ui.activity
 
+import androidx.compose.ui.graphics.RectangleShape
+
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -26,7 +28,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -105,12 +106,10 @@ import java.util.Locale
 /**
  * What an agent did, as a timeline: its turns (what started each, how long it took) with every
  * step in them (messages, commands with their exit status and time, files read and edited, tests,
- * web lookups, tool calls, the plan), and the board's events between them (started, each review's
- * verdict, hand-overs, merged). Live while the agent works. For a board task ([taskId]) every
- * session its agents had; for an agent ([paneId]) its task's, when it works on one, else its own.
+ * web lookups, tool calls, the plan). Live while the agent works. The agent [paneId]'s own session.
  */
 @Composable
-fun ActivityScreen(nav: NavController, machineId: String, taskId: String?, taskName: String?, paneId: String?) {
+fun ActivityScreen(nav: NavController, machineId: String, paneId: String) {
     val container = LocalContainer.current
     val session = container.hosts.session(machineId)
     if (session == null) {
@@ -119,15 +118,13 @@ fun ActivityScreen(nav: NavController, machineId: String, taskId: String?, taskN
     }
     val scope = rememberCoroutineScope()
     val host by session.state.collectAsStateWithLifecycle()
-    val feed = remember(session, taskId, paneId) {
-        ActivityFeed(session, if (taskId != null) ActivityFeed.Target.Task(taskId) else ActivityFeed.Target.Agent(paneId.orEmpty()), scope)
-    }
+    val feed = remember(session, paneId) { ActivityFeed(session, ActivityFeed.Target.Agent(paneId), scope) }
     DisposableEffect(feed) {
         feed.start()
         onDispose { feed.close() }
     }
     val state by feed.state.collectAsStateWithLifecycle()
-    val agent = paneId?.let { p -> host.view?.agents?.firstOrNull { it.paneId == p } }
+    val agent = host.view?.agents?.firstOrNull { it.paneId == paneId }
     val zone = remember { container.briefWork.zone() }
     val view by container.code.view.collectAsStateWithLifecycle()
 
@@ -173,12 +170,7 @@ fun ActivityScreen(nav: NavController, machineId: String, taskId: String?, taskN
         if (atWork && atEnd && rows.isNotEmpty()) list.animateScrollToItem(rows.lastIndex)
     }
 
-    val title = when {
-        taskName != null -> taskName
-        state.taskId != null && agent != null -> agent.name?.takeIf { it.isNotBlank() } ?: agent.displayName
-        agent != null -> agent.name?.takeIf { it.isNotBlank() } ?: agent.displayName
-        else -> taskId ?: "Agent"
-    }
+    val title = agent?.let { it.name?.takeIf { n -> n.isNotBlank() } ?: it.displayName } ?: "Agent"
     BackHandler(enabled = diffOf != null) { diffOf = null }
     diffOf?.let { step ->
         DiffView(step, view) { diffOf = null }
@@ -358,7 +350,7 @@ private fun TurnHead(turn: Turn, open: Boolean, zone: ZoneId, showDay: Boolean, 
     var expanded by rememberSaveable(turn.id) { mutableStateOf(false) }
     Column(
         Modifier.fillMaxWidth().padding(top = Space.l, bottom = Space.xs)
-            .clip(RoundedCornerShape(Radius.l)).background(c.card).hairline(RoundedCornerShape(Radius.l), c.line)
+            .clip(RectangleShape).background(c.card).hairline(RectangleShape, c.line)
             .clickable(onClickLabel = if (open) "Fold this turn" else "Show this turn's steps", onClick = onToggle)
             .padding(horizontal = Space.m, vertical = Space.m)
             .semantics { heading() },
@@ -447,7 +439,7 @@ private fun StepRow(step: Step, zone: ZoneId, last: Boolean, open: Boolean, onCl
         StepState.Done -> if (step.kind == StepKind.Test) c.done else c.muted
     }
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(Radius.m)).clickable(onClickLabel = if (step.diff != null) "Show the diff" else "Show more", onClick = onClick)
+        Modifier.fillMaxWidth().clip(RectangleShape).clickable(onClickLabel = if (step.diff != null) "Show the diff" else "Show more", onClick = onClick)
             .drawBehind {
                 // The turn's rail, down the middle of the icons.
                 val x = 16.dp.toPx()
@@ -456,7 +448,7 @@ private fun StepRow(step: Step, zone: ZoneId, last: Boolean, open: Boolean, onCl
             .padding(vertical = 6.dp),
         verticalAlignment = Alignment.Top,
     ) {
-        Box(Modifier.padding(start = 6.dp).size(20.dp).background(Herdr.colors.ground, RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) {
+        Box(Modifier.padding(start = 6.dp).size(20.dp).background(Herdr.colors.ground, RectangleShape), contentAlignment = Alignment.Center) {
             if (step.state == StepState.Running) CircularProgressIndicator(Modifier.size(13.dp), strokeWidth = 1.5.dp, color = c.working)
             else Icon(icon(step), step.kind.label, tint = tint, modifier = Modifier.size(15.dp))
         }
@@ -600,7 +592,7 @@ private fun EventRow(step: Step, zone: ZoneId, open: Boolean, onClick: () -> Uni
     }
     val more = step.detail != null && step.kind != StepKind.Board || (step.detail != null && step.tool != "board" && step.tool != "you")
     Column(
-        Modifier.fillMaxWidth().padding(top = Space.m).clip(RoundedCornerShape(Radius.m))
+        Modifier.fillMaxWidth().padding(top = Space.m).clip(RectangleShape)
             .then(if (more) Modifier.clickable(onClickLabel = if (open) "Hide" else "Show more", onClick = onClick) else Modifier)
             .padding(vertical = Space.xs),
     ) {

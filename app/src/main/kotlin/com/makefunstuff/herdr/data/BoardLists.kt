@@ -1,8 +1,7 @@
 package com.makefunstuff.herdr.data
 
-import com.makefunstuff.herdr.core.board.BoardTask
 import com.makefunstuff.herdr.core.board.WorkOverview
-import com.makefunstuff.herdr.core.board.WorkTasks
+import com.makefunstuff.herdr.core.board.WorkTask
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -18,20 +17,21 @@ import kotlinx.serialization.json.Json
 import java.io.File
 
 /**
- * Every machine's work board as the app last read it, for the Agents screen's Needs you list and
- * the Board tab. Read here ([readAll]) while one of them is on screen, and told of every other
- * read of a whole list (a machine's board screen, the review cards, the widget's look now and then).
+ * Every machine's Shepherdr board as the app last read it, for the Agents screen's Needs you list and
+ * the Board tab. Read here ([readAll]) while one of them is on screen, and told of every other read
+ * of a whole board (a machine's board screen).
  */
 class BoardLists(
     private val hosts: HostManager,
-    private val onRead: (String, List<BoardTask>) -> Unit = { _, _ -> },
+    private val onRead: (String, List<WorkTask>) -> Unit = { _, _ -> },
+    /** Every board read or put, wherever in the app. */
+    private val onBoard: (String, WorkOverview) -> Unit = { _, _ -> },
     private val now: () -> Long = System::currentTimeMillis,
 ) {
-    /**
-     * One board's list; [problem] when the last read failed (the tasks are then the read before).
-     * On Shepherdr 3, [work] is the board as it sent it (its spaces) and [tasks] its tasks in v1's row shape.
-     */
-    data class Read(val tasks: List<BoardTask>, val problem: String? = null, val work: WorkOverview? = null)
+    /** One board as Shepherdr sent it ([work], null before one was read); [problem] when the last read failed (the board is then the read before). */
+    data class Read(val work: WorkOverview?, val problem: String? = null) {
+        val tasks: List<WorkTask> get() = work?.tasks.orEmpty()
+    }
 
     private val _lists = MutableStateFlow<Map<String, Read>>(emptyMap())
     /** When each board was last read, so two screens reading at once (a wide window's) don't read it twice. */
@@ -39,22 +39,17 @@ class BoardLists(
     /** By machine id; a machine never read isn't in it. */
     val lists: StateFlow<Map<String, Read>> = _lists.asStateFlow()
 
-    /** [machineId]'s whole list, read somewhere in the app. */
-    fun put(machineId: String, tasks: List<BoardTask>) {
-        readAt[machineId] = now()
-        _lists.update { it + (machineId to Read(tasks)) }
-    }
-
     /** [machineId]'s Shepherdr 3 board, read somewhere in the app. */
     fun put(machineId: String, work: WorkOverview) {
         readAt[machineId] = now()
-        _lists.update { it + (machineId to Read(work.tasks.map(WorkTasks::row), work = work)) }
+        _lists.update { it + (machineId to Read(work)) }
+        onBoard(machineId, work)
     }
 
     /** Reads every connected machine's board now, side by side; one read within [freshMs] is left as it is. */
     suspend fun readAll(freshMs: Long = 3_000) = coroutineScope {
         val t = now()
-        hosts.hosts.value.filter { it.online && it.hasWorkBoard && t - (readAt[it.machine.id] ?: 0L) >= freshMs }
+        hosts.hosts.value.filter { it.online && it.onShepherdr && t - (readAt[it.machine.id] ?: 0L) >= freshMs }
             .map { h -> async { read(h.machine.id) } }.awaitAll()
         Unit
     }
@@ -67,14 +62,9 @@ class BoardLists(
     private suspend fun read(machineId: String) {
         try {
             val session = hosts.session(machineId) ?: return
-            val tasks = if (session.state.value.onShepherdr) {
-                val work = withTimeout(30_000) { session.awaitWorkBoard().overview() }
-                put(machineId, work)
-                work.tasks.map(WorkTasks::row)
-            } else {
-                withTimeout(30_000) { session.awaitBoard().tasks() }.also { put(machineId, it) }
-            }
-            onRead(machineId, tasks)
+            val work = withTimeout(30_000) { session.awaitWorkBoard().overview() }
+            put(machineId, work)
+            onRead(machineId, work.tasks)
         } catch (e: CancellationException) {
             if (e !is kotlinx.coroutines.TimeoutCancellationException) throw e
             failed(machineId, "The board took too long to answer")
@@ -84,7 +74,7 @@ class BoardLists(
     }
 
     private fun failed(machineId: String, problem: String) {
-        _lists.update { it + (machineId to Read(it[machineId]?.tasks.orEmpty(), problem, it[machineId]?.work)) }
+        _lists.update { it + (machineId to Read(it[machineId]?.work, problem)) }
     }
 }
 

@@ -87,7 +87,7 @@ class PushReceiver : BroadcastReceiver() {
             }
             UnifiedPush.MESSAGE -> {
                 val bytes = intent.getByteArrayExtra("bytesMessage") ?: intent.getStringExtra("message")?.toByteArray()
-                if (bytes != null && store.state.value.on) container.alertWork.received(bytes.toString(Charsets.UTF_8))
+                if (bytes != null && store.state.value.on) container.alertWork.received(bytes)
             }
             UnifiedPush.FAILED -> {
                 UnifiedPush.renew(context)

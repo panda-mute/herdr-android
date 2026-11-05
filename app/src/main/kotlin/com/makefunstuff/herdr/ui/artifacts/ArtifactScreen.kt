@@ -1,5 +1,7 @@
 package com.makefunstuff.herdr.ui.artifacts
 
+import androidx.compose.ui.graphics.RectangleShape
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -224,7 +226,7 @@ fun ArtifactScreen(nav: NavController, machineId: String, artifactId: String, v:
                 }
                 fresh?.let { n ->
                     Surface(
-                        color = c.strong, contentColor = c.ground, shape = androidx.compose.foundation.shape.RoundedCornerShape(50),
+                        color = c.strong, contentColor = c.ground, shape = RectangleShape,
                         modifier = Modifier.align(Alignment.TopCenter).padding(top = Space.m),
                     ) {
                         Text("Updated to v$n", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(horizontal = Space.m, vertical = Space.xs))

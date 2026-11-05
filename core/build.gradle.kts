@@ -32,7 +32,7 @@ dependencies {
 }
 
 // The host-side watcher (host/herdr-push), the usage reader (host/herdr-usage), the logins reader
-// (host/herdr-logins) and the AI quick commands' worker (host/herdr-quick) ride along as resources: the app copies them to a machine.
+// (host/herdr-logins) and the app's builder (host/herdr-app-build) ride along as resources: the app copies them to a machine.
 sourceSets.main {
     resources.srcDir("../host/herdr-push")
     resources.include("herdr-push")
@@ -40,10 +40,7 @@ sourceSets.main {
 tasks.processResources {
     from("../host/herdr-usage") { include("herdr-usage") }
     from("../host/herdr-logins") { include("herdr-logins") }
-    from("../host/herdr-quick") {
-        include("herdr-quick.mjs", "package.json")
-        into("herdr-quick")
-    }
+    from("../host/herdr-app-build") { include("herdr-app-build") }
 }
 
 tasks.test {
@@ -54,8 +51,8 @@ tasks.test {
     systemProperty("herdrUsage", file("../host/herdr-usage/herdr-usage").absolutePath)
     // The logins tests run the logins reader itself with python3, against fake CLIs.
     systemProperty("herdrLogins", file("../host/herdr-logins/herdr-logins").absolutePath)
-    // The quick commands' tests run their shell scripts with sh.
-    systemProperty("herdrQuick", file("../host/herdr-quick/herdr-quick.mjs").absolutePath)
+    // The app builder's tests run it with python3, against a fake checkout, Gradle and herdr-secret.
+    systemProperty("herdrAppBuild", file("../host/herdr-app-build/herdr-app-build").absolutePath)
     // A failure says why in the build's own log (CI shows nothing else): its message and where.
     testLogging {
         events("failed", "skipped")

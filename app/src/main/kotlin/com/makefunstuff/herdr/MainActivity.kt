@@ -51,31 +51,26 @@ class MainActivity : FragmentActivity() {
     }
 
     /**
-     * A launcher shortcut: Needs you, Start work, the Coordinator ([Ask]) or a recent agent's chat. A tapped notification: its agent's chat, its task on the board (or its review card), its machine's health or usage, a quick command's run, or the brief. The tile,
+     * A launcher shortcut: Needs you, Start work, the Coordinator ([Ask]) or a recent agent's chat. A tapped notification: its agent's chat (a Shepherdr task's agent: its task), its machine's health or usage, a quick command's run, or the brief. The tile,
      * a widget or a share: [Ask]. A floating chat's "Open in the app" or its shortcut: that chat. False
      * when it opens nothing.
      */
     private fun open(intent: Intent?): Boolean {
         // A launcher shortcut: the launcher learns which ones are used.
         intent?.getStringExtra(OPEN_SHORTCUT)?.let { runCatching { androidx.core.content.pm.ShortcutManagerCompat.reportShortcutUsed(this, it) } }
-        if (intent?.getBooleanExtra(OPEN_NEEDS, false) == true) { Links.open(Routes.AGENTS); return true }
+        if (intent?.getBooleanExtra(OPEN_NEEDS, false) == true) { Links.open(Routes.TASKS); return true }
         if (intent?.getBooleanExtra(OPEN_START, false) == true) { Links.open(Routes.start()); return true }
         intent?.getStringExtra(OPEN_ASK)?.takeIf { it in ASKS }?.let { Links.open(Routes.ask(it)); return true }
         if (intent?.getBooleanExtra(OPEN_BRIEF, false) == true) { Links.open(Routes.BRIEF); return true }
         val machine = intent?.getStringExtra(OPEN_MACHINE)?.takeIf { it.isNotEmpty() } ?: return false
         val pane = intent.getStringExtra(OPEN_PANE).orEmpty()
         val task = intent.getStringExtra(OPEN_TASK).orEmpty()
-        val quick = intent.getStringExtra(OPEN_QUICK).orEmpty()
         when {
+            task.isNotEmpty() -> Links.open(Routes.board(machine, task, alone = true, accept = intent.getBooleanExtra(OPEN_ACCEPT, false)))
             intent.getBooleanExtra(OPEN_HEALTH, false) -> Links.open(Routes.health(machine))
             intent.getBooleanExtra(OPEN_USAGE, false) -> Links.open(Routes.usage(machine))
-            quick.isNotEmpty() -> Links.open(Routes.quickRuns(machine, quick))
             intent.getBooleanExtra(OPEN_COORDINATOR, false) -> Links.open(Routes.coordinator(machine))
             pane.isNotEmpty() -> Links.open(agentRoute(machine, pane))
-            // Finished work that waits for a yes: its review card, with the others after it. A Shepherdr 3
-            // task has none: it opens on its board as its agent's chat, Merge on it.
-            task.isNotEmpty() && intent.getBooleanExtra(OPEN_REVIEW, false) && !onShepherdr(machine, task) -> Links.open(Routes.review(machine, task))
-            task.isNotEmpty() -> Links.open(Routes.board(machine, task))
             else -> Links.open(Routes.SETTINGS)
         }
         return true
@@ -93,18 +88,14 @@ class MainActivity : FragmentActivity() {
             ?: Routes.agent(machine, pane)
     }
 
-    /** Whether [task] is a Shepherdr 3 task on [machine], as the app last read its board. */
-    private fun onShepherdr(machine: String, task: String): Boolean =
-        (application as HerdrApp).container.boards.lists.value[machine]?.work?.tasks?.any { it.id == task } == true
-
     companion object {
         const val OPEN_MACHINE = "open_machine"
         const val OPEN_PANE = "open_pane"
+        /** A Shepherdr 3 task's id, from its alert; with [OPEN_ACCEPT] its Accept card opens over it. */
         const val OPEN_TASK = "open_task"
-        const val OPEN_REVIEW = "open_review"
+        const val OPEN_ACCEPT = "open_accept"
         const val OPEN_HEALTH = "open_health"
         const val OPEN_USAGE = "open_usage"
-        const val OPEN_QUICK = "open_quick"
         const val OPEN_COORDINATOR = "open_coordinator"
         const val OPEN_ASK = "open_ask"
         const val OPEN_BRIEF = "open_brief"

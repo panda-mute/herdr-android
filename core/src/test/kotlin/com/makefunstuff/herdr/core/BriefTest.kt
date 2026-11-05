@@ -4,8 +4,8 @@ import com.makefunstuff.herdr.core.api.AgentInfo
 import com.makefunstuff.herdr.core.api.SessionSnapshot
 import com.makefunstuff.herdr.core.api.TabInfo
 import com.makefunstuff.herdr.core.api.WorkspaceInfo
-import com.makefunstuff.herdr.core.board.BoardTask
-import com.makefunstuff.herdr.core.board.BoardTasks
+import com.makefunstuff.herdr.core.board.WorkStatus
+import com.makefunstuff.herdr.core.board.WorkTask
 import com.makefunstuff.herdr.core.brief.Baseline
 import com.makefunstuff.herdr.core.brief.Brief
 import com.makefunstuff.herdr.core.brief.BriefItem
@@ -36,23 +36,22 @@ class BriefTest {
     /** 23:10 the night before: when the person last looked. */
     private val since = LocalDateTime.of(2026, 10, 17, 23, 10).toInstant(ZoneOffset.UTC).toEpochMilli()
 
-    private fun task(json: String, key: String = ""): BoardTask = assertNotNull(BoardTasks.task(Json.parseToJsonElement(json).jsonObject, key))
+    private fun task(id: String, title: String, status: WorkStatus, pr: String = "", line: String = "", progress: Int? = null) =
+        WorkTask(id = id, name = id, title = title, space = "s1", status = status, pr = pr, line = line, progress = progress)
 
-    private val merged = task("""{"id":"herdr-android/28","title":"Floating chat bubbles","state":"done","stage":"done","pr":"https://github.com/x/herdr-android/pull/26","msg":"Merged"}""", "AND-28")
-    private val report = task("""{"id":"herdr-android/36","title":"Research new UI ideas","state":"done","stage":"done","research":true}""", "AND-36")
-    private val approve = task("""{"id":"herdr-android/9","title":"Show when each machine last answered","state":"blocked","stage":"approval","kind":"permission","review":{"pass":true}}""", "AND-9")
-    private val reviewFailed = task("""{"id":"website/4","title":"Rewrite the install page","state":"blocked","stage":"approval","kind":"permission","review":{"pass":false}}""", "WEB-4")
-    private val oldError = task("""{"id":"api-server/2","title":"Retry the webhook","state":"error","stage":"working","msg":"git push failed"}""", "API-2")
-    private val working = task("""{"id":"herdr-android/30","title":"Brief","state":"working","stage":"working","progress":40,"msg":"Writing"}""", "AND-30")
-    private val queued = task("""{"id":"herdr-android/31","title":"Later","state":"idle","stage":"queued"}""", "AND-31")
-    private val remote = task("""{"id":"vm-str:elastic/3","title":"Another machine's","state":"blocked","stage":"approval","kind":"permission"}""")
+    private val merged = task("HA-28", "Floating chat bubbles", WorkStatus.Done, pr = "https://github.com/x/herdr-android/pull/26")
+    private val closed = task("HA-36", "Research new UI ideas", WorkStatus.Done)
+    private val ready = task("HA-9", "Show when each machine last answered", WorkStatus.Ready)
+    private val asks = task("HA-4", "Rewrite the install page", WorkStatus.Need, line = "Which hosting?")
+    private val working = task("HA-30", "Brief", WorkStatus.Work, line = "Writing", progress = 40)
+    private val queued = task("HA-31", "Later", WorkStatus.Queued)
 
     private fun agent(pane: String, status: String, name: String? = null, title: String? = null, seq: Long = 3, ws: String = "w1") = AgentInfo(
         name = name, agent = "claude", title = title, agentStatusRaw = status, workspaceId = ws, tabId = "$ws:t1", paneId = pane, stateChangeSeq = seq,
     )
 
     private fun snapshot(vararg agents: AgentInfo) = SessionSnapshot(
-        workspaces = listOf(WorkspaceInfo("w1", label = "api-server"), WorkspaceInfo("w2", label = "AND-30 Brief"), WorkspaceInfo("w3", label = "herdr")),
+        workspaces = listOf(WorkspaceInfo("w1", label = "api-server"), WorkspaceInfo("w2", label = "HA-30 Brief"), WorkspaceInfo("w3", label = "herdr")),
         tabs = listOf(TabInfo("w1:t1", "w1", label = "main"), TabInfo("w2:t1", "w2", label = "main"), TabInfo("w3:t1", "w3", label = "main")),
         agents = agents.toList(),
     )
@@ -66,58 +65,52 @@ class BriefTest {
         val skew = 90L
         val asker = agent("w1:p1", "blocked", title = "Speed up /jobs", seq = 9)
         val mine = agent("w3:p1", "done", title = "Tidy the notes", seq = 4, ws = "w3")
-        // The task's own worker (its workspace is named after it) and the Coordinator: not listed as agents.
-        val worker = agent("w2:p1", "working", name = "sw-herdr-android-30", title = "Brief", ws = "w2")
-        val coordinator = agent("w3:p2", "done", name = "sw-coordinator", ws = "w3")
+        // The task's own agent (its workspace is named after it): not listed as an agent.
+        val worker = agent("w2:p1", "working", name = "claude", title = "Brief", ws = "w2")
         val journal = Journal(
             now = now / 1000 - skew,
             from = at(20, 0, skew),
             upto = now / 1000 - skew - 5,
             entries = listOf(
-                // Before the window: not news.
-                JournalEntry.Task(at(22, 0, skew), approve.copy(state = "working", stage = "working", kind = ""), "todo"),
-                JournalEntry.Task(at(23, 30, skew), approve, "working"),
-                JournalEntry.Task(at(1, 10, skew), merged, "needs"),
-                JournalEntry.Task(at(2, 14, skew), reviewFailed, "working"),
-                JournalEntry.Task(at(3, 0, skew), working, "new"),
-                JournalEntry.Task(at(4, 0, skew), report, "working"),
                 JournalEntry.Agent(at(5, 0, skew), mine, "herdr › main", "herdr"),
-                JournalEntry.Agent(at(5, 1, skew), coordinator, "herdr › main", "herdr"),
-                JournalEntry.Agent(at(5, 2, skew), worker.copy(agentStatusRaw = "done"), "AND-30 Brief › main", "AND-30 Brief"),
+                JournalEntry.Agent(at(5, 2, skew), worker.copy(agentStatusRaw = "done"), "HA-30 Brief › main", "HA-30 Brief"),
                 JournalEntry.Agent(at(6, 0, skew), asker, "api-server › main", "api-server"),
             ),
         )
+        // What the app showed last: the tasks as they stood then.
+        val base = Baseline(
+            tasks = mapOf(ready.id to "Work", asks.id to "Need", working.id to "Queued", merged.id to "Merging", closed.id to "Done"),
+            tasksAt = since - 60_000,
+        )
         val look = MachineLook(
             id = "devbox", label = "devbox",
-            tasks = listOf(approve, reviewFailed, oldError, working, queued, merged, report, remote),
-            snapshot = snapshot(asker, mine, worker, coordinator),
+            tasks = listOf(ready, asks, working, queued, merged, closed),
+            snapshot = snapshot(asker, mine, worker),
             questions = mapOf("w1:p1" to "May the migration lock the jobs table?"),
             journal = journal,
+            baseline = base,
         )
         val b = Briefs.build(listOf(look), since, now)
         assertEquals(BriefMachine.Coverage.Journal, b.machines.single().coverage)
 
-        // What went wrong: the new failure first, at its time on the phone's clock; the old one is still there, not new.
-        assertEquals(listOf("WEB-4", "API-2"), b.failed.map { it.name })
-        assertEquals(at(2, 14) * 1000, b.failed[0].at)
-        assertTrue(b.failed[0].new && !b.failed[1].new)
-        assertEquals("review failed", b.failed[0].status)
-
-        // What waits: the agent that asks (with its question), the task to approve; another machine's task is that machine's.
-        assertEquals(listOf("claude", "AND-9"), b.waiting.map { it.name })
+        // What waits, what is new first: the agent that asks (with its question), the task that is Ready since; the question was there before.
+        assertEquals(listOf("claude", "HA-9", "HA-4"), b.waiting.map { it.name })
         assertEquals("May the migration lock the jobs table?", b.waiting[0].detail)
-        assertEquals("ready to approve", b.waiting[1].status)
+        assertEquals(at(6, 0) * 1000, b.waiting[0].at)
+        assertEquals(listOf(true, false), b.waiting.drop(1).map { it.new })
+        assertEquals("Ready", b.waiting[1].status)
 
-        assertEquals(listOf(BriefItem.Kind.Report, BriefItem.Kind.Merged), b.done.map { it.kind })
+        // Done since: merged with its pull request; one done before isn't news.
+        assertEquals(listOf(BriefItem.Kind.Merged), b.done.map { it.kind })
         assertEquals(1, b.merged)
-        assertEquals(1, b.reports)
-        // Your own agent that finished; not the Coordinator's replies nor the task's worker.
+        // Your own agent that finished; not the task's.
         assertEquals(listOf("Tidy the notes"), b.finished.map { it.title })
-        assertEquals(listOf("AND-30"), b.working.map { it.name })
+        assertEquals(listOf("HA-30"), b.working.map { it.name })
+        assertEquals(40, b.working.single().progress)
         assertEquals(1, b.started)
         assertEquals(1, b.added)
 
-        assertEquals("2 failed · 2 wait for you · 1 merged · 1 report · 1 agent finished", BriefWords.headline(b))
+        assertEquals("3 wait for you · 1 merged · 1 agent finished", BriefWords.headline(b))
         assertEquals("Since 23:10 yesterday", BriefWords.since(b, zone))
         assertEquals("Morning brief", BriefWords.title(b.at, zone))
     }
@@ -131,20 +124,19 @@ class BriefTest {
                 BriefMachine("gpu", "gpu-box", BriefMachine.Coverage.Journal),
                 BriefMachine("mini", "mac-mini", BriefMachine.Coverage.Unreached, "No route to host"),
             ),
-            failed = listOf(BriefItem(BriefItem.Kind.Failed, "devbox", "devbox", "Rewrite the install page", "WEB-4", "review failed", taskId = "website/4")),
             waiting = listOf(
+                BriefItem(BriefItem.Kind.Waiting, "devbox", "devbox", "Rewrite the install page", "HA-4", "Needs you", taskId = "HA-4"),
                 BriefItem(BriefItem.Kind.Waiting, "devbox", "devbox", "Speed up /jobs", "claude", "asks you", "May it lock `jobs`?", paneId = "w1:p1"),
             ),
             done = (1..7).map { BriefItem(BriefItem.Kind.Merged, "gpu", "gpu-box", "Task $it", "EVAL-$it", "merged", taskId = "eval/$it") },
-            working = listOf(BriefItem(BriefItem.Kind.Working, "devbox", "devbox", "Brief", "AND-30", "working", taskId = "herdr-android/30")),
+            working = listOf(BriefItem(BriefItem.Kind.Working, "devbox", "devbox", "Brief", "HA-30", "Working", taskId = "HA-30")),
         )
         val lines = BriefWords.spoken(b, zone)
         assertEquals(
             listOf(
                 "Good morning. Here is what happened since 23:10 yesterday, on devbox and gpu-box.",
-                "One task went wrong:",
-                "Rewrite the install page: review failed.",
-                "One thing waits for you:",
+                "2 things wait for you:",
+                "Rewrite the install page: Needs you.",
                 "claude asks about Speed up /jobs: May it lock jobs?",
                 "7 tasks merged:",
                 "Task 1.", "Task 2.", "Task 3.", "Task 4.", "Task 5.",
@@ -156,12 +148,12 @@ class BriefTest {
             lines.map { it.text },
         )
         // Each item's sentence says which item it is, so the screen can show it while it is read.
-        assertEquals("task:devbox:website/4", lines[2].ref)
+        assertEquals("task:devbox:HA-4", lines[2].ref)
         assertNull(lines[0].ref)
 
         val note = BriefWords.lines(b)
         assertEquals(6, note.size)
-        assertEquals("Failed: Rewrite the install page (review failed)", note[0])
+        assertEquals("Waits: Rewrite the install page (Needs you)", note[0])
         assertEquals("Asks: claude · Speed up /jobs", note[1])
         assertEquals("and 4 more", note.last())
     }
@@ -203,7 +195,7 @@ class BriefTest {
     fun withoutAJournalItComparesWithWhatWasSeen() {
         val seenAt = since - 60_000
         val base = Baseline(
-            tasks = mapOf(approve.id to "Approval", working.id to "Queued", merged.id to "Reviewing", oldError.id to "Error"),
+            tasks = mapOf(ready.id to "Ready", working.id to "Queued", merged.id to "Merging", asks.id to "Need"),
             tasksAt = seenAt,
             agents = mapOf("w3:p1" to "done#3"),
             agentsAt = seenAt,
@@ -212,7 +204,7 @@ class BriefTest {
         val stillDone = agent("w1:p1", "done", title = "Old work", seq = 2)
         val look = MachineLook(
             "mini", "mac-mini",
-            tasks = listOf(approve, working, merged, oldError, reviewFailed),
+            tasks = listOf(ready, working, merged, asks, queued),
             snapshot = snapshot(again, stillDone.copy(paneId = "w1:p9")),
             baseline = base,
         )
@@ -220,11 +212,9 @@ class BriefTest {
         val m = b.machines.single()
         assertEquals(BriefMachine.Coverage.Compared, m.coverage)
         assertEquals(seenAt, m.upto)
-        assertEquals(listOf("AND-28"), b.done.map { it.name })
+        assertEquals(listOf("HA-28"), b.done.map { it.name })
         assertEquals(0L, b.done.single().at)
-        // The review that failed is new (it wasn't there), the old error isn't.
-        assertEquals(listOf("WEB-4" to true, "API-2" to false), b.failed.map { it.name to it.new })
-        assertEquals(listOf("AND-9" to false), b.waiting.map { it.name to it.new })
+        assertEquals(listOf("HA-9" to false, "HA-4" to false), b.waiting.map { it.name to it.new })
         // An agent that finished again since (a newer state); one never seen before counts as well.
         assertEquals(listOf("Tidy the notes", "Old work"), b.finished.map { it.title })
         assertEquals(1, b.started)
@@ -271,19 +261,16 @@ class BriefTest {
         val o = Json.parseToJsonElement(
             """{"ok":true,"version":"4","now":1760770000,"from":1760700000,"upto":1760769990,"running":true,"entries":[
               {"at":1760760000,"type":"agent","agent":{"pane_id":"w1:p1","workspace_id":"w1","tab_id":"t1","agent":"claude","agent_status":"done","state_change_seq":5},"where":"api › main","workspace":"api"},
-              {"at":1760750000,"type":"task","key":"AND-7","task":{"id":"herdr-android/7","title":"Board view","state":"done","stage":"done","pr":"https://x/pull/7"},"was":"needs"},
+              {"at":1760750000,"type":"task","key":"AND-7","task":{"id":"herdr-android/7","title":"Board view","state":"done"},"was":"needs"},
               {"at":1760750001,"type":"mystery"}
             ]}""",
         ).jsonObject
         val j = assertNotNull(Journals.parse(o))
         assertEquals(1760770000, j.now)
         assertEquals(1760700000, j.from)
-        assertEquals(2, j.entries.size)
-        // Oldest first.
-        val t = j.entries[0] as JournalEntry.Task
-        assertEquals("AND-7", t.task.name)
-        assertEquals("needs", t.was)
-        assertEquals("claude", (j.entries[1] as JournalEntry.Agent).agent.agent)
+        // A task entry from an older herdr-push, or anything else it doesn't know, is left out.
+        assertEquals(1, j.entries.size)
+        assertEquals("claude", (j.entries[0] as JournalEntry.Agent).agent.agent)
         // An older herdr-push answers with its help text, not a journal.
         assertNull(Journals.parse(Json.parseToJsonElement("""{"ok":true,"msg":"subscribed"}""").jsonObject))
     }

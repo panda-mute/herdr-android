@@ -1,5 +1,7 @@
 package com.makefunstuff.herdr.ui.terminal
 
+import androidx.compose.ui.graphics.RectangleShape
+
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -14,7 +16,6 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -151,7 +152,7 @@ private fun OwnShortcut(onAdd: (BarKey) -> Unit) {
 private fun KeyChip(label: String) {
     Box(
         Modifier.widthIn(min = 44.dp).heightIn(min = 32.dp)
-            .border(1.dp, Herdr.colors.line, RoundedCornerShape(Radius.s))
+            .border(1.dp, Herdr.colors.line, RectangleShape)
             .padding(horizontal = 8.dp),
         contentAlignment = Alignment.Center,
     ) {

@@ -62,7 +62,6 @@ import com.makefunstuff.herdr.core.health.HealthReport
 import com.makefunstuff.herdr.core.health.HealthRules
 import com.makefunstuff.herdr.core.health.HealthSample
 import com.makefunstuff.herdr.core.health.LabeledProc
-import com.makefunstuff.herdr.core.health.Leftover
 import com.makefunstuff.herdr.core.health.ProcKind
 import com.makefunstuff.herdr.core.health.Sizes
 import com.makefunstuff.herdr.core.push.Alerts
@@ -98,7 +97,6 @@ import com.makefunstuff.herdr.ui.design.StatusBadge
 import com.makefunstuff.herdr.ui.theme.CodeStyle
 import com.makefunstuff.herdr.ui.theme.Herdr
 import com.makefunstuff.herdr.ui.theme.Space
-import com.makefunstuff.herdr.ui.worktrees.shortPath
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -110,14 +108,12 @@ private const val EVERY_MS = 5_000L
 /** What a confirmation is about. */
 private sealed interface Confirm {
     data class Stop(val procs: List<LabeledProc>, val title: String, val what: String) : Confirm
-    data object Leftovers : Confirm
     data object Gradle : Confirm
-    data class Worktree(val leftover: Leftover) : Confirm
 }
 
 /**
  * A machine's health: RAM, swap, CPU and disks now and over the last hour, the biggest processes with
- * whose they are, and the leftovers of finished tasks to clean up.
+ * whose they are.
  */
 @Composable
 fun HealthScreen(nav: NavController, machineId: String) {
@@ -135,7 +131,6 @@ fun HealthScreen(nav: NavController, machineId: String) {
     var byCpu by rememberSaveable { mutableStateOf(false) }
     var confirm by remember { mutableStateOf<Confirm?>(null) }
     var openProc by remember { mutableStateOf<LabeledProc?>(null) }
-    var openLeftover by remember { mutableStateOf<Leftover?>(null) }
     val owner = LocalLifecycleOwner.current
 
     // A low-memory notification has done its job once its machine's health is on screen.
@@ -144,8 +139,7 @@ fun HealthScreen(nav: NavController, machineId: String) {
     LaunchedEffect(machineId, state.online) {
         if (!state.online) return@LaunchedEffect
         owner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
-            model.look(tasksToo = model.tasks == null)
-            if (model.worktrees == null) model.loadWorktrees()
+            model.look()
             while (true) {
                 delay(EVERY_MS)
                 model.look()
@@ -192,25 +186,6 @@ fun HealthScreen(nav: NavController, machineId: String) {
             item(key = "now") { NowCard(sample) }
             item(key = "hour") { HourCard(history[machineId].orEmpty(), sample.at) }
 
-            if (model.leftovers.isNotEmpty()) {
-                item(key = "left-head") { SectionHeading("Leftovers of finished tasks") }
-                item(key = "left") {
-                    LeftoversCard(
-                        model.leftovers,
-                        busy = model.busy,
-                        onStopAll = { confirm = Confirm.Leftovers },
-                        onOpen = { openLeftover = it },
-                    )
-                }
-            } else if (model.tasks != null) {
-                item(key = "left-none") {
-                    Text(
-                        "No leftovers: finished tasks have nothing running and no worktree on disk" +
-                            if (model.worktrees == null) " (worktrees still being counted)." else ".",
-                        style = MaterialTheme.typography.bodySmall, color = Herdr.colors.muted, modifier = Modifier.padding(top = Space.l),
-                    )
-                }
-            }
             val gradle = model.gradle
             if (gradle.isNotEmpty()) {
                 item(key = "gradle") {
@@ -259,21 +234,10 @@ fun HealthScreen(nav: NavController, machineId: String) {
             confirm = Confirm.Stop(listOf(live), live.name, live.name)
         })
     }
-    openLeftover?.let { l ->
-        val live = model.leftovers.firstOrNull { it.taskId == l.taskId } ?: l
-        LeftoverSheet(
-            live,
-            sample?.cores ?: 1,
-            onDismiss = { openLeftover = null },
-            onStop = { openLeftover = null; confirm = Confirm.Stop(live.procs, "the leftovers of ${live.taskName}", "the leftovers of ${live.taskName}") },
-            onRemove = { openLeftover = null; confirm = Confirm.Worktree(live) },
-            onProc = { openLeftover = null; openProc = it },
-        )
-    }
     confirm?.let { c -> ConfirmDialog(c, state.machine.label, model) { confirm = null } }
 }
 
-private fun CoroutineScope.launchLook(model: HealthModel) = launch { model.look(tasksToo = true) }
+private fun CoroutineScope.launchLook(model: HealthModel) = launch { model.look() }
 
 // ---- now ------------------------------------------------------------------------------------------
 
@@ -464,79 +428,6 @@ private fun Chart(points: List<HealthPoint>, now: Long, picked: HealthPoint?, on
     }
 }
 
-// ---- leftovers ------------------------------------------------------------------------------------
-
-@Composable
-private fun LeftoversCard(leftovers: List<Leftover>, busy: String?, onStopAll: () -> Unit, onOpen: (Leftover) -> Unit) {
-    val c = Herdr.colors
-    val procs = leftovers.flatMap { it.procs }
-    QuietCard {
-        leftovers.forEachIndexed { i, l ->
-            if (i > 0) RowDivider(inset = 68.dp)
-            val what = buildList {
-                if (l.procs.isNotEmpty()) add(
-                    (if (l.procs.size == 1) l.procs[0].name else "${l.procs.size} processes") + " · " + Sizes.kb(l.rssKb),
-                )
-                l.worktree?.let { w -> add("worktree" + (w.sizeKb?.let { " " + Sizes.kb(it) } ?: "") + if (w.dirty) " with changes" else "") }
-            }
-            ListRow(
-                "${l.taskName} · ${l.taskTitle}",
-                subtitle = what.joinToString(" · "),
-                leading = { IconTile(if (l.procs.isNotEmpty()) HerdrIcons.CircleStop else HerdrIcons.FolderGit2) },
-                trailing = { StatusBadge(l.status.label, c.idle) },
-                chevron = true,
-                onClickLabel = "Show its leftovers",
-                onClick = { onOpen(l) },
-            )
-        }
-        if (procs.isNotEmpty()) {
-            RowDivider(inset = 0.dp)
-            Row(Modifier.fillMaxWidth().padding(Space.m), verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    "${procs.size} ${if (procs.size == 1) "process" else "processes"} · ${Sizes.kb(procs.sumOf { it.proc.rssKb })}",
-                    style = MaterialTheme.typography.bodySmall, color = c.muted, modifier = Modifier.weight(1f),
-                )
-                DangerButton("Stop all leftovers", enabled = busy == null, onClick = onStopAll)
-            }
-        }
-    }
-}
-
-@Composable
-private fun LeftoverSheet(l: Leftover, cores: Int, onDismiss: () -> Unit, onStop: () -> Unit, onRemove: () -> Unit, onProc: (LabeledProc) -> Unit) {
-    HerdrSheet(onDismissRequest = onDismiss) {
-        SheetTitle("${l.taskName} · ${l.taskTitle}", "${l.status.label} · safe to clean up")
-        Column(Modifier.padding(horizontal = Space.l).navigationBarsPadding(), verticalArrangement = Arrangement.spacedBy(Space.s)) {
-            if (l.procs.isNotEmpty()) {
-                FieldLabel("Still running")
-                QuietCard {
-                    l.procs.forEachIndexed { i, p ->
-                        if (i > 0) RowDivider(inset = 68.dp)
-                        ProcRow(p, cores, false) { onProc(p) }
-                    }
-                }
-                DangerButton(if (l.procs.size == 1) "Stop it" else "Stop all ${l.procs.size}", Modifier.fillMaxWidth(), onClick = onStop)
-            }
-            l.worktree?.let { w ->
-                FieldLabel("Worktree on disk")
-                QuietCard(padded = true) {
-                    Text(w.path.shortPath(), style = MaterialTheme.typography.bodyMedium, color = Herdr.colors.text)
-                    Text(
-                        listOfNotNull(
-                            w.sizeKb?.let { Sizes.kb(it) },
-                            if (w.dirty) "has changes that aren't committed" else "no uncommitted changes",
-                            l.workspace?.let { "open as workspace ${it.label.ifBlank { it.workspaceId }}" },
-                        ).joinToString(" · "),
-                        style = MaterialTheme.typography.bodySmall, color = if (w.dirty) Herdr.colors.notice else Herdr.colors.muted,
-                    )
-                }
-                SecondaryButton("Remove worktree", Modifier.fillMaxWidth(), onClick = onRemove)
-            }
-            Spacer(Modifier.height(Space.s))
-        }
-    }
-}
-
 // ---- processes ------------------------------------------------------------------------------------
 
 private fun ProcKind.icon(): ImageVector = when (this) {
@@ -566,7 +457,6 @@ private fun ProcRow(p: LabeledProc, cores: Int, byCpu: Boolean, onClick: () -> U
             if (p.kind == ProcKind.Agent) Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) { AgentMark(p.name, size = 28.dp) }
             else IconTile(p.kind.icon())
         },
-        below = if (p.leftover) ({ Box(Modifier.padding(top = Space.xs)) { StatusBadge("leftover", c.notice) } }) else null,
         onClickLabel = "Show the process",
         onClick = onClick,
     )
@@ -582,7 +472,6 @@ private fun ProcSheet(p: LabeledProc, cores: Int, onDismiss: () -> Unit, onStop:
             InfoLine("CPU", "${cpuText(p.proc.cpu, cores)} of the machine")
             InfoLine("Running for", Sizes.age(p.proc.ageSeconds))
             InfoLine("Process id", p.proc.pid.toString(), mono = true)
-            p.owner.taskName.takeIf { it.isNotEmpty() }?.let { InfoLine("Task", "$it · ${p.owner.taskStatus?.label.orEmpty()}") }
             p.owner.agent.takeIf { it.isNotEmpty() }?.let { InfoLine("Agent", it) }
             p.owner.where.takeIf { it.isNotEmpty() }?.let { InfoLine("Pane", it) }
             p.proc.cwd.takeIf { it.isNotEmpty() }?.let { PathLine("Folder", it) }
@@ -592,7 +481,7 @@ private fun ProcSheet(p: LabeledProc, cores: Int, onDismiss: () -> Unit, onStop:
             Spacer(Modifier.height(Space.s))
             when {
                 !p.own -> Text("Another account's process: the app can stop only yours.", style = MaterialTheme.typography.bodySmall, color = c.muted)
-                p.kind == ProcKind.Herdr && !p.leftover -> Text(
+                p.kind == ProcKind.Herdr -> Text(
                     "This is herdr itself; stopping it here would cut the app off. Use Server and updates instead.",
                     style = MaterialTheme.typography.bodySmall, color = c.muted,
                 )
@@ -617,7 +506,6 @@ private fun PathLine(label: String, path: String) {
 @Composable
 private fun ConfirmDialog(c: Confirm, machine: String, model: HealthModel, onDone: () -> Unit) {
     val guard = com.makefunstuff.herdr.ui.common.LocalGuard.current
-    val leftovers = model.leftovers.flatMap { it.procs }
     val (title, body, yes) = when (c) {
         is Confirm.Stop -> Triple(
             "Stop ${c.title}?",
@@ -625,29 +513,12 @@ private fun ConfirmDialog(c: Confirm, machine: String, model: HealthModel, onDon
                 "\n\nEach gets SIGTERM on $machine, and SIGKILL if it still runs after 5 seconds. Unsaved work in them is lost.",
             "Stop",
         )
-        Confirm.Leftovers -> Triple(
-            "Stop all leftovers?",
-            model.leftovers.filter { it.procs.isNotEmpty() }.joinToString("\n") { l ->
-                "${l.taskName}: " + l.procs.joinToString(", ") { it.name } + " · " + Sizes.kb(l.rssKb)
-            } + "\n\nThese belong to tasks that are done. ${leftovers.size} processes on $machine get SIGTERM, then SIGKILL after 5 seconds. Worktrees stay.",
-            "Stop ${leftovers.size}",
-        )
         Confirm.Gradle -> Triple(
             "Stop Gradle daemons?",
             model.gradle.joinToString("\n") { "${it.name} · ${Sizes.kb(it.proc.rssKb)} · ${it.ownerLine}" } +
                 "\n\nA build running in one of them fails; the next build starts a new daemon.",
             "Stop",
         )
-        is Confirm.Worktree -> {
-            val w = c.leftover.worktree
-            Triple(
-                "Remove ${w?.name}?",
-                "${w?.path?.shortPath()}\n\n" + (if (w?.dirty == true) "It has changes that aren't committed: removing it deletes them. " else "") +
-                    (c.leftover.workspace?.let { "Its workspace ${it.label.ifBlank { it.workspaceId }} closes too. " } ?: "") +
-                    "The branch stays in the repository.",
-                if (w?.dirty == true) "Remove with changes" else "Remove",
-            )
-        }
     }
     HerdrDialog(
         onDismissRequest = onDone,
@@ -658,12 +529,10 @@ private fun ConfirmDialog(c: Confirm, machine: String, model: HealthModel, onDon
             QuietButton(onClick = {
                 onDone()
                 // Then the fingerprint, when that is on: none of these can be taken back.
-                guard.run(if (c is Confirm.Worktree) Guarded.RemoveWorktree else Guarded.StopProcess, title) {
+                guard.run(Guarded.StopProcess, title) {
                     when (c) {
                         is Confirm.Stop -> model.stop(c.procs, c.what)
-                        Confirm.Leftovers -> model.stopLeftovers()
                         Confirm.Gradle -> model.stopGradle()
-                        is Confirm.Worktree -> model.removeWorktree(c.leftover)
                     }
                 }
             }, color = Herdr.colors.red) { Text(yes) }
@@ -680,3 +549,6 @@ private fun Busy(words: String) {
         Text(words, style = MaterialTheme.typography.bodySmall, color = c.muted, modifier = Modifier.padding(top = Space.xs))
     }
 }
+
+/** A home-relative path, shorter on a phone screen. */
+private fun String.shortPath(): String = replace(Regex("^/(home|Users)/[^/]+"), "~")

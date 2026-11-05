@@ -46,25 +46,22 @@ class AppContainer(app: Context) {
     )
     // At the demo's fixed time, on UTC, so "good until 13 Nov" reads the same every run.
     val logins = com.makefunstuff.herdr.data.LoginsStore(clock = { Demo.NOW }, zone = { java.time.ZoneOffset.UTC })
-    val quick = com.makefunstuff.herdr.data.QuickStore(java.io.File(app.filesDir, "quick.json"))
     val shares = Shares(java.io.File(app.filesDir, "shares.json"), java.io.File(app.filesDir, "shared"))
     val images = com.makefunstuff.herdr.data.ImageStore(
         java.io.File(app.filesDir, "images.json"), java.io.File(app.filesDir, "images"), java.io.File(app.filesDir, "sent-images"),
     )
     val push = PushStore(app)
-    // Snoozes at the demo's fixed time, on UTC, so "until 09:00" reads the same every run.
-    val triage = com.makefunstuff.herdr.data.TriageStore(java.io.File(app.filesDir, "triage.json"), now = { Demo.NOW }, zone = { java.time.ZoneOffset.UTC })
+    val triage = com.makefunstuff.herdr.data.TriageStore(java.io.File(app.filesDir, "triage.json"))
     val inbox = Inbox(java.io.File(app.filesDir, "alerts.json"), PreviewAlerts, muted = triage::mutes)
     val phone = PreviewPhone
     val pushHosts = PushHosts(scope, hosts, machines, push, phone)
     val quietWork = QuietWork(scope, push.state, phone, inbox, foreground = { hosts.isForeground })
-    val liveWork = LiveWork(scope, hosts, machines, push, PreviewLive, quietWork, muted = triage.state.map { it.muted })
+    val liveWork = LiveWork(scope, hosts, machines, push, PreviewLive, quietWork, muted = triage.muted(push.state, hosts.hosts))
     val tally = TallyStore(java.io.File(app.filesDir, "tally.json"), machines)
-    /** One-shot watches set from the long-press sheets. */
-    val watchWork = com.makefunstuff.herdr.push.WatchWork(push, inbox, quietWork)
-    val alertWork = AlertWork(hosts, machines, push, inbox, liveWork, quietWork, tally, quick, watchWork, usage)
+    val taskSpaces = com.makefunstuff.herdr.push.TaskSpaces(java.io.File(app.filesDir, "task-spaces.json"))
+    val alertWork = AlertWork(hosts, machines, push, inbox, liveWork, quietWork, tally, usage, taskSpaces)
     /** Every board's list as last read, and which finished agents the phone has shown: the Agents screen's and the Board tab's. */
-    val boards = com.makefunstuff.herdr.data.BoardLists(hosts, onRead = { id, tasks -> tally.tasks(id, tasks) })
+    val boards = com.makefunstuff.herdr.data.BoardLists(hosts, onRead = { id, tasks -> tally.tasks(id, tasks); briefWork.looked(id, tasks, null) }, onBoard = { id, o -> taskSpaces.put(id, o); inbox.looked(id, o) })
     val seen = com.makefunstuff.herdr.data.SeenStore(java.io.File(app.filesDir, "seen.json"))
     /** When each agent's chat was last on screen, for its "While you were away" card. */
     val looked = com.makefunstuff.herdr.data.LookedStore(java.io.File(app.filesDir, "looked.json"))
@@ -83,6 +80,8 @@ class AppContainer(app: Context) {
     val voiceCalls: com.makefunstuff.herdr.voice.VoiceCalls = preview.PreviewVoiceCalls(preview.PreviewVoiceCalls.next)
     /** The clock the screens read (a turn's "Working for 3m", the away card): the demo's fixed time. */
     val clock: () -> Long = { Demo.NOW }
+    /** The time zone the screens tell times in: UTC, as the demo's clock. */
+    val zone: () -> java.time.ZoneId = { java.time.ZoneOffset.UTC }
     val bubbles: Bubbles = PreviewBubbles
     val shortcuts: com.makefunstuff.herdr.share.Shortcuts = com.makefunstuff.herdr.share.NoShortcuts
     val starts = com.makefunstuff.herdr.data.StartStore(java.io.File(app.filesDir, "starts.json"))
@@ -93,14 +92,20 @@ class AppContainer(app: Context) {
         zone = { java.time.ZoneOffset.UTC }, clock = { Demo.NOW },
     )
 
+    /** Changing the app: its builder and update as the scene sets them (`appChange`), and an installer that stands still. */
+    val changes = com.makefunstuff.herdr.change.AppChanges(
+        scope, hosts, java.io.File(app.filesDir, "app-change.json"), java.io.File(app.filesDir, "updates"), preview.PreviewThisApp,
+        clock = { Demo.NOW },
+    )
+
     init {
         // The app is in front for the whole scene.
         hosts.setForeground(true)
         // What quiet hours mean now, before the first frame.
         quietWork.check()
         briefWork.start()
-        watchWork.start(scope, hosts, boards)
         usage.start(scope, hosts, machines)
+        changes.start()
     }
 
     /** Ends the scene: every machine session and the container's coroutines. */

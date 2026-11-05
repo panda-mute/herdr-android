@@ -15,7 +15,7 @@ A debug build is `com.makefunstuff.herdr.debug`, so it installs next to the rele
 
 ### The host side
 
-The app talks to [herdr](https://herdr.dev) over SSH, so you need a machine running herdr that your phone can reach by SSH: install herdr there and add the machine in the app ([Setting up a machine](README.md#setting-up-a-machine)). The host tools in `host/` (`herdr-push` for notifications, `herdr-usage` for the usage page, `herdr-logins` for the agent logins, `herdr-quick` for AI quick commands) are copied to a machine by the app when a feature needs them; each folder's README says how to run it by hand.
+The app talks to [herdr](https://herdr.dev) over SSH, so you need a machine running herdr that your phone can reach by SSH: install herdr there and add the machine in the app ([Setting up a machine](README.md#setting-up-a-machine)). The host tools in `host/` (`herdr-push` for notifications, `herdr-usage` for the usage page and `herdr-logins` for the agent logins) are copied to a machine by the app when a feature needs them; each folder's README says how to run it by hand.
 
 Without a machine of your own, [`docs/screenshots/demo-host`](docs/screenshots/demo-host) starts throwaway herdr hosts in containers with made-up projects, the ones the README's screenshots come from.
 

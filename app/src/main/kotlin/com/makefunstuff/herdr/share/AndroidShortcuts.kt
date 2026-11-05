@@ -36,7 +36,7 @@ class AndroidShortcuts(private val context: Context) : Shortcuts {
             fixedShortcut(Shortcuts.NEEDS_YOU, if (needYou > 0) "Needs you ($needYou)" else "Needs you", R.drawable.ic_needs_you, 0) {
                 putExtra(MainActivity.OPEN_NEEDS, true)
             },
-            fixedShortcut(Shortcuts.COORDINATOR, coordinator?.let { "Coordinator · $it" } ?: "Coordinator", R.drawable.ic_coordinator, 1) {
+            fixedShortcut(Shortcuts.COORDINATOR, coordinator?.let { "Assistant · $it" } ?: "Assistant", R.drawable.ic_coordinator, 1) {
                 putExtra(MainActivity.OPEN_ASK, Ask.COORDINATOR)
             },
             fixedShortcut(Shortcuts.START, "Start work", R.drawable.ic_start_work, 2) { putExtra(MainActivity.OPEN_START, true) },

@@ -52,6 +52,13 @@ sealed interface SpaceChatItem {
         val answered: String? = null,
         val accept: Boolean = false,
         val live: Boolean = false,
+        /**
+         * A news line's own parts, as 3.1 draws it ("AND-13 · is ready · Card stays put"): what happened and the
+         * words after it; [news] false for a 2.1 update card, which has neither.
+         */
+        val news: Boolean = false,
+        val what: String = "",
+        val detail: String = "",
     ) : SpaceChatItem
 
     /** A question card, with the words that came with it ([intro]); [answer] once answered. */
@@ -138,7 +145,8 @@ object SpaceChat {
             }
             val n = m.news
             if (n != null) {
-                out += SpaceChatItem.Update(m.id, n.ref.ifEmpty { n.task }, newsStatus(n.mark), listOf(n.what, n.text).filter { it.isNotBlank() }.joinToString(" · "), accept = n.accept, live = n.live)
+                out += SpaceChatItem.Update(m.id, n.ref.ifEmpty { n.task }, newsStatus(n.mark), listOf(n.what, n.text).filter { it.isNotBlank() }.joinToString(" · "), accept = n.accept, live = n.live,
+                    news = true, what = n.what, detail = n.text)
                 continue
             }
             val card = m.card

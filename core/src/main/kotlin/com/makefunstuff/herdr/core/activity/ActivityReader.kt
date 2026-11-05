@@ -121,18 +121,15 @@ class SessionsReader(private val sources: List<SessionSource>) {
     }
 }
 
-/** What [ActivityCommands.record] printed: the task's record, or null when the board has none for it. */
-object RecordReader {
-    fun parse(out: String): TaskRecord? {
-        val parts = HashMap<String, StringBuilder>()
-        var name: String? = null
-        for (line in out.split('\n')) {
-            if (line.startsWith(ActivityCommands.MARK + " ")) {
-                name = line.removePrefix(ActivityCommands.MARK + " ").trim()
-                parts.getOrPut(name) { StringBuilder() }
-            } else name?.let { parts[it]?.append(line)?.append('\n') }
-        }
-        val task = parts["task"]?.toString()?.trim()?.takeIf { it.startsWith("{") } ?: return null
-        return BoardHistory.read(task, parts["said"]?.toString().orEmpty())
-    }
+/** Where one of an agent's sessions is kept: a file, or a session id the harness's own layout turns into one. */
+data class SessionSource(
+    /** `claude`, `codex`, `pi` or `omp`. */
+    val agent: String,
+    /** `path` or `id`, as herdr names them. */
+    val kind: String,
+    val value: String,
+    /** Who it is, when known (the role is otherwise read from its first message). */
+    val role: Role? = null,
+) {
+    val key: String get() = "$agent:$value"
 }

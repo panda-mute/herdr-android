@@ -10,8 +10,9 @@ import com.makefunstuff.herdr.core.api.PaneInfo
 import com.makefunstuff.herdr.core.api.SessionSnapshot
 import com.makefunstuff.herdr.core.api.WorkspaceInfo
 import com.makefunstuff.herdr.core.api.WorktreeInfo
-import com.makefunstuff.herdr.core.board.BoardTask
-import com.makefunstuff.herdr.core.board.BoardTasks
+import com.makefunstuff.herdr.core.board.WorkOverview
+import com.makefunstuff.herdr.core.board.WorkStatus
+import com.makefunstuff.herdr.core.board.WorkTask
 import com.makefunstuff.herdr.core.chat.ChatSearch
 import com.makefunstuff.herdr.core.home.HomeBoard
 import com.makefunstuff.herdr.core.host.HostState
@@ -34,15 +35,15 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class SearchTest {
-    private fun task(json: String, key: String): BoardTask = BoardTasks.task(Json.parseToJsonElement(json).jsonObject, key)!!
+    private fun task(id: String, title: String, status: WorkStatus) = WorkTask(id, id, title, "s1", status)
 
-    private val asks = task("""{"id":"api-server/3","title":"Speed up /jobs on large tables","state":"blocked","stage":"working","kind":"question"}""", "API-3")
-    private val queued = task("""{"id":"api-server/7","title":"Paginate /jobs in the CLI","state":"idle","stage":"queued"}""", "API-7")
-    private val working = task("""{"id":"herdr-android/6","title":"Screenshots","state":"working","stage":"working"}""", "AND-6")
-    private val done = task("""{"id":"website/2","title":"Install page","state":"done","stage":"done"}""", "WEB-2")
+    private val asks = task("API-3", "Speed up /jobs on large tables", WorkStatus.Need)
+    private val queued = task("API-7", "Paginate /jobs in the CLI", WorkStatus.Queued)
+    private val working = task("AND-6", "Screenshots", WorkStatus.Work)
+    private val done = task("WEB-2", "Install page", WorkStatus.Done)
 
-    private fun agent(pane: String, ws: String, status: String, title: String, name: String? = null, kind: String = "claude") =
-        AgentInfo(name = name, agent = kind, title = title, agentStatusRaw = status, workspaceId = ws, tabId = "$ws:t1", paneId = pane)
+    private fun agent(pane: String, ws: String, status: String, title: String, name: String? = null, kind: String = "claude", task: String? = null) =
+        AgentInfo(name = name, agent = kind, title = title, agentStatusRaw = status, workspaceId = ws, tabId = "$ws:t1", paneId = pane, shepherdrTask = task)
 
     private val devbox = HostState(
         Machine("devbox", "devbox", "devbox.lan", user = "demo"),
@@ -58,7 +59,7 @@ class SearchTest {
             ),
             agents = listOf(
                 agent("w1:p1", "w1", "working", "Show when each machine last answered"),
-                agent("w2:p1", "w2", "blocked", "Speed up /jobs on large tables", name = "sw-api-server-3"),
+                agent("w2:p1", "w2", "blocked", "Speed up /jobs on large tables", task = "API-3"),
             ),
         ),
         workspaceMeta = mapOf("w1" to mapOf("branch" to "work/9-last-answered")),
@@ -71,7 +72,7 @@ class SearchTest {
             agents = listOf(agent("w1:p1", "w1", "working", "Batch the /jobs export", kind = "codex")),
         ),
     )
-    private val boards = listOf(HomeBoard("devbox", "devbox", listOf(asks, queued, working, done)))
+    private val boards = listOf(HomeBoard("devbox", "devbox", WorkOverview(emptyList(), listOf(asks, queued, working, done))))
 
     @Test
     fun everyWordHasToBeThereAndTheNameCountsMost() {

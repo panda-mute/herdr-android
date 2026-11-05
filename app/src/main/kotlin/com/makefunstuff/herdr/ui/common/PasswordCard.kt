@@ -1,5 +1,7 @@
 package com.makefunstuff.herdr.ui.common
 
+import androidx.compose.ui.graphics.RectangleShape
+
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -11,8 +13,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Icon
@@ -27,7 +27,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
@@ -67,12 +66,12 @@ fun PasswordCard(asks: String, onSend: (String) -> Unit, onDismiss: () -> Unit, 
         text = ""
         onSend(secret)
     }
-    val shape = RoundedCornerShape(Radius.xl)
+    val shape = RectangleShape
     Surface(
         color = c.card,
         border = BorderStroke(1.dp, c.lineStrong),
         shape = shape,
-        modifier = modifier.fillMaxWidth().shadow(6.dp, shape, ambientColor = c.shadow, spotColor = c.shadow),
+        modifier = modifier.fillMaxWidth(),
     ) {
         Column(Modifier.padding(start = Space.l, end = Space.xs, top = Space.xs, bottom = Space.m), verticalArrangement = Arrangement.spacedBy(Space.xs)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -105,7 +104,7 @@ fun PasswordCard(asks: String, onSend: (String) -> Unit, onDismiss: () -> Unit, 
 @Composable
 private fun RoundIcon(icon: ImageVector, description: String, onClick: () -> Unit) {
     Box(
-        Modifier.size(48.dp).clip(CircleShape).clickable(role = Role.Button, onClick = onClick).semantics { contentDescription = description },
+        Modifier.size(48.dp).clip(RectangleShape).clickable(role = Role.Button, onClick = onClick).semantics { contentDescription = description },
         contentAlignment = Alignment.Center,
     ) { Icon(icon, null, tint = Herdr.colors.muted, modifier = Modifier.size(18.dp)) }
 }

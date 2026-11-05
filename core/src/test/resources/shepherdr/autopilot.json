@@ -1,0 +1,20 @@
+{"type":"snapshot","snapshot":{"name":"Shepherdr","host":"demo-host","user":"demo","terminalTransport":"core","off":[],
+ "machines":[{"id":"m:demo-host","machine":"demo-host","name":"This computer","status":"idle","here":true},{"id":"m:vm","machine":"vm","name":"vm","status":"idle"}],
+ "places":[
+  {"id":"sp-a","name":"demo-app","machine":"demo-host","level":0,"status":"idle","mode":"autopilot","chat":"p:sp-a",
+   "pilot":{"on":true,"next_run":1793232000000,"pending":false,"inflight":false,"events":["ready","failed"],"blank":true}},
+  {"id":"sp-b","name":"demo-api","machine":"demo-host","level":0,"status":"idle","mode":"regular","chat":"p:sp-b",
+   "pilot":{"on":false,"next_run":null,"pending":false,"inflight":false,"events":["ready","failed"],"blank":true}},
+  {"id":"vm/sp-c","name":"demo-site","machine":"vm","level":0,"status":"idle","mode":"regular","chat":"p:vm:sp-c"}
+ ],
+ "tasks":[],"needs":[],"asks":{},"last":{},"read":{},
+ "settings":[
+  {"name":"Notify","level":"all","rows":[{"label":"Notify","key":"notify","value":"needs","options":["All","Needs me","Off"]}]},
+  {"name":"Autopilot","level":"all","about":"How Autopilot works in every space. Turn it on in a space with the switch in its Assistant's header: its Assistant then wakes on a schedule or when something happens to its tasks, and works from the heartbeat.",
+   "rows":[
+    {"label":"Heartbeat","key":"autopilot.heartbeat","value":"Direction: keep the demo app green.\n","doc":true,"hint":"What it works from: direction, priorities, limits and when to stop.","file":"~/.config/herdr-core/autopilot/everywhere.md"},
+    {"label":"Schedule","key":"autopilot.every","value":"every 2 hours on weekdays","text":true,"hint":"When it wakes by itself.",
+     "trigger":{"words":"Every 2 hours on weekdays","next":[],"presets":[{"label":"Off","value":""},{"label":"Every 30 min","value":"every 30 minutes"},{"label":"Every hour","value":"every 60 minutes"},{"label":"Weekdays 9:00","value":"weekdays 9:00"}]}},
+    {"label":"Events","key":"autopilot.events","value":"ready,failed","multi":[{"value":"added","label":"Added"},{"value":"ready","label":"Ready"},{"value":"failed","label":"Failed"},{"value":"needs-you","label":"Needs you"},{"value":"merged","label":"Merged"},{"value":"stalled","label":"Stalled"}],"hint":"These wake a space's Assistant at once when they happen to its tasks."}
+   ]}
+ ]}}

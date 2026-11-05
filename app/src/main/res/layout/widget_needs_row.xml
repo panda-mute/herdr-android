@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  One row of the Needs you widget, under a hairline (a FrameLayout: a widget may not hold a plain View): what waits (as its notification's title) over why, dim (or how
+  its button went), and up to two of its notification's buttons, the first amber. A tap on the words opens it.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical">
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@color/widget_line" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:minHeight="48dp"
+        android:orientation="horizontal">
+
+        <LinearLayout
+            android:id="@+id/row_words"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:gravity="center_vertical"
+            android:orientation="vertical"
+            android:paddingVertical="4dp">
+
+            <TextView
+                android:id="@+id/row_title"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:fontFamily="@font/geist_medium"
+                android:maxLines="1"
+                android:textColor="@color/widget_strong"
+                android:textSize="14sp" />
+
+            <TextView
+                android:id="@+id/row_text"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:fontFamily="@font/geist_regular"
+                android:maxLines="1"
+                android:textColor="@color/widget_muted"
+                android:textSize="12sp" />
+
+            <TextView
+                android:id="@+id/row_note"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:fontFamily="@font/geist_regular"
+                android:maxLines="1"
+                android:textColor="@color/widget_blocked"
+                android:textSize="12sp"
+                android:visibility="gone" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/row_first"
+            style="@style/HerdrWidgetButton"
+            android:background="@drawable/widget_button"
+            android:textColor="@color/widget_panel" />
+
+        <TextView
+            android:id="@+id/row_second"
+            style="@style/HerdrWidgetButton"
+            android:background="@drawable/widget_button_framed"
+            android:textColor="@color/widget_text" />
+    </LinearLayout>
+</LinearLayout>

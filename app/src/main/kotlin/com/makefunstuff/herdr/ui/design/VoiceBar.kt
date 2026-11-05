@@ -1,5 +1,7 @@
 package com.makefunstuff.herdr.ui.design
 
+import androidx.compose.ui.graphics.RectangleShape
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -14,8 +16,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -69,7 +69,7 @@ fun VoiceBar(state: VoiceState, actions: VoiceBarActions, modifier: Modifier = M
             Spacer(Modifier.width(Space.m))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.xs)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(8.dp).clip(CircleShape).background(tone))
+                    Box(Modifier.size(8.dp).clip(RectangleShape).background(tone))
                     Spacer(Modifier.width(Space.s))
                     Text(
                         state.words, style = MaterialTheme.typography.labelLarge, maxLines = 1,
@@ -116,10 +116,10 @@ private fun TalkButton(state: VoiceState, talk: (Boolean) -> Unit) {
     val listening = state.phase == Phase.Listening
     val busy = state.phase == Phase.Hearing || state.phase == Phase.Sending
     Box(
-        Modifier.size(48.dp).clip(CircleShape)
+        Modifier.size(48.dp).clip(RectangleShape)
             .background(if (busy) c.hover else c.primary)
             .semantics {
-                contentDescription = if (listening) "Send what you said" else "Talk to the coordinator"
+                contentDescription = if (listening) "Send what you said" else "Talk to the Assistant"
                 stateDescription = state.words
                 onClick { onTalk(!listening); true }
             }
@@ -156,7 +156,7 @@ private fun Level(level: Float, tone: androidx.compose.ui.graphics.Color) {
     Row(Modifier.height(16.dp), horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.CenterVertically) {
         shape.forEach { s ->
             val h = (3f + 13f * (0.25f + 0.75f * level) * s).dp
-            Box(Modifier.width(3.dp).height(h).clip(RoundedCornerShape(2.dp)).background(tone))
+            Box(Modifier.width(3.dp).height(h).clip(RectangleShape).background(tone))
         }
     }
 }
@@ -165,9 +165,9 @@ private fun Level(level: Float, tone: androidx.compose.ui.graphics.Color) {
 private fun SmallToggle(text: String, on: Boolean, description: String? = null, onClick: () -> Unit) {
     val c = Herdr.colors
     Box(
-        Modifier.clip(RoundedCornerShape(8.dp))
+        Modifier.clip(RectangleShape)
             .background(if (on) c.hover else c.card)
-            .border(1.dp, if (on) c.lineStrong else c.line, RoundedCornerShape(8.dp))
+            .border(1.dp, if (on) c.lineStrong else c.line, RectangleShape)
             .clickable(role = Role.Switch, onClick = onClick)
             .then(if (description != null) Modifier.semantics { contentDescription = description } else Modifier)
             .padding(horizontal = Space.s, vertical = Space.xs),
@@ -179,7 +179,7 @@ private fun SmallToggle(text: String, on: Boolean, description: String? = null, 
 @Composable
 private fun IconSlot(icon: androidx.compose.ui.graphics.vector.ImageVector, description: String, tint: androidx.compose.ui.graphics.Color, onClick: () -> Unit) {
     Box(
-        Modifier.size(44.dp).clip(CircleShape).clickable(role = Role.Button, onClick = onClick).semantics { contentDescription = description },
+        Modifier.size(44.dp).clip(RectangleShape).clickable(role = Role.Button, onClick = onClick).semantics { contentDescription = description },
         contentAlignment = Alignment.Center,
     ) {
         Icon(icon, null, tint = tint, modifier = Modifier.size(20.dp))

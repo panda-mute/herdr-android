@@ -65,9 +65,39 @@ data class V2Version(val ok: Boolean = true, val version: String = "", val core:
 @Serializable
 data class V2Store(val folder: String = "", val name: String = "", val key: String = "")
 
-/** A space's Assistant's own tab (`Place.assistantTab`): [live] while its agent runs. */
+/**
+ * A space's Assistant's own tab (`Place.assistantTab`): [live] while its agent runs. [id]: the Herdr window's tab id,
+ * none before it has a tab; [named]: someone gave it its name; [agent]: which known agent runs in it (`claude`).
+ */
 @Serializable
-data class V2AssistantTab(val name: String = "Assistant", val state: String = "idle", val live: Boolean = false, val cli: String? = null)
+data class V2AssistantTab(
+    val name: String = "Assistant",
+    val state: String = "idle",
+    val live: Boolean = false,
+    val cli: String? = null,
+    val id: String? = null,
+    val named: Boolean = false,
+    val agent: String? = null,
+)
+
+/**
+ * One of a space's other tabs (`PlaceTab`, 3.0's tab bar): the window's tab [id], its [name] as the bar shows it
+ * ([named]: someone gave it), the chat key of its first terminal [term] (`t:<address>`, another machine's
+ * `t:<machine>/<address>`), the known agent running in it ([agent], [cli] for Claude Code and Codex), its [state]
+ * (`working`, `blocked`, `done`, `idle`) and what its header calls it ([prog]).
+ */
+@Serializable
+data class V2Tab(
+    val id: String,
+    val name: String = "",
+    val named: Boolean = false,
+    val term: String = "",
+    val cli: String? = null,
+    val agent: String? = null,
+    val state: String = "idle",
+    val where: String? = null,
+    val prog: String? = null,
+)
 
 /** A space (`Place`): a folder on a machine with its own Assistant, whose chat key is [chat] (`p:<space id>`). */
 @Serializable
@@ -93,16 +123,61 @@ data class V2Place(
     val where: String? = null,
     val store: V2Store? = null,
     val assistantTab: V2AssistantTab? = null,
+    /** Its tabs other than the Assistant's, in the bar's order. */
+    val tabs: List<V2Tab> = emptyList(),
     /** A git worktree of another space. */
     val worktree: Boolean = false,
     val branch: String? = null,
     val unreachableSince: String? = null,
     val connecting: Boolean = false,
     val herdrDown: String? = null,
+    /** Its Autopilot as its Assistant's header shows it: only this machine's own spaces have one. */
+    val pilot: V2Pilot? = null,
 ) {
     /** Kept for the screens' sake: 3.x has no home spaces. */
     val home: Boolean get() = false
 }
+
+/**
+ * A space's Autopilot (`Place.pilot`, the service's `headerPilot`): switched [on] in its Assistant's header, then its
+ * next scheduled wake ([nextRun], ms), a wake [pending] until its Assistant is idle or [inflight], the [events] that
+ * wake it, and [blank] while the one heartbeat is still herdr-task's starter.
+ */
+@Serializable
+data class V2Pilot(
+    val on: Boolean = false,
+    @SerialName("next_run") val nextRun: Double? = null,
+    val pending: Boolean = false,
+    val inflight: Boolean = false,
+    val events: List<String> = emptyList(),
+    val blank: Boolean = false,
+)
+
+/** One row of a Settings page (`SettingRow`): only what the app reads of it. */
+@Serializable
+data class V2SettingRow(
+    val label: String = "",
+    val key: String = "",
+    val value: String = "",
+    val hint: String? = null,
+    val warn: String? = null,
+    /** The file a whole-file row holds (Autopilot's heartbeat), as `~/…`. */
+    val file: String? = null,
+    /** A row of several picks (Autopilot's events): each value and its label. */
+    val multi: List<V2SettingPick>? = null,
+)
+
+@Serializable
+data class V2SettingPick(val value: String = "", val label: String = "")
+
+/** A Settings page (`SettingSection`): [level] is `all` for Everywhere's, else a space's id. */
+@Serializable
+data class V2SettingSection(
+    val name: String = "",
+    val level: String? = null,
+    val about: String? = null,
+    val rows: List<V2SettingRow> = emptyList(),
+)
 
 /** A machine (`Machine`), as a heading over its spaces. */
 @Serializable
@@ -267,9 +342,23 @@ data class V2Brief(val label: String = "", val bare: Boolean = false)
 @Serializable
 data class V2Mention(val task: String, val ref: String = "", val title: String = "")
 
-/** An agent asking for a secret (`SecretAsk`): kept in the vault on the machine, never typed into the chat. */
+/**
+ * An agent asking for a secret (`SecretAsk`): kept in the vault on the machine, never typed into the chat. [levels]:
+ * where it can be kept, narrowest first (this space, the agent's machine, Everywhere), as the web's card offers them.
+ */
 @Serializable
-data class V2SecretAsk(val id: String = "", val name: String = "", val why: String? = null, val by: V2By? = null, val saved: String? = null)
+data class V2SecretAsk(
+    val id: String = "",
+    val name: String = "",
+    val why: String? = null,
+    val by: V2By? = null,
+    val saved: String? = null,
+    val levels: List<V2SecretLevel> = emptyList(),
+)
+
+/** Where a secret is kept (`p:<machine>:<space>`, `m:<machine>`, `all`), and its words ("This space"). */
+@Serializable
+data class V2SecretLevel(val id: String, val label: String = "")
 
 /** What a needs-you card in a space's chat asks, from its task's chat (`CardAsk`). */
 @Serializable
@@ -515,6 +604,10 @@ data class V2Snapshot(
     val read: Map<String, Double> = emptyMap(),
     /** Every artifact; none on a Shepherdr that keeps none, where the app shows no artifacts. */
     val artifacts: List<V2Artifact>? = null,
+    /** Settings' pages, as the web's Settings lists them. */
+    val settings: List<V2SettingSection> = emptyList(),
+    /** The add-ons switched off (Settings › Window): `autopilot` takes away its page and every space's switch. */
+    val off: List<String> = emptyList(),
 ) {
     fun place(id: String): V2Place? = places.firstOrNull { it.id == id }
     fun task(id: String): V2Task? = tasks.firstOrNull { it.id == id }

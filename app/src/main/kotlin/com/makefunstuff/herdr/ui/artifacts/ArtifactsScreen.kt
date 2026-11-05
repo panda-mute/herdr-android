@@ -36,7 +36,7 @@ import com.makefunstuff.herdr.ui.theme.Herdr
  * under its Versions there.
  */
 @Composable
-fun ArtifactsScreen(nav: NavController, machineId: String, space: String?) {
+fun ArtifactsScreen(nav: NavController, machineId: String, space: String?, inTab: Boolean = false) {
     val container = LocalContainer.current
     val session = container.hosts.session(machineId)
     if (session == null) {
@@ -60,7 +60,7 @@ fun ArtifactsScreen(nav: NavController, machineId: String, space: String?) {
             HerdrTopBar(
                 "Artifacts",
                 subtitle = listOfNotNull(spaceName, session.machine.label).joinToString(" · "),
-                onBack = { nav.popBackStack() },
+                onBack = if (inTab) null else ({ nav.popBackStack() }),
             )
         },
     ) { padding ->

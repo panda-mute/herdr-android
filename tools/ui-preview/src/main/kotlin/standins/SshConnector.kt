@@ -57,8 +57,8 @@ class MachineConnection(private val host: preview.FakeMachine, val hostKeyFinger
 
     suspend fun openUnixSocket(path: String): Duplex = host.socket()
 
-    /** A dev server's port: nothing is forwarded, the page is the stand-in's ([com.makefunstuff.herdr.ui.preview.PageView]). */
-    fun openTcp(host: String, port: Int): Duplex = throw IOException("No dev server in the previews")
+    /** A port of the machine: nothing is forwarded, the fake machines have no servers behind their ports. */
+    fun openTcp(host: String, port: Int): Duplex = throw IOException("Nothing listens on the fake machines' ports")
 
     fun forward(host: String, port: Int): PortForward = PortForward(host, port, preferred = 0) { h, p -> openTcp(h, p) }
 

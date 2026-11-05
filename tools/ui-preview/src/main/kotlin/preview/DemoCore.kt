@@ -45,8 +45,28 @@ object DemoCore {
             "t4" to "Summed up this week's notes in notes/2026-w42.md.\n",
             "t5" to "\u001b[32m  VITE v6.2.0\u001b[0m  ready in 412 ms\n\n  ➜  Local:   http://localhost:5173/\n",
         ),
+        // The shell's history above its screen: a test run with one failure, then the fix's commit.
+        histories = mapOf("t2" to shellHistory()),
         name = "devbox",
     )
+
+    private fun shellHistory() = buildString {
+        append(PROMPT + "./gradlew test\n")
+        for (t in listOf("JobsTest", "JobQueueTest", "RetryPolicyTest", "SchedulerTest", "MigrationTest", "ApiRoutesTest", "AuthTest", "BillingTest")) {
+            append("> Task :app:test $t\n")
+            if (t == "MigrationTest") {
+                append("$t > createdAtHasADefault() FAILED\n")
+                append("    org.opentest4j.AssertionFailedError: expected: <now()> but was: <null>\n")
+                append("        at app//demo.herdr.data.MigrationTest.createdAtHasADefault(MigrationTest.kt:42)\n")
+            } else {
+                append("$t > PASSED (${t.length * 7} tests)\n")
+            }
+        }
+        append("\n41 tests completed, 1 failed\n\nFAILURE: Build failed with an exception.\n\n")
+        append(PROMPT + "git commit -am \"Jobs: created_at defaults to now()\"\n")
+        append("[review 3f1c2ab] Jobs: created_at defaults to now()\n 2 files changed, 9 insertions(+), 1 deletion(-)\n")
+        for (i in 1..12) append(PROMPT + "\n")
+    }
 
     /** mac-mini with the desktop app and no classic herdr: the website's Claude at work, Codex done. */
     fun mini() = FakeCore(
@@ -110,11 +130,38 @@ object DemoCore {
 fun SceneData.shepherdr3() {
     host(Demo.DEVBOX).shepherdr = DemoV2.board()
     host(Demo.DEVBOX).core = DemoCore.shepherdr()
+    // AND-19's worker: its Claude Code's transcript, found from its process (FakeCore.terminal's pid).
+    host(Demo.DEVBOX).transcripts += "4304" to Demo.resource("claude-api.jsonl")
+}
+
+/**
+ * [shepherdr3], with herdr-android's tabs as Shepherdr 3.1's tab bar has them: its Assistant's (`tb-herdr-android`)
+ * and a Claude Code of its own beside it (`hc:t8`, tab `tb-and-claude`), stuck on a long test run: what the tab
+ * menu acts on.
+ */
+fun SceneData.shepherdr3Tabs() {
+    shepherdr3()
+    host(Demo.DEVBOX).core!!.apply {
+        terminals = terminals + FakeCore.terminal(
+            "t8", listOf("claude"), "/home/demo/src/herdr-android", Demo.NOW - 90 * 60_000L,
+            status = obj("state" to "working", "app" to "claude-code", "msg" to "Running the connected tests"), statusMs = Demo.NOW - 38 * 60_000L,
+            title = "Connected tests", turn = 2,
+            labels = mapOf("herdr.space" to "sp-herdr-android", "herdr.tab" to "tb-and-claude", "herdr.agent" to "claude", "where" to "herdr-android / Claude Code"),
+        )
+        screens = screens + ("t8" to Demo.resource("screen-claude-app.txt"))
+    }
+    host(Demo.DEVBOX).shepherdr!!.tabs(
+        "sp-herdr-android",
+        DemoV2.TAB_ASSISTANT,
+        """[{"id":"tb-and-claude","name":"Claude Code","named":false,"term":"t:t8","cli":"claude","agent":"claude","state":"working","where":"~/src/herdr-android","prog":"Claude Code"}]""",
+    )
 }
 
 /** devbox runs the desktop app's herdr-core next to classic herdr; mac-mini runs only the desktop app. */
 fun SceneData.desktopApp() {
     host(Demo.DEVBOX).core = DemoCore.devbox()
+    // The docs tab's Codex has its transcript; the review tab's Claude hasn't written one the app finds, so its chat is its screen.
+    host(Demo.DEVBOX).transcripts += "4303" to Demo.resource("codex-readme.jsonl")
     host(Demo.MINI).apply {
         refuse = null
         classic = false

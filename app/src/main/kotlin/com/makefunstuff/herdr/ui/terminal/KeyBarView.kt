@@ -1,5 +1,7 @@
 package com.makefunstuff.herdr.ui.terminal
 
+import androidx.compose.ui.graphics.RectangleShape
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -15,7 +17,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -146,7 +147,7 @@ private fun KeyFace(label: String, armed: Boolean, locked: Boolean, highlighted:
         Modifier
             .fillMaxWidth()
             .heightIn(min = 40.dp)
-            .clip(RoundedCornerShape(Radius.s))
+            .clip(RectangleShape)
             .background(
                 when {
                     locked -> c.tint(c.accent)
@@ -155,7 +156,7 @@ private fun KeyFace(label: String, armed: Boolean, locked: Boolean, highlighted:
                     else -> Color.Transparent
                 },
             )
-            .border(1.dp, if (on) c.accent else c.line, RoundedCornerShape(Radius.s)),
+            .border(1.dp, if (on) c.accent else c.line, RectangleShape),
         contentAlignment = Alignment.Center,
     ) {
         if (content != null) content() else Text(
@@ -168,7 +169,7 @@ private fun KeyFace(label: String, armed: Boolean, locked: Boolean, highlighted:
             overflow = TextOverflow.Clip,
         )
         if (locked) {
-            Box(Modifier.align(Alignment.BottomCenter).padding(bottom = 4.dp).size(width = 14.dp, height = 2.dp).background(c.accent, RoundedCornerShape(1.dp)))
+            Box(Modifier.align(Alignment.BottomCenter).padding(bottom = 4.dp).size(width = 14.dp, height = 2.dp).background(c.accent, RectangleShape))
         }
     }
 }

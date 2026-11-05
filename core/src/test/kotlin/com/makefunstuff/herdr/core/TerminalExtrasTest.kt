@@ -3,10 +3,7 @@ package com.makefunstuff.herdr.core
 import com.makefunstuff.herdr.core.api.ApiCaller
 import com.makefunstuff.herdr.core.api.HerdrApi
 import com.makefunstuff.herdr.core.api.HerdrApiException
-import com.makefunstuff.herdr.core.api.LayoutNode
-import com.makefunstuff.herdr.core.api.LayoutTemplates
 import com.makefunstuff.herdr.core.api.PaneScroll
-import com.makefunstuff.herdr.core.api.ResizeDirection
 import com.makefunstuff.herdr.core.api.ScrollbackSearch
 import com.makefunstuff.herdr.core.api.TextPoint
 import com.makefunstuff.herdr.core.api.urlAt
@@ -34,15 +31,6 @@ private class ExtrasFakeCaller(private val answer: (method: String, params: Json
         return reply
     }
 }
-
-private val NESTED_EXPORT = """
-    {"type":"layout_export","layout":{"workspace_id":"w1","tab_id":"w1:t6","zoomed":false,"focused_pane_id":"w1:pB",
-     "root":{"type":"split","direction":"down","ratio":0.3,
-       "first":{"type":"pane","pane_id":"w1:pB","cwd":"/home/u"},
-       "second":{"type":"split","direction":"right","ratio":0.8,
-         "first":{"type":"pane","pane_id":"w1:pC","cwd":"/home/u","label":"logs"},
-         "second":{"type":"pane","pane_id":"w1:pD","cwd":"/home/u","command":["top"]}}}}}
-""".trimIndent()
 
 class ScrollMathTest {
     // 200 lines of scrollback over a 40-row screen, looking 50 lines back.
@@ -183,89 +171,3 @@ class TerminalExtrasApiTest {
     }
 }
 
-class LayoutTest {
-    @Test
-    fun exportDecodesTheSplitTree() = runBlocking {
-        val api = HerdrApi(ExtrasFakeCaller { _, _ -> NESTED_EXPORT })
-        val layout = api.exportLayout("w1:t6")
-        val root = assertIs<LayoutNode.Split>(layout.root)
-        assertEquals("down", root.direction)
-        assertEquals(0.3f, root.ratio)
-        assertEquals(listOf("w1:pB", "w1:pC", "w1:pD"), root.panes().map { it.paneId })
-        assertEquals(listOf("top"), root.panes()[2].command)
-        assertEquals(listOf(true, false), root.pathTo("w1:pC"))
-        assertEquals(0.8f, (root.at(listOf(true)) as LayoutNode.Split).ratio)
-        assertNull(root.at(listOf(false, true)))
-        assertEquals(0.5f, (root.withRatio(listOf(true), 0.5f).at(listOf(true)) as LayoutNode.Split).ratio)
-    }
-
-    @Test
-    fun ratioAndApplySendTreesAndPaths() = runBlocking {
-        val fake = ExtrasFakeCaller { _, _ -> NESTED_EXPORT.replace("layout_export", "layout_split_ratio_set") }
-        val api = HerdrApi(fake)
-        api.setSplitRatio("w1:t6", listOf(true), 0.8f)
-        assertEquals("""{"tab_id":"w1:t6","path":[true],"ratio":0.8}""", fake.calls.last().second.toString())
-
-        val template = api.exportLayout("w1:t6").root.template()
-        assertTrue(template.panes().all { it.paneId == null })
-        api.applyLayout(template, workspaceId = "w1", label = "dev")
-        assertEquals(
-            """{"root":{"type":"split","direction":"down","ratio":0.3,"first":{"type":"pane","cwd":"/home/u"},""" +
-                """"second":{"type":"split","direction":"right","ratio":0.8,"first":{"type":"pane","label":"logs","cwd":"/home/u"},""" +
-                """"second":{"type":"pane","cwd":"/home/u","command":["top"]}}},"workspace_id":"w1","tab_label":"dev","focus":false}""",
-            fake.calls.last().second.toString(),
-        )
-        api.applyLayout(template, replaceTabId = "w1:t6")
-        assertEquals("\"w1:t6\"", fake.calls.last().second["tab_id"].toString())
-    }
-
-    @Test
-    fun templatesRoundTripThroughJson() {
-        val root = HerdrApi(ExtrasFakeCaller { _, _ -> NESTED_EXPORT }).let { runBlocking { it.exportLayout("w1:t6").root } }
-        val text = LayoutTemplates.encode(root.template())
-        assertTrue("pane_id" !in text, text)
-        assertEquals(root.template(), LayoutTemplates.decode(text))
-        // Tolerates the extra fields herdr sends and the shape a pasted template may carry.
-        val pasted = """{"type":"split","direction":"right","ratio":0.5,"first":{"type":"pane"},"second":{"type":"pane","command":["htop"]},"unknown":1}"""
-        val node = assertIs<LayoutNode.Split>(LayoutTemplates.decode(pasted))
-        assertEquals(0.5f, node.ratio)
-        assertEquals(listOf("htop"), node.panes()[1].command)
-    }
-
-    @Test
-    fun resizeAndPaneLayout() = runBlocking {
-        val layout = """{"workspace_id":"w1","tab_id":"w1:t5","area":{"x":0,"y":0,"width":120,"height":40},"focused_pane_id":"w1:p9",
-            "panes":[{"pane_id":"w1:p9","focused":true,"rect":{"x":0,"y":0,"width":60,"height":40}},
-                     {"pane_id":"w1:pA","rect":{"x":60,"y":0,"width":60,"height":40}}],
-            "splits":[{"id":"split_0_root","direction":"right","ratio":0.5,"rect":{"x":0,"y":0,"width":120,"height":40}}]}"""
-        val fake = ExtrasFakeCaller { method, _ ->
-            when (method) {
-                "pane.resize" -> """{"type":"pane_resize","resize":{"changed":false,"reason":"unchanged","pane_id":"w1:p9","focused_pane_id":"w1:p9","layout":$layout}}"""
-                "pane.layout" -> """{"type":"pane_layout","layout":$layout}"""
-                else -> error(method)
-            }
-        }
-        val api = HerdrApi(fake)
-        val resized = api.resizePane("w1:p9", ResizeDirection.Right, 0.1f)
-        assertEquals(false, resized.changed)
-        assertEquals("unchanged", resized.reason)
-        assertEquals("""{"pane_id":"w1:p9","direction":"right","amount":0.1}""", fake.calls.last().second.toString())
-        val tab = api.paneLayout("w1:p9")
-        assertEquals(0.5f, tab.splits.single().ratio)
-        assertEquals(2, tab.panes.size)
-    }
-
-    @Test
-    fun listsEverySplitWithItsPath() {
-        val root = HerdrApi(ExtrasFakeCaller { _, _ -> NESTED_EXPORT }).let { runBlocking { it.exportLayout("w1:t6").root } }
-        val splits = root.splits()
-        assertEquals(2, splits.size)
-        assertEquals(emptyList(), splits[0].path)
-        assertEquals("down", splits[0].direction)
-        assertEquals(false, splits[0].sideBySide)
-        assertEquals(0.3f, splits[0].ratio)
-        assertEquals(listOf(true), splits[1].path)
-        assertEquals("right", splits[1].direction)
-        assertTrue(splits[1].sideBySide)
-    }
-}

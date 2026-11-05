@@ -48,7 +48,7 @@ class ConfirmActivity : FragmentActivity() {
     }
 
     private fun title(alert: Alert, action: AlertAction): String = when (Guarded.of(action.guard)) {
-        Guarded.Merge -> "Approve and merge ${alert.taskName.ifEmpty { alert.title }}?"
+        Guarded.Merge -> "Approve and merge ${alert.title}?"
         Guarded.AlwaysAllow -> "${action.label}?"
         else -> "${action.label}?"
     }

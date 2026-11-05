@@ -1,0 +1,462 @@
+#!/usr/bin/env python3
+# version: 1
+"""herdr-app-build: builds the phone's update of Herdr for Android on this machine.
+
+Herdr for Android copies it to the machine that builds it (Settings > Change the app) and runs
+`check` and `state` there over SSH. `build` is run by the herdr-android space's Assistant, in its
+Herdr terminal, because the release key comes from herdr-secret, which only answers an agent there:
+
+  herdr-app-build check [--checkout DIR]   what this machine has for it, as one JSON line
+  herdr-app-build build [--checkout DIR]   build the merged main, signed with the release key, or
+                                           fetch the release CI published for it; then `state`
+  herdr-app-build state                    the last build, as one JSON line
+
+`build` fetches origin's main, finds the run number GitHub Actions gave that commit (the version
+code CI uses, so a build here and CI's of the same merge are the same version), builds it in a
+worktree of its own (~/.cache/herdr-app-build/src) with HERDR_KEYSTORE_FILE, HERDR_KEYSTORE_PASSWORD
+and HERDR_KEY_ALIAS given by `herdr-secret run` (never printed: its output masks them), and keeps
+the APK beside its state. Without the key it waits for CI's release of that run and downloads its
+APK instead. The phone reads the state and copies the APK over its own SSH link.
+
+Python 3.6 or newer alone, no packages. See host/herdr-app-build/README.md in the herdr-android repo.
+"""
+
+import argparse
+import fcntl
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+
+VERSION = "1"
+
+HOME = os.path.expanduser("~")
+BASE = os.environ.get("HERDR_APP_BUILD_HOME") or os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.join(HOME, ".cache"), "herdr-app-build")
+STATE = os.path.join(BASE, "state.json")
+LOG = os.path.join(BASE, "build.log")
+SRC = os.path.join(BASE, "src")
+KEY_NAMES = ["HERDR_KEYSTORE_FILE", "HERDR_KEYSTORE_PASSWORD", "HERDR_KEY_ALIAS"]
+WORKFLOW = ".github/workflows/android.yml"
+# Tests point these at local files: GitHub's API (<base>/repos/...) and its release downloads (<base>/<slug>/...).
+API = os.environ.get("HERDR_APP_BUILD_API", "https://api.github.com").rstrip("/")
+RELEASES = os.environ.get("HERDR_APP_BUILD_RELEASES", "https://github.com").rstrip("/")
+# How long to wait for CI's run of the merge, and for its release (seconds), and between looks.
+CI_WAIT = float(os.environ.get("HERDR_APP_BUILD_CI_WAIT", "900"))
+RELEASE_WAIT = float(os.environ.get("HERDR_APP_BUILD_RELEASE_WAIT", "2700"))
+POLL = float(os.environ.get("HERDR_APP_BUILD_POLL", "20"))
+CANDIDATES = ["herdr-android", "src/herdr-android", "Work/herdr-android", "work/herdr-android", "code/herdr-android",
+              "projects/herdr-android", "dev/herdr-android", "git/herdr-android"]
+
+
+class Fail(Exception):
+    pass
+
+
+class NoKey(Fail):
+    """herdr-secret didn't hand over the key (not kept for this space, or not run from an agent's terminal)."""
+
+
+def out(obj):
+    obj = dict(obj)
+    obj["herdrAppBuild"] = 1
+    obj["version"] = VERSION
+    sys.stdout.write(json.dumps(obj, separators=(",", ":")) + "\n")
+
+
+def now_ms():
+    return int(time.time() * 1000)
+
+
+# ---- what the machine has -------------------------------------------------------------------
+
+_login = None
+
+
+def login_env():
+    """The environment a login shell sets up (where ANDROID_HOME and JAVA_HOME usually are); SSH's own is bare."""
+    global _login
+    if _login is None:
+        _login = {}
+        sh = os.environ.get("SHELL") or "/bin/sh"
+        try:
+            r = subprocess.run([sh, "-lc", "env -0"], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=20)
+            for part in r.stdout.split(b"\0"):
+                k, sep, v = part.decode("utf-8", "replace").partition("=")
+                if sep and k:
+                    _login[k] = v
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return _login
+
+
+def env(name):
+    return os.environ.get(name) or login_env().get(name) or None
+
+
+def which(name):
+    return shutil.which(name) or shutil.which(name, path=login_env().get("PATH")) or None
+
+
+def is_checkout(d):
+    if not d or not os.path.isfile(os.path.join(d, "app", "build.gradle.kts")) or not os.path.isfile(os.path.join(d, "gradlew")):
+        return False
+    try:
+        with open(os.path.join(d, "settings.gradle.kts")) as f:
+            if "herdr" not in f.read():
+                return False
+    except OSError:
+        return False
+    return os.path.exists(os.path.join(d, ".git"))
+
+
+def find_checkout(given):
+    if given:
+        d = os.path.abspath(os.path.expanduser(given))
+        return d if is_checkout(d) else None
+    for c in CANDIDATES:
+        d = os.path.join(HOME, c)
+        if is_checkout(d):
+            return d
+    return None
+
+
+def git(checkout, *args, timeout=120):
+    r = subprocess.run(["git", "-C", checkout, *args], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=timeout)
+    if r.returncode != 0:
+        why = next(iter(reversed((r.stderr or r.stdout).strip().splitlines())), "")
+        raise Fail(f"git {args[0]} failed: {why}"[:300])
+    return r.stdout.strip()
+
+
+def repo_slug(checkout):
+    """owner/name of origin on GitHub, from its URL (https or ssh)."""
+    try:
+        # As written, not as url.<base>.insteadOf rewrites it for fetching.
+        url = git(checkout, "config", "--get", "remote.origin.url", timeout=20)
+    except (Fail, OSError, subprocess.SubprocessError):
+        return None
+    m = re.search(r"github\.com[:/]+([^/]+)/([^/]+?)(?:\.git)?/?$", url)
+    return f"{m.group(1)}/{m.group(2)}" if m else None
+
+
+def is_sdk(d):
+    return bool(d) and os.path.isdir(os.path.join(d, "platforms")) and os.path.isdir(os.path.join(d, "build-tools"))
+
+
+def find_sdk(checkout):
+    found = [env("ANDROID_HOME"), env("ANDROID_SDK_ROOT")]
+    if checkout:
+        try:
+            with open(os.path.join(checkout, "local.properties")) as f:
+                for line in f:
+                    if line.strip().startswith("sdk.dir="):
+                        found.append(line.split("=", 1)[1].strip().replace("\\:", ":"))
+        except OSError:
+            pass
+    found += [os.path.join(HOME, "Android", "Sdk"), os.path.join(HOME, "Library", "Android", "sdk"), os.path.join(HOME, "android-sdk"),
+              "/opt/android-sdk", "/usr/lib/android-sdk"]
+    return next((d for d in found if is_sdk(d)), None)
+
+
+def java_major(java):
+    try:
+        r = subprocess.run([java, "-version"], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if r.returncode != 0:
+        return None
+    m = re.search(r'version "(\d+)(?:\.(\d+))?', r.stdout)
+    if not m:
+        return None
+    major = int(m.group(1))
+    return int(m.group(2) or 0) if major == 1 else major
+
+
+def find_java():
+    """A JDK 17 or newer: its home and version, else (None, None)."""
+    homes = [env("JAVA_HOME")]
+    j = which("java")
+    if j:
+        homes.append(os.path.dirname(os.path.dirname(os.path.realpath(j))))
+    for root in ["/usr/lib/jvm", os.path.join(HOME, ".jdks"), "/Library/Java/JavaVirtualMachines"]:
+        try:
+            homes += sorted((os.path.join(root, n) for n in os.listdir(root)), reverse=True)
+        except OSError:
+            pass
+    for h in homes:
+        if not h:
+            continue
+        for java in (os.path.join(h, "bin", "java"), os.path.join(h, "Contents", "Home", "bin", "java")):
+            if os.access(java, os.X_OK):
+                v = java_major(java)
+                if v and v >= 17:
+                    return os.path.dirname(os.path.dirname(java)), v
+    return None, None
+
+
+def find_key():
+    """Where the release key is: "here" (in this machine's herdr-secret vault), "main" (another machine's
+    herdr-secret, asked at build time), "none"."""
+    hs = which("herdr-secret")
+    if not hs:
+        return "none"
+    if os.path.exists(os.path.join(HOME, ".herdr", "secret-remote")):
+        return "main"
+    try:
+        r = subprocess.run([hs, "names", "--json"], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=20)
+        rows = json.loads(r.stdout or "[]")
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return "none"
+    names = {str(x.get("name")) for x in (rows if isinstance(rows, list) else rows.get("secrets", [])) if isinstance(x, dict)}
+    return "here" if all(n in names for n in KEY_NAMES) else "none"
+
+
+def cmd_check(a):
+    checkout = find_checkout(a.checkout)
+    java_home, java = find_java()
+    out({
+        "checkout": checkout,
+        "repo": repo_slug(checkout) if checkout else None,
+        "sdk": find_sdk(checkout),
+        "java": java,
+        "javaHome": java_home,
+        "key": find_key(),
+        "git": bool(which("git")),
+    })
+
+
+# ---- the build ------------------------------------------------------------------------------
+
+def read_state():
+    try:
+        with open(STATE) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def write_state(**kw):
+    os.makedirs(BASE, exist_ok=True)
+    s = read_state() if kw.pop("keep", True) else {}
+    s.update(kw)
+    s["at"] = now_ms()
+    tmp = STATE + ".new"
+    with open(tmp, "w") as f:
+        json.dump(s, f)
+    os.replace(tmp, STATE)
+    return s
+
+
+def say(text):
+    sys.stderr.write(text.rstrip("\n") + "\n")
+    sys.stderr.flush()
+
+
+def fetch_json(url):
+    req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json", "User-Agent": "herdr-app-build"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return json.loads(r.read().decode("utf-8"))
+
+
+def ci_number(slug, sha):
+    """The run number GitHub Actions gave the Android workflow's push run of [sha]; None while there is none."""
+    path = f"repos/{slug}/actions/runs?head_sha={sha}&event=push&per_page=20"
+    runs = None
+    gh = which("gh")
+    if gh and API == "https://api.github.com":
+        try:
+            r = subprocess.run([gh, "api", path], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=30)
+            if r.returncode == 0:
+                runs = json.loads(r.stdout).get("workflow_runs")
+        except (OSError, ValueError, subprocess.SubprocessError):
+            runs = None
+    if runs is None:
+        try:
+            runs = fetch_json(f"{API}/{path}").get("workflow_runs")
+        except (OSError, ValueError, urllib.error.URLError):
+            return None
+    for run in runs or []:
+        if run.get("path") == WORKFLOW or run.get("name") == "Android":
+            return int(run["run_number"])
+    return None
+
+
+def sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def build_here(checkout, sha, number, sdk, java_home):
+    """./gradlew :app:assembleRelease of [sha] in our own worktree, with the key from herdr-secret; the APK's path."""
+    if os.path.isdir(SRC) and os.path.exists(os.path.join(SRC, ".git")):
+        git(SRC, "checkout", "--quiet", "--force", "--detach", sha)
+    else:
+        if os.path.exists(SRC):
+            shutil.rmtree(SRC)
+        git(checkout, "worktree", "prune")
+        git(checkout, "worktree", "add", "--force", "--detach", SRC, sha, timeout=300)
+    e = dict(os.environ)
+    e["GITHUB_RUN_NUMBER"] = str(number)
+    e["ANDROID_HOME"] = sdk
+    if java_home:
+        e["JAVA_HOME"] = java_home
+        e["PATH"] = os.path.join(java_home, "bin") + os.pathsep + e.get("PATH", "")
+    hs = which("herdr-secret") or "herdr-secret"
+    cmd = [hs, "run", ",".join(KEY_NAMES), "--", "./gradlew", "--no-daemon", "--console=plain", ":app:assembleRelease"]
+    with open(LOG, "ab") as log:
+        log.write(f"\n== {time.strftime('%Y-%m-%d %H:%M:%S')} build {sha[:12]} as {number}\n".encode())
+        log.flush()
+        r = subprocess.run(cmd, cwd=SRC, env=e, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
+    if r.returncode != 0:
+        why = last_line(LOG)
+        if "herdr-secret" in why or "No secret" in why:
+            raise NoKey(why)
+        raise Fail(f"The build failed (exit {r.returncode}); its log is {LOG}: {why}")
+    apk = os.path.join(SRC, "app", "build", "outputs", "apk", "release", "app-release.apk")
+    if not os.path.isfile(apk):
+        raise Fail("The build made no app-release.apk")
+    return apk
+
+
+def last_line(path):
+    try:
+        with open(path, "rb") as f:
+            lines = [x for x in f.read()[-8192:].decode("utf-8", "replace").splitlines() if x.strip()]
+        return next((x.strip() for x in reversed(lines) if "wrong" in x or "error" in x.lower() or "secret" in x), lines[-1].strip() if lines else "")[:240]
+    except OSError:
+        return ""
+
+
+def download_release(slug, number, dest):
+    """CI's release v0.1.<number>'s APK, once it is published; the file it was saved to."""
+    url = f"{RELEASES}/{slug}/releases/download/v0.1.{number}/herdr-android.apk"
+    end = time.time() + RELEASE_WAIT
+    while True:
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "herdr-app-build"})
+            with urllib.request.urlopen(req, timeout=120) as r, open(dest + ".part", "wb") as f:
+                shutil.copyfileobj(r, f)
+            os.replace(dest + ".part", dest)
+            return dest
+        except urllib.error.HTTPError as e:
+            if e.code != 404:
+                raise Fail(f"GitHub answered {e.code} for the release v0.1.{number}")
+        except (OSError, urllib.error.URLError):
+            pass
+        if time.time() >= end:
+            raise Fail(f"CI published no release v0.1.{number} in {int(RELEASE_WAIT // 60)} minutes")
+        time.sleep(POLL)
+
+
+def cmd_build(a):
+    os.makedirs(BASE, exist_ok=True)
+    lock = open(os.path.join(BASE, "lock"), "w")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        raise Fail("A build is already running here; `herdr-app-build state` says how far it is")
+    started = now_ms()
+    try:
+        checkout = find_checkout(a.checkout)
+        if not checkout:
+            raise Fail("No herdr-android checkout here" + (f" at {a.checkout}" if a.checkout else ""))
+        slug = repo_slug(checkout)
+        if not slug:
+            raise Fail("The checkout's origin isn't a GitHub repository")
+        write_state(keep=False, state="fetching", started=started)
+        say("Fetching origin's main")
+        git(checkout, "fetch", "--quiet", "origin", "main", timeout=300)
+        sha = git(checkout, "rev-parse", "origin/main")
+        subject = git(checkout, "log", "-1", "--format=%s", sha)
+        write_state(sha=sha, subject=subject)
+        number = a.number
+        if number is None:
+            write_state(state="waiting-ci")
+            say(f"Waiting for CI's run of {sha[:12]}")
+            end = time.time() + CI_WAIT
+            while True:
+                number = ci_number(slug, sha)
+                if number is not None or time.time() >= end:
+                    break
+                time.sleep(POLL)
+            if number is None:
+                raise Fail(f"GitHub Actions has no run for {sha[:12]} yet, so its version code isn't known")
+        write_state(number=number)
+        key = find_key()
+        dest = os.path.join(BASE, f"herdr-android-{number}.apk")
+        built = False
+        sdk = find_sdk(checkout)
+        java_home, _ = find_java()
+        if key != "none" and not (sdk and java_home):
+            say("The key is here but " + ("the Android SDK" if not sdk else "a JDK 17 or newer") + " isn't: CI's release instead")
+        if key != "none" and sdk and java_home:
+            write_state(state="building", source="host")
+            say(f"Building 0.1.{number} with the release key")
+            try:
+                shutil.copyfile(build_here(checkout, sha, number, sdk, java_home), dest + ".part")
+                os.replace(dest + ".part", dest)
+                built = True
+            except NoKey as e:
+                say(f"herdr-secret gave no key ({e}): CI's release instead")
+        if not built:
+            write_state(state="downloading", source="release")
+            say(f"Waiting for CI's release v0.1.{number}")
+            download_release(slug, number, dest)
+        for old in os.listdir(BASE):
+            if old.startswith("herdr-android-") and old.endswith(".apk") and os.path.join(BASE, old) != dest:
+                os.remove(os.path.join(BASE, old))
+        s = write_state(state="ready", apk=dest, size=os.path.getsize(dest), sha256=sha256(dest), error=None)
+        say(f"Ready: 0.1.{number} ({s['size']} bytes) at {dest}")
+        out(s)
+    except Fail as e:
+        write_state(state="failed", error=str(e))
+        raise
+    except Exception as e:  # anything else still ends the build as failed, with why
+        write_state(state="failed", error=f"{type(e).__name__}: {e}")
+        raise Fail(str(e))
+
+
+def cmd_state(_a):
+    out(read_state() or {"state": "none"})
+
+
+def main():
+    p = argparse.ArgumentParser(prog="herdr-app-build", description=__doc__.split("\n\n")[0])
+    sub = p.add_subparsers(dest="cmd")
+    c = sub.add_parser("check")
+    c.add_argument("--checkout")
+    b = sub.add_parser("build")
+    b.add_argument("--checkout")
+    b.add_argument("--number", type=int, help="the version code, instead of asking GitHub Actions")
+    sub.add_parser("state")
+    sub.add_parser("version")
+    a = p.parse_args()
+    try:
+        if a.cmd == "check":
+            cmd_check(a)
+        elif a.cmd == "build":
+            cmd_build(a)
+        elif a.cmd == "state":
+            cmd_state(a)
+        elif a.cmd == "version":
+            out({})
+        else:
+            p.print_help()
+            return 2
+    except Fail as e:
+        say(f"herdr-app-build: {e}")
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

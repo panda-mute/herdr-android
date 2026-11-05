@@ -91,10 +91,10 @@ data class QuietHours(
         }
 
         /**
-         * Whether [alert] waits while it is quiet: only what can wait (what finished, a watch that fired, a limit).
+         * Whether [alert] waits while it is quiet: only what can wait (what finished, a limit).
          * What needs you, what went wrong, and a test, come through.
          */
-        fun holds(alert: Alert): Boolean = alert.kind == Alert.Kind.Finished || alert.kind == Alert.Kind.Watch || alert.kind == Alert.Kind.Limits
+        fun holds(alert: Alert): Boolean = alert.kind == Alert.Kind.Finished || alert.kind == Alert.Kind.Limits
     }
 }
 

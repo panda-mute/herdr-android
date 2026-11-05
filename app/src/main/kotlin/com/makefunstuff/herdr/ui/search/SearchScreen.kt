@@ -48,7 +48,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
 import com.makefunstuff.herdr.LocalPanes
 import com.makefunstuff.herdr.Routes
-import com.makefunstuff.herdr.core.board.Approvals
 import com.makefunstuff.herdr.core.chat.ChatSearch
 import com.makefunstuff.herdr.core.search.AgentHit
 import com.makefunstuff.herdr.core.search.MachineHit
@@ -148,10 +147,7 @@ fun SearchScreen(nav: NavController, machineId: String? = null, initial: String 
         .filter { (h, hit) -> filter == SearchFilter.All || h.view?.agents?.firstOrNull { it.paneId == hit.paneId }?.let { SearchFilter.of(it.agentStatus) } == filter }
 
     fun openAgent(h: AgentHit) = panes.openAgent(nav, h.agent.machineId, h.agent.agent, hosts.any { it.machine.id == h.agent.machineId && it.onShepherdr })
-    fun openTask(t: TaskHit) {
-        val v2 = hosts.firstOrNull { it.machine.id == t.machineId }?.onShepherdr == true
-        if (Approvals.waits(t.task) && !v2) panes.open(nav, Routes.review(t.machineId, t.task.id)) else panes.openBoard(nav, t.machineId, t.task.id)
-    }
+    fun openTask(t: TaskHit) = panes.openBoard(nav, t.machineId, t.task.id)
     fun startWork(text: String) = panes.open(nav, Routes.start(scoped, text.trim().ifEmpty { null }))
     var opening by remember { mutableStateOf<String?>(null) }
     fun terminal(w: WorkspaceHit) {
@@ -320,9 +316,9 @@ private fun TaskRow(t: TaskHit, showMachine: Boolean, onClick: () -> Unit) {
     val status = t.task.status
     ListRow(
         "${t.task.name} · ${t.task.title}",
-        subtitle = listOfNotNull(if (showMachine) "${t.machineLabel} board" else t.task.repo, status.detail ?: t.task.word).joinToString(" · "),
+        subtitle = listOfNotNull(if (showMachine) "${t.machineLabel} board" else t.task.listName.ifEmpty { null }, status.label).joinToString(" · "),
         leading = { IconTile(HerdrIcons.SquareKanban, size = 36.dp) },
-        trailing = if (t.task.needsYou) ({ StatusBadge(status.word, status.color()) }) else null,
+        trailing = if (status.needsYou) ({ StatusBadge(status.word, status.color()) }) else null,
         onClickLabel = "Open the task",
         onClick = onClick,
     )

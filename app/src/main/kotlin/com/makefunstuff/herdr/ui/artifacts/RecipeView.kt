@@ -1,5 +1,7 @@
 package com.makefunstuff.herdr.ui.artifacts
 
+import androidx.compose.ui.graphics.RectangleShape
+
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -22,7 +24,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Checkbox
@@ -165,7 +166,7 @@ private fun Block(b: RecipeBlock, ctx: Ctx) {
         is RecipeBlock.Callout -> {
             val tone = when (b.tone) { "good" -> c.done; "warn" -> c.working; "bad" -> c.red; else -> c.accent }
             Row(Modifier.fillMaxWidth().clip(HerdrShapes.Field).background(tone.copy(alpha = if (c.dark) 0.14f else 0.10f)).padding(Space.m)) {
-                Box(Modifier.padding(top = 6.dp).size(8.dp).clip(CircleShape).background(tone))
+                Box(Modifier.padding(top = 6.dp).size(8.dp).clip(RectangleShape).background(tone))
                 Spacer(Modifier.width(Space.s))
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     b.title?.let { Text(it, style = t.titleSmall, color = c.strong) }
@@ -318,7 +319,7 @@ private fun Labels(labels: List<String>) {
 
 @Composable
 private fun Legend(color: Color, text: String) = Row(verticalAlignment = Alignment.CenterVertically) {
-    Box(Modifier.size(10.dp).clip(CircleShape).background(color))
+    Box(Modifier.size(10.dp).clip(RectangleShape).background(color))
     Spacer(Modifier.width(Space.xs))
     Text(text, style = MaterialTheme.typography.labelMedium, color = Herdr.colors.text)
 }

@@ -1,5 +1,7 @@
 package com.makefunstuff.herdr.ui.design
 
+import androidx.compose.ui.graphics.RectangleShape
+
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloat
@@ -25,8 +27,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -42,12 +42,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
@@ -55,6 +56,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.makefunstuff.herdr.core.chat.Dictation
 import com.makefunstuff.herdr.core.chat.VoiceRecorder
 import com.makefunstuff.herdr.ui.theme.CodeStyle
 import com.makefunstuff.herdr.ui.theme.Herdr
@@ -67,12 +69,13 @@ val VoiceRecorder.State.hearing: Boolean get() = this is VoiceRecorder.State.Rec
 /**
  * The mic in the composer's row of controls, beside Send. Held, it records until the finger lets go,
  * which sends (sliding [CANCEL_SLIDE] to the left cancels); a quick tap starts it, and the next tap
- * sends. Idle it is a dim glyph like the attach button; recording, a red circle that swells with your
- * voice (a square in it while a tap's recording waits for the next tap). One place for both, so a
- * holding finger never loses it.
+ * sends. Where it [talks] (to type), a quick tap is that instead ([VoiceRecorder.tap]), and TalkBack
+ * offers the hands-free voice message as an action. Idle it is a dim glyph like the attach button;
+ * recording, a red circle that swells with your voice (a square in it while a tap's recording waits
+ * for the next tap). One place for both, so a holding finger never loses it.
  */
 @Composable
-fun ComposerMic(recorder: VoiceRecorder, state: VoiceRecorder.State, enabled: Boolean) {
+fun ComposerMic(recorder: VoiceRecorder, state: VoiceRecorder.State, enabled: Boolean, talks: Boolean = false) {
     val c = Herdr.colors
     val view = LocalView.current
     val rec = state as? VoiceRecorder.State.Recording
@@ -80,10 +83,11 @@ fun ComposerMic(recorder: VoiceRecorder, state: VoiceRecorder.State, enabled: Bo
     val description = when {
         rec != null && rec.held -> "Recording, let go to send"
         rec != null -> "Send voice message"
+        talks -> "Talk to type"
         else -> "Record a voice message"
     }
     Box(
-        Modifier.size(48.dp).clip(CircleShape)
+        Modifier.size(48.dp).clip(RectangleShape)
             .pointerInput(recorder, enabled) {
                 if (!enabled) return@pointerInput
                 val cancelAt = CANCEL_SLIDE.toPx()
@@ -113,16 +117,17 @@ fun ComposerMic(recorder: VoiceRecorder, state: VoiceRecorder.State, enabled: Bo
                 contentDescription = description
                 if (state.hearing) stateDescription = "Recording"
                 // TalkBack's double tap: a tap, which starts it and, the next time, sends it.
-                if (enabled) onClick(label = if (rec != null) "Send" else "Record") { recorder.down(); recorder.up(0); true }
+                if (enabled) onClick(label = if (rec != null) "Send" else if (talks) "Talk to type" else "Record") { recorder.down(); recorder.up(0); true }
+                if (enabled && talks && rec == null) customActions = listOf(CustomAccessibilityAction("Record a voice message") { recorder.record(); true })
             },
         contentAlignment = Alignment.Center,
     ) {
         if (rec != null) {
             // How loud you are: a soft ring round the circle.
-            Box(Modifier.size(halo).background(c.red.copy(alpha = 0.22f), CircleShape))
-            Box(Modifier.size(32.dp).background(c.red, CircleShape), contentAlignment = Alignment.Center) {
+            Box(Modifier.size(halo).background(c.red.copy(alpha = 0.22f), RectangleShape))
+            Box(Modifier.size(32.dp).background(c.red, RectangleShape), contentAlignment = Alignment.Center) {
                 if (rec.held) Icon(HerdrIcons.Mic, null, tint = c.ground, modifier = Modifier.size(16.dp))
-                else Box(Modifier.size(10.dp).background(c.ground, RoundedCornerShape(2.dp)))
+                else Box(Modifier.size(10.dp).background(c.ground, RectangleShape))
             }
         } else {
             Icon(HerdrIcons.Mic, null, tint = if (enabled) c.muted else c.off, modifier = Modifier.size(20.dp))
@@ -154,7 +159,7 @@ fun RecordingLevels(state: VoiceRecorder.State) {
         Text("Recording a voice message", style = MaterialTheme.typography.bodyLarge, color = c.text, maxLines = 1)
         Row(Modifier.fillMaxWidth().height(24.dp), horizontalArrangement = Arrangement.spacedBy(3.dp), verticalAlignment = Alignment.CenterVertically) {
             levels.forEach { l ->
-                Box(Modifier.weight(1f).height(4.dp + 20.dp * l).background(c.red.copy(alpha = 0.35f + 0.65f * l), RoundedCornerShape(2.dp)))
+                Box(Modifier.weight(1f).height(4.dp + 20.dp * l).background(c.red.copy(alpha = 0.35f + 0.65f * l), RectangleShape))
             }
         }
     }
@@ -184,7 +189,7 @@ fun RowScope.RecordingInfo(recorder: VoiceRecorder, state: VoiceRecorder.State) 
     else Spacer(Modifier.width(Space.l))
     val pulse = rememberInfiniteTransition(label = "recording")
     val alpha by pulse.animateFloat(0.35f, 1f, infiniteRepeatable(tween(600), RepeatMode.Reverse), label = "dot")
-    Box(Modifier.size(8.dp).alpha(if (rec != null) alpha else 0.5f).background(c.red, CircleShape))
+    Box(Modifier.size(8.dp).alpha(if (rec != null) alpha else 0.5f).background(c.red, RectangleShape))
     Spacer(Modifier.width(Space.s))
     Text(VoiceRecorder.elapsed(now - started), style = CodeStyle, color = c.strong, maxLines = 1)
     val hint = when {
@@ -201,6 +206,91 @@ fun RowScope.RecordingInfo(recorder: VoiceRecorder, state: VoiceRecorder.State) 
         overflow = TextOverflow.Ellipsis,
         modifier = Modifier.weight(1f).padding(horizontal = Space.m).semantics { liveRegion = LiveRegionMode.Polite },
     ) else Spacer(Modifier.weight(1f))
+}
+
+/**
+ * Talk to type, in the message box's place: the words heard so far as you speak (the phone's
+ * recogniser writes them as it goes), else "Listening…", over bars that follow how loud you are;
+ * once Done is pressed, "Writing it down…".
+ */
+@Composable
+fun DictationLevels(state: Dictation.State) {
+    val c = Herdr.colors
+    val listening = state as? Dictation.State.Listening
+    val level = listening?.level ?: 0f
+    val levels = remember { mutableStateListOf<Float>().apply { repeat(LEVEL_BARS) { add(0f) } } }
+    LaunchedEffect(level) {
+        levels.removeAt(0)
+        levels.add(level)
+    }
+    val heard = listening?.heard.orEmpty()
+    Column(
+        Modifier.fillMaxWidth().padding(start = Space.l, end = Space.l, top = Space.m + Space.xxs, bottom = Space.xs)
+            .semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite },
+        verticalArrangement = Arrangement.spacedBy(Space.s),
+    ) {
+        when {
+            state is Dictation.State.Writing -> Text("Writing it down…", style = MaterialTheme.typography.bodyLarge, color = c.muted, maxLines = 1)
+            heard.isNotEmpty() -> Text(heard, style = MaterialTheme.typography.bodyLarge, color = c.strong, maxLines = 4, overflow = TextOverflow.Ellipsis)
+            else -> Text("Listening… speak, then Done", style = MaterialTheme.typography.bodyLarge, color = c.muted, maxLines = 1)
+        }
+        Row(Modifier.fillMaxWidth().height(24.dp), horizontalArrangement = Arrangement.spacedBy(3.dp), verticalAlignment = Alignment.CenterVertically) {
+            levels.forEach { l ->
+                Box(Modifier.weight(1f).height(4.dp + 20.dp * l).background(c.text.copy(alpha = 0.25f + 0.65f * l), RectangleShape))
+            }
+        }
+    }
+}
+
+/**
+ * The left of the controls while you talk to type: an X that drops it, a pulsing dot and how long
+ * you've spoken, and "Talk to type". Ticks the [dictation] along ([Dictation.tick]).
+ */
+@Composable
+fun RowScope.DictationInfo(dictation: Dictation, state: Dictation.State) {
+    val c = Herdr.colors
+    var now by remember { mutableLongStateOf(dictation.clock()) }
+    LaunchedEffect(dictation) {
+        while (true) {
+            now = dictation.clock()
+            dictation.tick()
+            kotlinx.coroutines.delay(150)
+        }
+    }
+    val listening = state is Dictation.State.Listening
+    val started = (state as? Dictation.State.Listening)?.startedAt ?: (state as? Dictation.State.Writing)?.startedAt ?: now
+    ComposerIconButton(HerdrIcons.X, "Cancel talk to type", onClick = dictation::cancel)
+    val pulse = rememberInfiniteTransition(label = "dictating")
+    val alpha by pulse.animateFloat(0.35f, 1f, infiniteRepeatable(tween(600), RepeatMode.Reverse), label = "dot")
+    Box(Modifier.size(8.dp).alpha(if (listening) alpha else 0.5f).background(c.red, RectangleShape))
+    Spacer(Modifier.width(Space.s))
+    Text(VoiceRecorder.elapsed(now - started), style = CodeStyle, color = c.strong, maxLines = 1)
+    Text(
+        if (listening) "Talk to type" else "Writing",
+        style = MaterialTheme.typography.labelMedium,
+        color = c.muted,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier.weight(1f).padding(horizontal = Space.m),
+    )
+}
+
+/** Over the composer when talk to type went wrong: what to do, and OK. */
+@Composable
+fun DictationNotice(message: String, onDismiss: () -> Unit) {
+    val c = Herdr.colors
+    Surface(color = c.card, border = BorderStroke(1.dp, c.line), shape = RectangleShape, modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(start = Space.l, end = Space.s, top = Space.m)) {
+            Row(Modifier.padding(end = Space.s).semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite }) {
+                Icon(HerdrIcons.CircleAlert, null, tint = c.notice, modifier = Modifier.padding(top = 2.dp).size(16.dp))
+                Spacer(Modifier.width(Space.s))
+                Text(message, style = MaterialTheme.typography.bodyMedium, color = c.text, modifier = Modifier.weight(1f))
+            }
+            Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+                QuietButton(onClick = onDismiss) { Text("OK") }
+            }
+        }
+    }
 }
 
 /** Where a voice message of yours is: with the agent, on its way, waiting for the machine, or not sent ([Failed.why]). */
@@ -252,7 +342,7 @@ fun VoiceBubble(
             Column(Modifier.padding(start = Space.s, end = Space.l, top = Space.s, bottom = Space.s)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(
-                        Modifier.size(40.dp).clip(CircleShape).background(c.accent.copy(alpha = 0.16f))
+                        Modifier.size(40.dp).clip(RectangleShape).background(c.accent.copy(alpha = 0.16f))
                             .clickable(onClickLabel = if (playing) "Pause" else "Play", role = Role.Button, onClick = onPlay)
                             .semantics { contentDescription = if (playing) "Pause voice message" else "Play voice message" },
                         contentAlignment = Alignment.Center,
@@ -270,7 +360,7 @@ fun VoiceBubble(
                         repeat(bars) { i ->
                             val h = 0.3f + 0.7f * (((i * 37 + millis / 1000 * 11) % 17) / 16f)
                             val on = (i + 0.5f) / bars <= done
-                            Box(Modifier.weight(1f).height(24.dp * h).background(if (on) c.accent else c.faint.copy(alpha = 0.5f), RoundedCornerShape(1.dp)))
+                            Box(Modifier.weight(1f).height(24.dp * h).background(if (on) c.accent else c.faint.copy(alpha = 0.5f), RectangleShape))
                         }
                     }
                     Spacer(Modifier.width(Space.m))
@@ -313,14 +403,14 @@ private const val BUBBLE_BARS = 28
 @Composable
 fun MicNotice(recorder: VoiceRecorder, state: VoiceRecorder.State) {
     val c = Herdr.colors
-    val shape = RoundedCornerShape(Radius.xl)
+    val shape = RectangleShape
     val noMic = state as? VoiceRecorder.State.NoMic
     val asking = state == VoiceRecorder.State.Asking
     Surface(
         color = c.card,
         border = BorderStroke(1.dp, c.line),
         shape = shape,
-        modifier = Modifier.fillMaxWidth().shadow(6.dp, shape, ambientColor = c.shadow, spotColor = c.shadow),
+        modifier = Modifier.fillMaxWidth(),
     ) {
         Column(Modifier.padding(start = Space.l, end = Space.s, top = Space.m, bottom = if (asking) Space.m else 0.dp)) {
             Row(Modifier.padding(end = Space.s).semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite }) {
@@ -343,7 +433,7 @@ fun MicNotice(recorder: VoiceRecorder, state: VoiceRecorder.State) {
                     if (asking) {
                         Text("Allow the microphone", style = MaterialTheme.typography.bodyLarge, color = c.strong)
                         Text(
-                            "So you can send a voice message. The phone records what you say and sends the recording to the agent.",
+                            "So you can talk to type, or send a voice message: tap the mic to have what you say written into the box, hold it to send the recording.",
                             style = MaterialTheme.typography.bodySmall,
                             color = c.muted,
                         )

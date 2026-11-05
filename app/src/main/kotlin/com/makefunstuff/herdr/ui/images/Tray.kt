@@ -1,5 +1,7 @@
 package com.makefunstuff.herdr.ui.images
 
+import androidx.compose.ui.graphics.RectangleShape
+
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -12,7 +14,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -191,13 +192,13 @@ private fun TrayThumb(
         }
         Box(
             Modifier.align(Alignment.TopEnd).size(32.dp)
-                .clip(CircleShape).clickable(role = Role.Button, onClick = onRemove)
+                .clip(RectangleShape).clickable(role = Role.Button, onClick = onRemove)
                 .semantics { contentDescription = "Remove ${image.name}" }
                 .padding(start = 6.dp, bottom = 6.dp),
             contentAlignment = Alignment.TopEnd,
         ) {
             Box(
-                Modifier.size(22.dp).clip(CircleShape).background(c.strong).hairline(CircleShape, c.ground),
+                Modifier.size(22.dp).clip(RectangleShape).background(c.strong).hairline(RectangleShape, c.ground),
                 contentAlignment = Alignment.Center,
             ) { Icon(HerdrIcons.X, null, tint = c.ground, modifier = Modifier.size(13.dp)) }
         }

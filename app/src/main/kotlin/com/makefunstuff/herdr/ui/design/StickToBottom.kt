@@ -1,5 +1,7 @@
 package com.makefunstuff.herdr.ui.design
 
+import androidx.compose.ui.graphics.RectangleShape
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -13,7 +15,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -31,7 +32,6 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.Dp
@@ -170,11 +170,11 @@ fun BoxScope.NewestButton(stick: ChatStick, bottom: Dp) {
 @Composable
 fun NewMessagesPill(count: Int, onClick: () -> Unit) {
     val c = Herdr.colors
-    val shape = RoundedCornerShape(50)
+    val shape = RectangleShape
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.heightIn(min = 48.dp).padding(vertical = 6.dp)
-            .shadow(8.dp, shape).clip(shape).background(c.card).border(1.dp, c.line, shape)
+            .clip(shape).background(c.card).border(1.dp, c.line, shape)
             .clickable(role = Role.Button, onClickLabel = "Go to the newest", onClick = onClick)
             .padding(horizontal = Space.l, vertical = Space.s),
     ) {

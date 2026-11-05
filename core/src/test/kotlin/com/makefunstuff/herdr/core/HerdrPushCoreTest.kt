@@ -128,7 +128,7 @@ class HerdrPushCoreTest {
             )
             assertEquals(0, sh(dir, env, HerdrPush.installCommand(), HerdrPush.script))
             val key = PushSeal.newKey()
-            val sub = HerdrPush.subscription(HerdrPush.subscriberId("phone1", "m1"), "Pixel", "http://127.0.0.1:${server.address.port}/up", key, "default", herdr?.path, null)
+            val sub = HerdrPush.subscription(HerdrPush.subscriberId("phone1", "m1"), "Pixel", "http://127.0.0.1:${server.address.port}/up", key, "default", herdr?.path)
             assertEquals(0, sh(dir, env, HerdrPush.command("subscribe"), sub))
 
             // The first look only learns how things stand.

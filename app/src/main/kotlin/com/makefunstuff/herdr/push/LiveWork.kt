@@ -2,8 +2,6 @@ package com.makefunstuff.herdr.push
 
 import com.makefunstuff.herdr.core.api.AgentStatus
 import com.makefunstuff.herdr.core.api.SessionSnapshot
-import com.makefunstuff.herdr.core.board.BoardAction
-import com.makefunstuff.herdr.core.board.BoardTask
 import com.makefunstuff.herdr.core.chat.AgentInput
 import com.makefunstuff.herdr.core.host.HostSession
 import com.makefunstuff.herdr.core.push.LiveChanges
@@ -15,7 +13,6 @@ import com.makefunstuff.herdr.data.HostManager
 import com.makefunstuff.herdr.data.MachineStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -38,16 +35,14 @@ interface LiveSink {
 enum class LiveLook {
     /** Its Stop button. */
     Normal,
-    /** "Stop it?", with Stop it and Keep going: a task's Stop asks first. */
-    Ask,
     /** Stopping, or just stopped: no buttons. */
     Busy,
 }
 
 /**
- * Live Updates for what runs on the machines: running board tasks and working agents, from pushes
- * (herdr-push's live event), from what the app sees while on screen, and from its own looks while
- * closed. Their Stop button: Esc to an agent, the board's `stop` for a task, over SSH. During quiet
+ * Live Updates for the working agents on the machines, from pushes (herdr-push's live event), from what
+ * the app sees while on screen, and from its own looks while closed. Their Stop button: Esc to the agent,
+ * over SSH. During quiet
  * hours ([quiet]) they are taken down and still followed, and come back up when quiet hours end.
  */
 class LiveWork(
@@ -64,8 +59,7 @@ class LiveWork(
     @Volatile private var adopted = false
     /** Taken down for quiet hours. */
     @Volatile private var hushed = false
-    /** Live Updates showing "Stop it?" (with the job that puts them back) or being stopped: updates leave them be. */
-    private val asking = HashMap<String, Job>()
+    /** Live Updates being stopped: updates leave them be. */
     private val busy = HashSet<String>()
     /** When the app last posted a machine's agents again while on screen, so they outlast their timeout. */
     private val refreshed = HashMap<String, Long>()
@@ -114,47 +108,21 @@ class LiveWork(
     fun received(machineId: String, label: String, event: PushEvent.Live, at: Long, now: Long = System.currentTimeMillis()) {
         if (!on || store.state.value.machine(machineId).off) return
         adopt()
-        val (agents, tasks) = LiveItems.of(machineId, label, event, at, now)
         // The machine still watches: each one is posted again, so it stays up.
-        agents?.let { apply(tracker.update(machineId, LiveItem.Kind.Agent, it, refresh = true)) }
-        tasks?.let { apply(tracker.update(machineId, LiveItem.Kind.Task, it, refresh = true)) }
+        LiveItems.of(machineId, label, event, at, now)?.let { apply(tracker.update(machineId, LiveItem.Kind.Agent, it, refresh = true)) }
     }
 
-    /** The app's own look at [machineId]: its agents and, when the board answered, its tasks. */
-    fun looked(machineId: String, label: String, snapshot: SessionSnapshot, tasks: List<BoardTask>?) {
+    /** The app's own look at [machineId]: its agents. */
+    fun looked(machineId: String, label: String, snapshot: SessionSnapshot) {
         if (!on || store.state.value.machine(machineId).off) return
         adopt()
         apply(tracker.update(machineId, LiveItem.Kind.Agent, LiveItems.agents(machineId, label, snapshot), refresh = true))
-        tasks?.let { apply(tracker.update(machineId, LiveItem.Kind.Task, LiveItems.tasks(machineId, label, it), refresh = true)) }
-    }
-
-    /** A task's Stop: asks first, and goes back to its Stop button after a while without an answer. */
-    fun ask(item: LiveItem) {
-        val current = tracker.item(item.tag) ?: item
-        synchronized(asking) {
-            asking.remove(item.tag)?.cancel()
-            asking[item.tag] = scope.launch {
-                delay(ASK_MS)
-                synchronized(asking) { asking.remove(item.tag) }
-                if (!hushed) tracker.item(item.tag)?.let { sink.show(it) }
-            }
-        }
-        sink.show(current, LiveLook.Ask)
-    }
-
-    /** Keep going: the Stop button again. */
-    fun keep(item: LiveItem) {
-        synchronized(asking) { asking.remove(item.tag)?.cancel() }
-        sink.show(tracker.item(item.tag) ?: item)
     }
 
     /** Stops [item] over SSH, with how it went on the Live Update. It comes down when the machine says it stopped. */
     suspend fun stop(item: LiveItem) {
         val tag = item.tag
-        synchronized(asking) {
-            asking.remove(tag)?.cancel()
-            busy += tag
-        }
+        synchronized(busy) { busy += tag }
         sink.show(tracker.item(tag) ?: item, LiveLook.Busy, "Stopping…")
         val problem = try {
             withTimeout(90_000) { hosts.borrow(item.machineId) { s -> act(s, item) } }
@@ -166,32 +134,24 @@ class LiveWork(
         } catch (t: Throwable) {
             t.message ?: "Couldn't stop it"
         } finally {
-            synchronized(asking) { busy -= tag }
+            synchronized(busy) { busy -= tag }
         }
         val now = tracker.item(tag) ?: if (problem != null) item else return
         if (problem != null) return sink.show(now, LiveLook.Normal, problem)
-        sink.show(now, LiveLook.Busy, if (item.kind == LiveItem.Kind.Task) "Stopped its agent" else "Esc sent: it stops after this step")
+        sink.show(now, LiveLook.Busy, "Esc sent: it stops after this step")
         // Still running a while later (Esc only interrupts a step): its Stop button again.
         scope.launch {
             delay(AFTER_STOP_MS)
-            val held = synchronized(asking) { tag in busy || tag in asking }
+            val held = synchronized(busy) { tag in busy }
             if (!held && !hushed) tracker.item(tag)?.let { sink.show(it) }
         }
     }
 
-    private suspend fun act(s: HostSession, item: LiveItem) = when (item.kind) {
-        LiveItem.Kind.Agent -> {
-            val port = s.awaitAgent(item.paneId)
-            if (port.status(item.paneId) != AgentStatus.Working) throw IOException("It isn't working any more.")
-            AgentInput.keys(port, item.paneId, listOf("esc"), named = true)
-            s.refresh()
-        }
-        LiveItem.Kind.Task -> {
-            s.awaitConnection()
-            if (!s.state.value.hasBoard) s.checkBoard()
-            s.awaitBoard().act(BoardAction.Stop, item.taskId)
-            Unit
-        }
+    private suspend fun act(s: HostSession, item: LiveItem) {
+        val port = s.awaitAgent(item.paneId)
+        if (port.status(item.paneId) != AgentStatus.Working) throw IOException("It isn't working any more.")
+        AgentInput.keys(port, item.paneId, listOf("esc"), named = true)
+        s.refresh()
     }
 
     /** Live Updates up from before the app started (it was closed by Android): known, so they can come down. */
@@ -213,7 +173,7 @@ class LiveWork(
     private fun wake() {
         if (!hushed) return
         hushed = false
-        val held = synchronized(asking) { asking.keys + busy }
+        val held = synchronized(busy) { busy.toSet() }
         for (i in tracker.items()) if (i.tag !in held) sink.show(i)
     }
 
@@ -224,10 +184,7 @@ class LiveWork(
             c.cancel.forEach(sink::cancel)
             return
         }
-        val held = synchronized(asking) {
-            for (tag in c.cancel) asking.remove(tag)?.cancel()
-            asking.keys + busy
-        }
+        val held = synchronized(busy) { busy.toSet() }
         c.cancel.forEach(sink::cancel)
         for (i in c.post) if (i.tag !in held) sink.show(i)
     }
@@ -236,7 +193,6 @@ class LiveWork(
         /** A Live Update nothing confirmed for this long comes down by itself (Android's timeout): its machine may be gone. */
         const val TIMEOUT_MS = 75L * 60 * 1000
         private const val REFRESH_MS = 10L * 60 * 1000
-        private const val ASK_MS = 15_000L
         private const val AFTER_STOP_MS = 20_000L
     }
 }

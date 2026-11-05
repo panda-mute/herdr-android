@@ -1,5 +1,7 @@
 package com.makefunstuff.herdr.ui.board
 
+import com.makefunstuff.herdr.ui.design.LocalScreenChange
+import com.makefunstuff.herdr.ui.change.ChangeScreenRow
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -128,7 +130,7 @@ internal fun WorkTaskContent(
             containerColor = c.ground,
             topBar = {
                 HerdrTopBar(t.name, subtitle = space.ifEmpty { null }, onBack = onBack, backLabel = "Back to the board") {
-                    if (canClose) BarIcon(HerdrIcons.Ellipsis, "More", { menu = true })
+                    if (canClose || LocalScreenChange.current != null) BarIcon(HerdrIcons.Ellipsis, "More", { menu = true })
                 }
             },
             // Only the one thing it waits for sits under the thumb: Close is in ⋯.
@@ -191,7 +193,8 @@ internal fun WorkTaskContent(
             }
         }
         if (menu) BoardPanel("${t.name} · ${t.title}", onDismiss = { menu = false }) {
-            MenuRow("Close, nothing merged…", HerdrIcons.CircleStop, { menu = false; onClose() }, enabled = busy == null, destructive = true)
+            ChangeScreenRow { menu = false }
+            if (canClose) MenuRow("Close, nothing merged…", HerdrIcons.CircleStop, { menu = false; onClose() }, enabled = busy == null, destructive = true)
         }
     }
 }

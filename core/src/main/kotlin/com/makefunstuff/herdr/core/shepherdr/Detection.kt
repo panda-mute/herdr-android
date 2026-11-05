@@ -5,7 +5,7 @@ import com.makefunstuff.herdr.core.ssh.MachineConnection
 import com.makefunstuff.herdr.core.ssh.PortForward
 import kotlinx.coroutines.CancellationException
 
-/** Which board a machine runs: Shepherdr 3 when its service answers with 3.x or later, else herdr-projects 1.x's launcher. */
+/** Which board a machine runs: Shepherdr 3 when its service answers with 3.x or later. */
 object BoardDetection {
     /** The service's port on the machine's 127.0.0.1 (`SHEPHERDR_PORT`'s default, `service/paths.ts`). */
     const val PORT = 7788
@@ -19,12 +19,8 @@ object BoardDetection {
      */
     const val TOKEN_COMMAND = "cat \"\${SHEPHERDR_DATA:-\$HOME/.herdr/shepherdr}/token\" 2>/dev/null; true"
 
-    /** Shepherdr wins when both answer: the v1 launcher may be an old one left on disk. */
-    fun decide(v3: V2Version?, v1Path: String?): BoardApi = when {
-        v3 != null && v3.major >= MIN_MAJOR -> BoardApi.V2(v3.version)
-        v1Path != null -> BoardApi.V1(v1Path)
-        else -> BoardApi.None
-    }
+    /** Shepherdr 3 where its service answers, else none. */
+    fun decide(v3: V2Version?): BoardApi = if (v3 != null && v3.major >= MIN_MAJOR) BoardApi.V2(v3.version) else BoardApi.None
 
     /** What answers on [transport] (`/api/health`), or null when nothing (or not Shepherdr 3) does. */
     suspend fun probe(transport: ShepherdrTransport): V2Version? = try {

@@ -1,5 +1,6 @@
 package com.makefunstuff.herdr.ui.code
 
+import com.makefunstuff.herdr.ui.change.ChangeScreenRow
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -157,9 +158,9 @@ private fun Checkout(
                 BarIcon(HerdrIcons.MessageSquare, "Comments", { nav.navigate(Routes.codeNotes(spot)) }, badge = pending)
                 BarIcon(HerdrIcons.Ellipsis, "More", { menu = true })
                 HerdrMenu(expanded = menu, onDismissRequest = { menu = false }, title = info.name, subtitle = host.shortPath(info.top)) {
-                    MenuRow("Other checkouts", HerdrIcons.FolderGit2, { menu = false; nav.navigate(Routes.codeRepos(spot.machine)) })
                     MenuRow("Read it again", HerdrIcons.RefreshCw, { menu = false; onRefresh() })
                     MenuRow("Copy the folder's path", HerdrIcons.Copy, { menu = false; context.copyToClipboard("Folder", info.top) })
+                    ChangeScreenRow { menu = false }
                 }
             }
         },
@@ -183,7 +184,7 @@ private fun Checkout(
 // ---- Files --------------------------------------------------------------------------------------
 
 @Composable
-private fun FilesTab(nav: NavController, session: HostSession, spot: CodeSpot, store: CodeStore, again: Int) {
+internal fun FilesTab(nav: NavController, session: HostSession, spot: CodeSpot, store: CodeStore, again: Int) {
     val files = rememberLoad("files:${spot.machine}:${spot.dir}", store.cache, again) { FileTree(session.code().files(spot.dir)) }
     var folder by rememberSaveable(spot.dir) { mutableStateOf("") }
     var query by rememberSaveable { mutableStateOf("") }
@@ -321,7 +322,7 @@ object DiffSource {
 }
 
 @Composable
-private fun ChangesTab(nav: NavController, session: HostSession, spot: CodeSpot, info: CheckoutInfo, store: CodeStore, again: Int) {
+internal fun ChangesTab(nav: NavController, session: HostSession, spot: CodeSpot, info: CheckoutInfo, store: CodeStore, again: Int) {
     var uncommitted by rememberSaveable { mutableStateOf(info.base.isEmpty()) }
     val status = rememberLoad("status:${spot.machine}:${spot.dir}", store.cache, again) { session.code().status(spot.dir) }
     val src = if (uncommitted) DiffSource.UNCOMMITTED else DiffSource.base(info.base)

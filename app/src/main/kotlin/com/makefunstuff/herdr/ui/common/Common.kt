@@ -1,5 +1,7 @@
 package com.makefunstuff.herdr.ui.common
 
+import androidx.compose.ui.graphics.RectangleShape
+
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -11,7 +13,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -36,12 +37,12 @@ val LocalContainer = staticCompositionLocalOf<AppContainer> { error("no containe
 
 @Composable
 fun StatusDot(color: Color, modifier: Modifier = Modifier, size: Int = 8) {
-    Box(modifier.size(size.dp).background(color, CircleShape))
+    Box(modifier.size(size.dp).background(color, RectangleShape))
 }
 
 /**
- * A small label. Neutral, it is the web UI's `.pill`: dim text in a hairline pill. With [color], a
- * badge: the state colour's tint with the colour itself as text, `--radius-sm`.
+ * A small label. Neutral: dim text in a framed cell. With [color], the state colour as text on its
+ * tint. Square, as everything on the workbench.
  */
 @Composable
 fun Pill(text: String, color: Color? = null, container: Color? = null) {
@@ -55,15 +56,16 @@ fun Pill(text: String, color: Color? = null, container: Color? = null) {
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
         modifier = Modifier.clip(shape).background(container ?: tone?.let { c.tint(it) } ?: Color.Transparent)
-            .hairline(shape, if (tone == null && container == null) c.line else Color.Transparent)
+            .hairline(shape, if (tone == null && container == null) c.lineStrong else Color.Transparent)
             .padding(horizontal = 8.dp, vertical = 2.dp),
     )
 }
 
-/** A whole screen with nothing to show: icon, title, a sentence, maybe a button. */
+/** A whole screen with nothing to show: icon, title, a sentence, maybe a button, over the quiet circuit board. */
 @Composable
 fun EmptyState(title: String, body: String, icon: ImageVector = HerdrIcons.Inbox, action: (@Composable () -> Unit)? = null) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        com.makefunstuff.herdr.ui.design.CircuitBackdrop(Modifier.matchParentSize())
         StateBlock(icon, title, body, action = action)
     }
 }

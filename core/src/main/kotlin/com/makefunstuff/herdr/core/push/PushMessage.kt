@@ -2,8 +2,6 @@ package com.makefunstuff.herdr.core.push
 
 import com.makefunstuff.herdr.core.api.AgentInfo
 import com.makefunstuff.herdr.core.api.HerdrJson
-import com.makefunstuff.herdr.core.board.BoardTask
-import com.makefunstuff.herdr.core.board.BoardTasks
 import com.makefunstuff.herdr.core.health.Disk
 import com.makefunstuff.herdr.core.health.HealthReport
 import com.makefunstuff.herdr.core.health.Memory
@@ -16,29 +14,21 @@ import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.longOrNull
 
-/** One thing a machine tells the phone: an agent's or a task's new state, or a test. */
+/** One thing a machine tells the phone: an agent's new state, or a test. */
 sealed interface PushEvent {
     /** [agent] as `session.snapshot` gives it; [screen] is the bottom of a blocked agent's screen. */
     data class Agent(val agent: AgentInfo, val where: String, val screen: String? = null) : PushEvent
 
-    data class Task(val task: BoardTask) : PushEvent
-
     data object Test : PushEvent
 
     /**
-     * What runs on the machine now, for Live Updates: every working agent and, where the machine has
-     * the board, every running task. A list that is null wasn't looked at; the one before still holds.
+     * What runs on the machine now, for Live Updates: every working agent. Null when it wasn't looked at;
+     * the list before still holds.
      */
-    data class Live(val agents: List<LiveAgent>?, val tasks: List<LiveTask>?) : PushEvent
+    data class Live(val agents: List<LiveAgent>?) : PushEvent
 
     /** The machine runs low on RAM or a disk, or (with nothing in [HealthReport.low]) has room again. */
     data class Health(val report: HealthReport) : PushEvent
-
-    /**
-     * An AI quick command ended there: run [id] of [name], in [state] (`done`, `failed`, `limit`),
-     * with the start of its answer ([text]) or why it failed ([error]).
-     */
-    data class Quick(val id: String, val name: String, val state: String, val text: String = "", val error: String = "", val cwd: String = "") : PushEvent
 
     /**
      * A provider's [limit] passed a mark ([level] 80, 95 or 100), or (level 0) is back under them after
@@ -46,23 +36,10 @@ sealed interface PushEvent {
      */
     data class Usage(val provider: String, val name: String, val limit: UsageLimit, val level: Int) : PushEvent
 
-    /**
-     * The board's fallback took a task over from one agent to another because of a limit ([why], in the
-     * board's words: "out of allowance until 17:00"). [role]: `worker` or `reviewer`; [at] the board's time, ms.
-     */
-    data class Takeover(
-        val taskId: String, val key: String, val title: String, val role: String,
-        val from: String, val to: String, val why: String, val at: Long,
-    ) : PushEvent {
-        val name: String get() = key.ifEmpty { taskId }
-    }
 }
 
 /** A working agent; [since] is when it started working (the machine's clock, seconds; 0 unknown). [workspace]: its workspace's label. */
 data class LiveAgent(val agent: AgentInfo, val where: String, val since: Long = 0, val workspace: String = "")
-
-/** A running task; [reviews] is how many reviews it gets at most, when known. [since]: when its current part began. */
-data class LiveTask(val task: BoardTask, val reviews: Int? = null, val since: Long = 0)
 
 /**
  * A push from herdr-push (host/herdr-push): `{"v":1,"host":…,"at":…,"events":[…],"present":{…}}`, sealed.
@@ -110,7 +87,6 @@ object PushMessages {
         "agent" -> (e["agent"] as? JsonObject)?.let { a ->
             runCatching { HerdrJson.decodeFromJsonElement(AgentInfo.serializer(), a) }.getOrNull()
         }?.let { PushEvent.Agent(it, e.str("where"), e.str("screen").ifEmpty { null }) }
-        "task" -> (e["task"] as? JsonObject)?.let { BoardTasks.task(it, e.str("key")) }?.let { PushEvent.Task(it) }
         "test" -> PushEvent.Test
         "live" -> PushEvent.Live(
             agents = (e["agents"] as? JsonArray)?.mapNotNull { x ->
@@ -118,16 +94,8 @@ object PushMessages {
                 val a = (o["agent"] as? JsonObject)?.let { runCatching { HerdrJson.decodeFromJsonElement(AgentInfo.serializer(), it) }.getOrNull() }
                 a?.let { LiveAgent(it, o.str("where"), o.long("since"), o.str("workspace")) }
             },
-            tasks = (e["tasks"] as? JsonArray)?.mapNotNull { x ->
-                val o = x as? JsonObject ?: return@mapNotNull null
-                (o["task"] as? JsonObject)?.let { BoardTasks.task(it, o.str("key")) }
-                    ?.let { LiveTask(it, o.long("reviews").takeIf { r -> r > 0 }?.toInt(), o.long("since")) }
-            },
         )
         "health" -> PushEvent.Health(health(e))
-        "quick" -> e.str("id").takeIf { it.isNotEmpty() }?.let {
-            PushEvent.Quick(it, e.str("name").ifEmpty { it }, e.str("state"), e.str("text"), e.str("error"), e.str("cwd"))
-        }
         "usage" -> (e["limit"] as? JsonObject)?.let { l ->
             val percent = (l["percent"] as? JsonPrimitive)?.takeIf { !it.isString }?.doubleOrNull ?: return@let null
             val limit = UsageLimit(
@@ -136,11 +104,6 @@ object PushMessages {
                 estimated = (l["estimated"] as? JsonPrimitive)?.booleanOrNull == true,
             )
             e.str("provider").takeIf { it.isNotEmpty() }?.let { PushEvent.Usage(it, e.str("name").ifEmpty { it }, limit, e.long("level").toInt()) }
-        }
-        "takeover" -> (e["task"] as? JsonObject)?.let { t ->
-            t.str("id").takeIf { it.isNotEmpty() }?.let {
-                PushEvent.Takeover(it, e.str("key"), t.str("title"), e.str("role"), e.str("from"), e.str("to"), e.str("why"), e.long("at"))
-            }
         }
         else -> null
     }

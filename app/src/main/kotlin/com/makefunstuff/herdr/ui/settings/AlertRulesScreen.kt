@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -19,18 +18,21 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import com.makefunstuff.herdr.core.push.AlertRules
-import com.makefunstuff.herdr.core.push.Watch
+import com.makefunstuff.herdr.core.push.Notify
 import com.makefunstuff.herdr.ui.common.LocalContainer
 import com.makefunstuff.herdr.ui.design.HerdrIcons
 import com.makefunstuff.herdr.ui.design.HerdrTopBar
 import com.makefunstuff.herdr.ui.design.IconTile
 import com.makefunstuff.herdr.ui.design.ListRow
 import com.makefunstuff.herdr.ui.design.Notice
+import com.makefunstuff.herdr.ui.design.QuietButton
 import com.makefunstuff.herdr.ui.design.QuietCard
 import com.makefunstuff.herdr.ui.design.RowDivider
 import com.makefunstuff.herdr.ui.design.SectionHeading
@@ -40,8 +42,8 @@ import com.makefunstuff.herdr.ui.theme.Space
 
 /**
  * What reaches the phone (Settings → Notifications): a switch for each kind (Needs you, Finished,
- * Went wrong), keeping quiet while you are at a machine, and the one-shot watches set from the
- * long-press sheets.
+ * Went wrong), keeping quiet while you are at a machine, and the spaces that picked their own Notify
+ * (in the drawer or an agent's long-press sheet), each with Reset.
  */
 @Composable
 fun AlertRulesScreen(nav: NavHostController) {
@@ -82,13 +84,13 @@ fun AlertRulesScreen(nav: NavHostController) {
                 RowDivider(inset = 0.dp)
                 SwitchRow(
                     "Finished",
-                    detail = "An agent ended its turn, an AI quick command is done. Off by default: the agents you care about, watch instead.",
+                    detail = "An agent ended its turn, an AI quick command is done. Off by default: for the spaces you care about, pick Notify: All instead.",
                     checked = r.finished,
                 ) { on -> change { it.copy(finished = on) } }
                 RowDivider(inset = 0.dp)
                 SwitchRow(
                     "Went wrong",
-                    detail = "A review or a check failed, a task or a quick command went wrong. Comes through quiet hours.",
+                    detail = "A review or a check failed, or a task went wrong. Comes through quiet hours.",
                     checked = r.wentWrong,
                 ) { on -> change { it.copy(wentWrong = on) } }
                 RowDivider(inset = 0.dp)
@@ -116,50 +118,44 @@ fun AlertRulesScreen(nav: NavHostController) {
                 style = MaterialTheme.typography.bodySmall, color = c.muted, modifier = Modifier.padding(top = Space.s),
             )
 
-            SectionHeading("Watches")
-            if (st.watches.isEmpty()) {
+            SectionHeading("Spaces")
+            if (r.spaces.isEmpty()) {
                 QuietCard(padded = true) {
                     Text(
-                        "None set. Long-press an agent (Notify me when it finishes) or a board task (when its checks pass, when it's done) " +
-                            "to hear about it once.",
+                        "Every space follows the switches above (Notify: ${r.everywhere.label}). Long-press a space in the drawer, " +
+                            "or an agent, to pick All, Needs me or Off for its space.",
                         style = MaterialTheme.typography.bodyMedium, color = c.muted,
                     )
                 }
             } else {
                 QuietCard {
-                    st.watches.forEachIndexed { i, w ->
+                    r.spaces.entries.sortedBy { it.key }.forEachIndexed { i, (space, n) ->
                         if (i > 0) RowDivider()
-                        WatchRow(w, machines.firstOrNull { it.id == w.machineId }?.label.orEmpty(), showMachine = machines.size > 1) {
-                            container.watchWork.remove(w.id)
-                        }
+                        val machine = machines.firstOrNull { space.startsWith("${it.id}/") }
+                        SpaceRow(
+                            space.removePrefix("${machine?.id}/"), n, machine?.label.orEmpty(), showMachine = machines.size > 1, follows = r.everywhere,
+                        ) { change { it.withSpace(space, null) } }
                     }
                 }
-                Text(
-                    "Long-press an agent or a board task to add one.",
-                    style = MaterialTheme.typography.bodySmall, color = c.muted, modifier = Modifier.padding(top = Space.s),
-                )
             }
         }
     }
 }
 
-/** One watch: what it waits for, that it fires once, and the button that removes it. */
+/** A space that picked its own Notify: its name, its choice, and Reset, back to the switches' [follows]. */
 @Composable
-private fun WatchRow(w: Watch, machine: String, showMachine: Boolean, onRemove: () -> Unit) {
-    val c = Herdr.colors
+private fun SpaceRow(name: String, n: Notify, machine: String, showMachine: Boolean, follows: Notify, onReset: () -> Unit) {
     ListRow(
-        w.label,
-        subtitle = listOfNotNull("once · then it removes itself", machine.takeIf { showMachine && it.isNotEmpty() }).joinToString(" · "),
-        leading = { IconTile(if (w.what == Watch.What.AgentDone) HerdrIcons.Bot else HerdrIcons.Star) },
-        trailing = {
-            IconButton(onClick = onRemove) { Icon(HerdrIcons.X, "Remove the watch", tint = c.muted, modifier = Modifier.size(20.dp)) }
-        },
+        name,
+        subtitle = listOfNotNull("Notify: ${n.label}", machine.takeIf { showMachine && it.isNotEmpty() }).joinToString(" · "),
+        leading = { IconTile(if (n == Notify.Off) HerdrIcons.BellOff else HerdrIcons.Bell) },
+        trailing = { QuietButton(onClick = onReset, modifier = Modifier.semantics { contentDescription = "Reset $name to ${follows.label}" }) { Text("Reset") } },
     )
 }
 
 /** The way here from the Notifications card, with how the rules are set. */
-internal fun rulesLabel(rules: AlertRules, watches: Int): String = listOfNotNull(
+internal fun rulesLabel(rules: AlertRules): String = listOfNotNull(
     rules.label,
     "held at the machine".takeIf { rules.holdAtMachine },
-    when (watches) { 0 -> null; 1 -> "1 watch"; else -> "$watches watches" },
+    when (rules.spaces.size) { 0 -> null; 1 -> "1 space its own"; else -> "${rules.spaces.size} spaces their own" },
 ).joinToString(" · ")

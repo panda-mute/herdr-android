@@ -1,9 +1,7 @@
 package com.makefunstuff.herdr.core
 
 import com.makefunstuff.herdr.core.board.BoardApi
-import com.makefunstuff.herdr.core.board.BoardStatus
 import com.makefunstuff.herdr.core.board.CardAnswer
-import com.makefunstuff.herdr.core.board.V1Cards
 import com.makefunstuff.herdr.core.board.WorkCard
 import com.makefunstuff.herdr.core.board.WorkStatus
 import com.makefunstuff.herdr.core.board.WorkTask
@@ -17,6 +15,7 @@ import com.makefunstuff.herdr.core.shepherdr.ShepherdrClient
 import com.makefunstuff.herdr.core.shepherdr.ShepherdrJson
 import com.makefunstuff.herdr.core.shepherdr.SpaceChat
 import com.makefunstuff.herdr.core.shepherdr.SpaceChatItem
+import com.makefunstuff.herdr.core.shepherdr.TaskFolder
 import com.makefunstuff.herdr.core.shepherdr.V2Actions
 import com.makefunstuff.herdr.core.shepherdr.V2Board
 import com.makefunstuff.herdr.core.shepherdr.V2Event
@@ -33,6 +32,7 @@ import com.makefunstuff.herdr.core.shepherdr.V2WorkBoard
 import com.makefunstuff.herdr.core.shepherdr.VoiceCall
 import com.makefunstuff.herdr.core.shepherdr.WebSocketLink
 import com.makefunstuff.herdr.core.shepherdr.Wire
+import com.makefunstuff.herdr.core.shepherdr.Worktree
 import com.makefunstuff.herdr.core.ssh.CommandResult
 import com.makefunstuff.herdr.core.ssh.Duplex
 import com.makefunstuff.herdr.core.ssh.PortForward
@@ -86,12 +86,11 @@ class ShepherdrTest {
         assertEquals("3.1.2", v.version)
         assertEquals(3, v.major)
         assertEquals(1, v.minor)
-        assertEquals(BoardApi.V2("3.1.2"), BoardDetection.decide(v, "/home/u/.herdr-projects/data/bin/herdr-projects"))
-        // 2.x isn't spoken any more: a machine still on it reads as herdr-projects' (or none).
-        assertEquals(BoardApi.V1("/x/herdr-projects"), BoardDetection.decide(V2Version(version = "2.1.0"), "/x/herdr-projects"))
-        assertEquals(BoardApi.None, BoardDetection.decide(V2Version(version = "2.1.0"), null))
-        assertEquals(BoardApi.None, BoardDetection.decide(V2Version(version = "nonsense"), null))
-        assertEquals(BoardApi.V1("/x/herdr-projects"), BoardDetection.decide(null, "/x/herdr-projects"))
+        assertEquals(BoardApi.V2("3.1.2"), BoardDetection.decide(v))
+        // 2.x isn't spoken any more: a machine still on it has no board.
+        assertEquals(BoardApi.None, BoardDetection.decide(V2Version(version = "2.1.0")))
+        assertEquals(BoardApi.None, BoardDetection.decide(V2Version(version = "nonsense")))
+        assertEquals(BoardApi.None, BoardDetection.decide(null))
     }
 
     @Test
@@ -423,6 +422,81 @@ class ShepherdrTest {
     // ---- the client over the wire ----------------------------------------------------------------
 
     @Test
+    fun aTasksFolderAndPullRequestAsTheWebAppReadsThem() = runBlocking {
+        FakeShepherdr().use { fake ->
+            fake.on("GET /api/worktree?task=DEMO-4&what=dir") { 200 to """{"root":"~/.herdr/worktrees/demo/task-4","entries":[{"name":"src","dir":true}]}""" }
+            fake.on("GET /api/worktree?task=vm%3AAPI-2&what=dir") { 200 to """{"root":"vm:/srv/api/.herdr/worktrees/api/task-2","entries":[]}""" }
+            fake.on("GET /api/worktree?task=DEMO-7&what=dir") { 200 to """{"error":"This task's folder can't be read. It may have been removed after the task finished."}""" }
+            fake.on("GET /api/worktree?task=DEMO-4&what=pr") {
+                200 to """{"pr":{"number":212,"title":"Quiet hours","state":"open","url":"https://github.com/o/r/pull/212","head":"task/4","base":"main","add":120,"del":8,"files":6,
+                    "checks":[{"name":"build","state":"fail","url":"https://github.com/o/r/runs/1","workflow":"Check"},{"name":"lint","state":"pending"},{"name":"test","state":"pass"},{"name":"docs","state":"pass"}]}}"""
+            }
+            fake.on("GET /api/worktree?task=DEMO-7&what=pr") { 200 to """{"why":"This task has no pull request."}""" }
+            val forward = PortForward("127.0.0.1", 7788, preferred = 0) { _, _ -> fake.channel() }
+            val board = V2WorkBoard(ShepherdrClient(ForwardTransport.over(forward, "t0k")), "3.1.2")
+            fun task(id: String) = com.makefunstuff.herdr.core.board.WorkTask(id, id.substringAfter(':'), "", "", com.makefunstuff.herdr.core.board.WorkStatus.Ready)
+
+            assertEquals(TaskFolder("~/.herdr/worktrees/demo/task-4"), board.folder(task("DEMO-4")))
+            // Another machine's task: its folder there, and which machine.
+            assertEquals(TaskFolder("/srv/api/.herdr/worktrees/api/task-2", "vm"), board.folder(task("vm:API-2")))
+            assertEquals(
+                "This task's folder can't be read. It may have been removed after the task finished.",
+                assertFailsWith<IOException> { board.folder(task("DEMO-7")) }.message,
+            )
+
+            val pr = board.pullRequest(task("DEMO-4")).pr!!
+            assertEquals(212, pr.number)
+            assertEquals("Open", Worktree.state(pr.state))
+            assertEquals("1 failed · 1 running · 2 passed", Worktree.checksLine(pr.checks))
+            assertEquals("Check", pr.checks.first().workflow)
+            assertEquals("6 files", Worktree.filesCount(pr.files!!))
+            assertEquals(Worktree.NO_PR, board.pullRequest(task("DEMO-7")).why)
+        }
+    }
+
+    @Test
+    fun theTabMenuSendsWhat31sWebSends() = runBlocking {
+        FakeShepherdr().use { fake ->
+            fake.on("POST /api/action") { body ->
+                when {
+                    body.contains("\"tab-agents\"") -> 200 to """{"ok":true,"agents":[{"kind":"claude","name":"Claude Code","installed":true},{"kind":"pi","name":"Pi","installed":false}]}"""
+                    body.contains("\"count\"") -> 200 to """{"ok":true,"workers":2}"""
+                    body.contains("\"model-menu\"") -> 200 to """{"ok":true,"menu":{"current":{"agent":"claude","model":"opus","effort":"high","fast":false,"perm":"auto"},"menus":{"claude":{"name":"Claude Code","models":[{"id":"opus","name":"Opus 5.5","efforts":["high"]}]}},"permDefault":{"claude":"manual"},"remote":null}}"""
+                    body.contains("\"tab-close\"") -> 200 to """{"error":"Tabs are the Herdr window's: it needs the window open."}"""
+                    else -> 200 to """{"ok":true}"""
+                }
+            }
+            val forward = PortForward("127.0.0.1", 7788, preferred = 0) { _, _ -> fake.channel() }
+            val board = V2WorkBoard(ShepherdrClient(ForwardTransport.over(forward, "t0k")), "3.1.2")
+            fun last() = fake.bodies("POST /api/action").last()
+            val tab = com.makefunstuff.herdr.core.board.WorkTab(id = "tb1", name = "Claude", chat = "t:t4", agent = "claude", live = true)
+            assertEquals(listOf("Claude Code", "Pi"), board.tabAgents("sp1").map { it.name })
+            assertEquals("""{"type":"tab-agents","place":"sp1"}""", last())
+            board.renameTab("sp1", tab, "  Review  ")
+            assertEquals("""{"type":"tab-rename","tab":"tb1","name":"Review"}""", last())
+            board.renameTab("sp1", tab.copy(id = null, assistant = true), "")
+            assertEquals("""{"type":"tab-rename","place":"sp1","name":""}""", last())
+            board.restartTab(tab)
+            assertEquals("""{"type":"tab-switch","chat":"t:t4"}""", last())
+            board.restartTab(tab, "codex")
+            assertEquals("""{"type":"tab-switch","chat":"t:t4","kind":"codex"}""", last())
+            val menu = board.modelMenu("t:t4")
+            assertEquals("Opus 5.5", menu.menus.getValue("claude").models[0].name)
+            board.restartWith("t:t4", menu.current.copy(model = "sonnet"), "high")
+            assertEquals("""{"type":"restart","chat":"t:t4","kind":"claude","model":"sonnet","effort":"high","speed":"normal","perm":"auto"}""", last())
+            assertEquals(2, board.assistantWorkers("sp1"))
+            assertEquals("""{"type":"assistant-close","place":"sp1","mode":"count"}""", last())
+            board.closeAssistant("sp1", stopWorkers = true)
+            assertEquals("""{"type":"assistant-close","place":"sp1","mode":"stop"}""", last())
+            board.closeSpace("sp1")
+            assertEquals("""{"type":"space-remove","place":"sp1"}""", last())
+            // The service's own reason, word for word.
+            assertEquals("Tabs are the Herdr window's: it needs the window open.", assertFailsWith<IOException> { board.closeTab("tb1") }.message)
+            forward.close()
+        }
+    }
+
+    @Test
     fun theBoardOverASshStylePortForward() = runBlocking {
         FakeShepherdr().use { fake ->
             fake.onSocket { ws ->
@@ -454,8 +528,8 @@ class ShepherdrTest {
             assertEquals("That chat isn't here any more.", assertFailsWith<IOException> { client.send("gone", "hello") }.message)
             board.close(o.tasks.first { it.id == "DEMO-7" })
             assertEquals("""{"type":"close","chat":"DEMO-7/worker"}""", fake.bodies("POST /api/action").last())
-            board.answer(CardAnswer(WorkCard("DEMO-5/worker", V1Cards.plan(ready, emptyList())), 0))
-            assertEquals("""{"type":"answer","chat":"DEMO-5/worker","question":"v1:plan","choice":0}""", fake.bodies("POST /api/action").last())
+            board.answer(CardAnswer(WorkCard("DEMO-5/worker", com.makefunstuff.herdr.core.shepherdr.V2Question(id = "q1", title = "Plan for DEMO-5")), 0))
+            assertEquals("""{"type":"answer","chat":"DEMO-5/worker","question":"q1","choice":0}""", fake.bodies("POST /api/action").last())
             val reply = V2Board.cards(o.needs)[1]
             board.answer(CardAnswer(reply, -1, other = "Yes, two"))
             assertEquals(
@@ -533,6 +607,19 @@ class ShepherdrTest {
             val board = V2WorkBoard(ShepherdrClient(ForwardTransport({ ForwardTransport.socket(fake.port, it) })))
             assertEquals("merge the dark mode task", board.dictate("AUDIO".toByteArray(), "audio/mp4"))
             assertEquals("That recording couldn't be read.", assertFailsWith<IOException> { board.dictate("x".toByteArray(), "audio/mp4") }.message)
+        }
+    }
+
+    @Test
+    fun aMachineSaysWhetherItWritesSpeechDown() = runBlocking {
+        for ((answer, can) in listOf(
+            400 to """{"error":"That recording couldn't be read."}""" to true,
+            400 to """{"error":"Dictation needs whisper.cpp and its model on the Shepherdr machine (shepherdr whisper)."}""" to false,
+            404 to "Not found" to false,
+        )) FakeShepherdr().use { fake ->
+            fake.on("POST /api/dictate") { body -> if (body.isEmpty()) answer else 500 to "{}" }
+            val board = V2WorkBoard(ShepherdrClient(ForwardTransport({ ForwardTransport.socket(fake.port, it) })))
+            assertEquals(can, board.canDictate(), answer.second)
         }
     }
 
@@ -719,37 +806,11 @@ class ShepherdrTest {
         assertEquals("s3pPLMBiTxaQ9kYGzzhZRbK+xOo=", Wire.acceptFor("dGhlIHNhbXBsZSBub25jZQ=="))
     }
 
-    // ---- v1 in the same shapes -------------------------------------------------------------------
-
-    @Test
-    fun v1StatusesInShepherdrsWords() {
-        assertEquals(WorkStatus.Ready, WorkTasks.status(BoardStatus.Approval))
-        for (s in listOf(BoardStatus.ReviewFailed, BoardStatus.PlanReady, BoardStatus.PickOne, BoardStatus.Asks, BoardStatus.AsksOk, BoardStatus.NeedsLogin, BoardStatus.Stopped, BoardStatus.Error)) {
-            assertEquals(WorkStatus.Need, WorkTasks.status(s), s.name)
-        }
-        assertEquals(WorkStatus.Work, WorkTasks.status(BoardStatus.Reviewing))
-        assertEquals(WorkStatus.Queued, WorkTasks.status(BoardStatus.Queued))
-        assertEquals(WorkStatus.Todo, WorkTasks.status(BoardStatus.Todo))
-        assertEquals(WorkStatus.Done, WorkTasks.status(BoardStatus.Archived))
-        // Every v1 status that needs you still does.
-        for (s in BoardStatus.entries) if (s.needsYou) assertTrue(WorkTasks.status(s).needsYou, s.name)
-    }
-
     @Test
     fun pinnedFirstWithinEachStatus() {
         fun t(id: String, s: WorkStatus, pinned: Boolean = false) = WorkTask(id, id, id, "", s, pinned = pinned)
         val out = WorkTasks.ordered(listOf(t("a", WorkStatus.Done), t("b", WorkStatus.Work), t("c", WorkStatus.Work, true), t("d", WorkStatus.Need), t("e", WorkStatus.Merging)))
         assertEquals(listOf("d", "e", "c", "b", "a"), out.map { it.id })
-    }
-
-    @Test
-    fun v1PickCardsCarryTheAttemptsLetter() {
-        val t = WorkTask("repo/3", "AND-3", "x", "", WorkStatus.Need)
-        val q = V1Cards.pick(t, listOf(com.makefunstuff.herdr.core.board.Attempt("A", "claude", "", "+3 -1", "", ""), com.makefunstuff.herdr.core.board.Attempt("B", "codex", "", "", "", "")))
-        assertEquals(listOf("A · claude", "B · codex"), q.choices.map { it.label })
-        assertEquals("B", V1Cards.letter(q, 1))
-        assertFailsWith<IOException> { V1Cards.letter(q, 5) }
-        assertEquals("Plan", V1Cards.plan(t, listOf("one")).kind)
     }
 
     private data class HttpReplyOf(val status: Int, val body: String)

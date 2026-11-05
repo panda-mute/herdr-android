@@ -35,6 +35,8 @@ class PushHosts(
 
     /** Machines looked at since they came online; cleared when one goes offline, so a reconnect looks again. */
     private val looked = HashSet<String>()
+    /** Machines whose Shepherdr 3 service was asked for task alerts since they came online, the same way. */
+    private val tasksAsked = HashSet<String>()
     private val locks = HashMap<String, Mutex>()
 
     fun start() {
@@ -44,14 +46,43 @@ class PushHosts(
                     val id = s.machine.id
                     val fresh = synchronized(looked) { if (s.online) looked.add(id) else { looked.remove(id); false } }
                     if (fresh) scope.launch { sync(id, quiet = true) }
+                    // Shepherdr 3 is found a moment after the machine connects: its task alerts once it is.
+                    val tasks = synchronized(tasksAsked) { if (s.online && s.onShepherdr) tasksAsked.add(id) else { tasksAsked.remove(id); false } }
+                    if (tasks) scope.launch { subscribeTasks(id) }
                 }
             }
         }
         // Turning it on or off, a new address from the push app, or a machine left out: look again where online.
         scope.launch {
-            store.state.map { s -> listOf(s.on, s.endpoint, s.live, s.machines.mapValues { it.value.off }, s.watches.map { w -> w.id }) }.distinctUntilChanged().collect {
+            store.state.map { s -> listOf(s.on, s.endpoint, s.live, s.machines.mapValues { it.value.off }) }.distinctUntilChanged().collect {
                 for (s in hosts.hosts.value) if (s.online) scope.launch { sync(s.machine.id, quiet = true) }
+                for (s in hosts.hosts.value) if (s.online && s.onShepherdr) scope.launch { subscribeTasks(s.machine.id) }
             }
+        }
+    }
+
+    /**
+     * Subscribes this phone to [machineId]'s Shepherdr 3 task alerts, as a web page does ("HERD-4 · Needs you",
+     * "HERD-4 · Finished"): its push address, and Web Push keys made for that machine. Only the machine serving
+     * Shepherdr's web app sends them, so every 3.x machine is subscribed and one alert still comes once. The
+     * service keeps no way to unsubscribe: a machine left out keeps sending, and the app drops what it sends.
+     */
+    suspend fun subscribeTasks(machineId: String) {
+        val st = store.state.value
+        val m = st.machine(machineId)
+        // The service takes https addresses only, as a browser's are.
+        val endpoint = st.endpoint?.takeIf { st.on && !m.off && it.startsWith("https://") }
+        if (endpoint == null) {
+            if (m.tasksTo != null) store.machine(machineId) { it.copy(tasksTo = null) }
+            return
+        }
+        try {
+            hosts.borrow(machineId) { session -> session.awaitShepherdr().subscribePush(endpoint, store.webKeys(machineId), phone.name) }
+            store.machine(machineId) { it.copy(tasksTo = endpoint) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Throwable) {
+            // A service too old for push alerts, or gone meanwhile: asked again the next time it connects.
         }
     }
 
@@ -85,9 +116,8 @@ class PushHosts(
         val m = store.state.value.machine(id)
         // Already set up for this address with this version: only make sure it runs and still reaches the phone.
         val live = store.state.value.live
-        val watches = store.state.value.watches.filter { it.machineId == id }
-        val watching = HerdrPush.watching(watches, id)
-        if (m.sentTo == endpoint && m.version == HerdrPush.version && m.live == live && m.watching.orEmpty() == watching) {
+        // A subscription that still follows the old one-shot watches' agents is made again without them.
+        if (m.sentTo == endpoint && m.version == HerdrPush.version && m.live == live && m.watching.isNullOrEmpty()) {
             val status = runCatching { HerdrPush.status(client.run("ensure"), subscriber(id)) }.getOrNull()
             if (status != null && status.subscribed && !status.gone && status.version == HerdrPush.version) {
                 store.machine(id) { it.copy(problem = status.error?.let { e -> "Its last push didn't go through: $e" }) }
@@ -101,7 +131,6 @@ class PushHosts(
             HerdrUsage.Client({ cmd, t -> conn.run(cmd, t) }, { cmd, input, t -> conn.runWithInput(cmd, input.byteInputStream(), t) }, session.machine.label)
                 .install()
         }
-        session.checkBoard()
         val host = session.state.value
         val sub = HerdrPush.subscription(
             id = subscriber(id),
@@ -110,16 +139,13 @@ class PushHosts(
             key = store.key(id),
             session = host.machine.session,
             herdrPath = host.herdrMachine.herdrPath,
-            boardPath = host.boardPath,
             live = live,
-            watchTasks = watches.filter { it.what != com.makefunstuff.herdr.core.push.Watch.What.AgentDone }.map { it.taskId }.distinct(),
-            watchPanes = watches.filter { it.what == com.makefunstuff.herdr.core.push.Watch.What.AgentDone }.map { it.paneId }.distinct(),
         )
         client.run("subscribe", input = sub)
         val started = client.run("install")
         val note = (started["msg"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.takeIf { it != "running" }
         // A fresh subscription starts the order of its pushes afresh (in case the machine's clock went back).
-        store.machine(id) { it.copy(sentTo = endpoint, version = HerdrPush.version, problem = null, note = note, lastAt = 0, live = live, watching = watching) }
+        store.machine(id) { it.copy(sentTo = endpoint, version = HerdrPush.version, problem = null, note = note, lastAt = 0, live = live, watching = null) }
     }
 
     private suspend fun takeOff(session: HostSession) {

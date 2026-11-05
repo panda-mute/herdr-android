@@ -1,6 +1,5 @@
 package com.makefunstuff.herdr.core
 
-import com.makefunstuff.herdr.core.board.BoardTasks
 import com.makefunstuff.herdr.core.chat.Markdown
 import com.makefunstuff.herdr.core.chat.Markdown.Block
 import kotlin.test.Test
@@ -9,7 +8,6 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class SharedMarkdownTest {
-    private fun res(n: String) = javaClass.getResource("/board/$n")!!.readText()
 
     @Test
     fun taskListsAndNesting() {
@@ -39,29 +37,5 @@ class SharedMarkdownTest {
         val b = Markdown.parse("```\n$long\nno close")
         assertEquals(1, b.size)
         assertTrue((b[0] as Block.Code).text.contains(long))
-    }
-
-    @Test
-    fun realBoardDescriptionsParse() {
-        for (f in listOf("details-working.json", "details-reviewed.json", "details-failed.json")) {
-            val d = BoardTasks.details(res(f))
-            val blocks = Markdown.parse(d.description)
-            assertTrue(blocks.isNotEmpty(), f)
-            assertTrue(blocks.any { it is Block.ListItem || it is Block.Paragraph || it is Block.Heading }, f)
-            for (text in listOf(d.msg, d.plan, d.failure?.detail.orEmpty()) + d.reviews.flatMap { r -> listOf(r.text) + r.findings.flatMap { listOf(it.subject, it.where, it.proof) } }) {
-                Markdown.parse(text) // must not throw
-            }
-        }
-    }
-
-    @Test
-    fun headingsInDescriptionAndBoldMessage() {
-        val d = BoardTasks.details(res("details-working.json"))
-        val blocks = Markdown.parse(d.description)
-        assertNotNull(blocks.firstOrNull { it is Block.Heading })
-        val reviewed = BoardTasks.details(res("details-reviewed.json"))
-        val link = Markdown.inline(reviewed.msg).first { it.link != null }
-        assertEquals("https://claude.ai/artifact/demoReport0000000000001", link.link)
-        assertTrue(Markdown.inline(reviewed.msg).any { it.bold })
     }
 }

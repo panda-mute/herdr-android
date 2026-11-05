@@ -3,8 +3,7 @@ package com.makefunstuff.herdr.core.brief
 import com.makefunstuff.herdr.core.api.AgentInfo
 import com.makefunstuff.herdr.core.api.HerdrJson
 import com.makefunstuff.herdr.core.api.SessionSnapshot
-import com.makefunstuff.herdr.core.board.BoardTask
-import com.makefunstuff.herdr.core.board.BoardTasks
+import com.makefunstuff.herdr.core.board.WorkTask
 import com.makefunstuff.herdr.core.push.HerdrPush
 import com.makefunstuff.herdr.core.ssh.MachineConnection
 import kotlinx.serialization.Serializable
@@ -14,8 +13,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.longOrNull
 
 /**
- * herdr-push's journal on a machine (`herdr-push journal`): each time a board task was done, started
- * waiting for you, went wrong, started or was added, and each time an agent finished or asked. Times
+ * herdr-push's journal on a machine (`herdr-push journal`): each time an agent finished or asked. Times
  * are the machine's clock in seconds; [now] is that clock when it answered, so the brief can put them
  * on the phone's.
  */
@@ -32,9 +30,6 @@ sealed interface JournalEntry {
     /** When, on the machine's clock (seconds). */
     val at: Long
 
-    /** A task's new state; [was] is its phase before: `new`, `todo`, `queued`, `working`, `needs`, `done`, `archived`. */
-    data class Task(override val at: Long, val task: BoardTask, val was: String) : JournalEntry
-
     /** An agent that finished or started asking. */
     data class Agent(override val at: Long, val agent: AgentInfo, val where: String, val workspace: String) : JournalEntry
 }
@@ -47,7 +42,6 @@ object Journals {
             val x = e as? JsonObject ?: return@mapNotNull null
             val at = x.long("at") ?: return@mapNotNull null
             when (x.str("type")) {
-                "task" -> (x["task"] as? JsonObject)?.let { BoardTasks.task(it, x.str("key")) }?.let { JournalEntry.Task(at, it, x.str("was")) }
                 "agent" -> (x["agent"] as? JsonObject)
                     ?.let { runCatching { HerdrJson.decodeFromJsonElement(AgentInfo.serializer(), it) }.getOrNull() }
                     ?.let { JournalEntry.Agent(at, it, x.str("where"), x.str("workspace")) }
@@ -82,7 +76,7 @@ object Journals {
  */
 @Serializable
 data class Baseline(
-    /** Task id → its [com.makefunstuff.herdr.core.board.BoardStatus] name; null when the board was never read. */
+    /** Task id → its [com.makefunstuff.herdr.core.board.WorkStatus] name; null when the board was never read. */
     val tasks: Map<String, String>? = null,
     /** When the tasks were seen (the phone's clock, ms). */
     val tasksAt: Long = 0,
@@ -95,7 +89,7 @@ data class Baseline(
         fun mark(a: AgentInfo): String = "${a.agentStatusRaw}#${a.stateChangeSeq}"
 
         /** [old] with what was seen at [at]; a part not seen now ([tasks] or [snapshot] null) stays as it was. */
-        fun of(old: Baseline?, at: Long, tasks: List<BoardTask>?, snapshot: SessionSnapshot?): Baseline = Baseline(
+        fun of(old: Baseline?, at: Long, tasks: List<WorkTask>?, snapshot: SessionSnapshot?): Baseline = Baseline(
             tasks = tasks?.associate { it.id to it.status.name } ?: old?.tasks,
             tasksAt = if (tasks != null) at else old?.tasksAt ?: 0,
             agents = snapshot?.agents?.associate { it.paneId to mark(it) } ?: old?.agents,

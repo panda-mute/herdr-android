@@ -10,7 +10,9 @@ import kotlinx.coroutines.flow.asStateFlow
  * machine (Claude Code, Codex, pi) gets the file.
  *
  * The mic button is held while you speak (let go to send, slide away to cancel) or tapped to start
- * and tapped again to send. Every call comes from the main thread: the UI's and the recorder's.
+ * and tapped again to send. Where the composer also talks to type ([tap] set, [Dictation]), a tap is
+ * that instead, and a hands-free voice message is started with [record]. Every call comes from the
+ * main thread: the UI's and the recorder's.
  */
 class VoiceRecorder(
     private val mic: Mic,
@@ -61,15 +63,18 @@ class VoiceRecorder(
     private val _state = MutableStateFlow<State>(State.Idle)
     val state: StateFlow<State> = _state.asStateFlow()
 
+    /** What a quick tap on the mic does instead of recording on until the next tap (talk to type); null: it records. */
+    var tap: (() -> Unit)? = null
+
+    /** The microphone was asked for by [record], so once allowed it records, never [tap]s. */
+    private var askedToRecord = false
+
     /** A finger down on the mic: starts recording (asking for the microphone first), or sends a tapped recording. */
     fun down() {
         when (val s = _state.value) {
             is State.Recording -> if (!s.held) stop()
             State.Asking -> {}
-            else -> if (mic.allowed()) start(held = true) else {
-                _state.value = State.Asking
-                mic.ask()
-            }
+            else -> if (mic.allowed()) start(held = true) else ask(record = false)
         }
     }
 
@@ -82,7 +87,11 @@ class VoiceRecorder(
         if (!s.held) return
         when {
             s.cancelling -> cancel()
-            heldFor < TAP_MS -> _state.value = s.copy(held = false)
+            heldFor < TAP_MS -> tap?.let { t ->
+                mic.cancel()
+                _state.value = State.Idle
+                t()
+            } ?: run { _state.value = s.copy(held = false) }
             else -> stop()
         }
     }
@@ -130,17 +139,38 @@ class VoiceRecorder(
         mic.settings()
     }
 
-    /** The phone's answer to [Mic.ask]: allowed, it starts recording at once (the finger has long left the button). */
+    /** A voice message hands-free, as a tap does without [tap]: it records until [stop] (or a tap) sends it. */
+    fun record() {
+        when (_state.value) {
+            is State.Recording, State.Asking -> {}
+            else -> if (mic.allowed()) start(held = false) else ask(record = true)
+        }
+    }
+
+    /**
+     * The phone's answer to [Mic.ask]: allowed, it starts recording at once (the finger has long left the button),
+     * or talks to type where a tap does that and a tap is what asked.
+     */
     fun answered(granted: Boolean, forever: Boolean) {
         if (_state.value != State.Asking) return
-        if (granted) start(held = false) else _state.value = State.NoMic(forever)
+        val t = tap
+        when {
+            !granted -> _state.value = State.NoMic(forever)
+            t != null && !askedToRecord -> { _state.value = State.Idle; t() }
+            else -> start(held = false)
+        }
+    }
+
+    private fun ask(record: Boolean) {
+        askedToRecord = record
+        _state.value = State.Asking
+        mic.ask()
     }
 
     /** Asks for the microphone again, from [State.NoMic]. */
     fun askAgain() {
         if (_state.value !is State.NoMic) return
-        _state.value = State.Asking
-        mic.ask()
+        ask(askedToRecord)
     }
 
     /** The recorder stopped by itself (the microphone taken by a call): what it has goes, as on [stop]. */

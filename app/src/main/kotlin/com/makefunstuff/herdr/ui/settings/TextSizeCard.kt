@@ -1,5 +1,7 @@
 package com.makefunstuff.herdr.ui.settings
 
+import androidx.compose.ui.graphics.RectangleShape
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -10,7 +12,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -116,12 +117,12 @@ private fun SizeRow(
 private fun Step(icon: ImageVector, description: String, onClick: (() -> Unit)?) {
     val c = Herdr.colors
     Box(
-        Modifier.size(48.dp).clip(CircleShape)
+        Modifier.size(48.dp).clip(RectangleShape)
             .clickable(enabled = onClick != null, role = Role.Button, onClick = { onClick?.invoke() })
             .semantics { contentDescription = description },
         contentAlignment = Alignment.Center,
     ) {
-        Box(Modifier.size(36.dp).clip(CircleShape).background(c.hover), contentAlignment = Alignment.Center) {
+        Box(Modifier.size(36.dp).clip(RectangleShape).background(c.hover), contentAlignment = Alignment.Center) {
             Icon(icon, null, tint = if (onClick != null) c.text else c.muted.copy(alpha = 0.38f), modifier = Modifier.size(18.dp))
         }
     }

@@ -1,11 +1,15 @@
 <resources>
     <string name="app_name">Herdr</string>
     <!-- In the text-selection menu, next to Copy. -->
-    <string name="send_to_coordinator">Send to Coordinator</string>
+    <string name="send_to_coordinator">Send to the Assistant</string>
     <!-- The share sheet's target. -->
-    <string name="share_to_coordinator">Herdr Coordinator</string>
-    <string name="tile_coordinator">Coordinator</string>
-    <string name="widget_ask">Ask the Coordinator</string>
-    <string name="widget_ask_description">Opens the work board\'s Coordinator chat</string>
+    <string name="share_to_coordinator">Herdr Assistant</string>
+    <string name="tile_coordinator">Assistant</string>
+    <string name="widget_ask">Ask the Assistant</string>
+    <string name="widget_ask_description">Opens the shown space\'s Assistant chat</string>
     <string name="widget_status_description">What needs you and what is working, across your machines</string>
+    <string name="widget_needs">Needs you</string>
+    <string name="widget_needs_heading">NEEDS YOU</string>
+    <string name="widget_needs_description">What waits on you, with Accept, Approve and Deny right on it</string>
+    <string name="widget_needs_none">Nothing waits on you</string>
 </resources>

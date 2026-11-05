@@ -15,11 +15,9 @@ data class Brief(
     /** What it covers: from [since] to [at]. */
     val since: Long,
     val machines: List<BriefMachine>,
-    /** Tasks that went wrong and still are: an error, a failed review, stopped at a limit. They need you. */
-    val failed: List<BriefItem> = emptyList(),
-    /** What else waits for you now: tasks to approve or answer, plans, agents that ask. */
+    /** What waits for you now: tasks to accept or answer, agents that ask. */
     val waiting: List<BriefItem> = emptyList(),
-    /** Tasks done in the window: merged, a research report, or done without a pull request. */
+    /** Tasks done in the window: merged, or done without a pull request. */
     val done: List<BriefItem> = emptyList(),
     /** Agents of your own (not a board task's) that finished in the window. */
     val finished: List<BriefItem> = emptyList(),
@@ -30,11 +28,10 @@ data class Brief(
     val added: Int = 0,
 ) {
     val merged: Int get() = done.count { it.kind == BriefItem.Kind.Merged }
-    val reports: Int get() = done.count { it.kind == BriefItem.Kind.Report }
-    val needsYou: Int get() = failed.size + waiting.size
+    val needsYou: Int get() = waiting.size
 
     /** Nothing happened in the window and nothing waits. */
-    val quiet: Boolean get() = failed.isEmpty() && waiting.isEmpty() && done.isEmpty() && finished.isEmpty() && started == 0 && added == 0
+    val quiet: Boolean get() = waiting.isEmpty() && done.isEmpty() && finished.isEmpty() && started == 0 && added == 0
 
     val reached: List<BriefMachine> get() = machines.filter { it.coverage != BriefMachine.Coverage.Unreached }
 }
@@ -49,7 +46,7 @@ data class BriefItem(
     val title: String,
     /** The task's short key (`AND-7`), or the agent's name as its chat shows it. */
     val name: String = "",
-    /** Where it stands, in the board's words: "ready to approve", "review failed", "merged", "asks you". */
+    /** Where it stands, in the board's words: "Ready", "Needs you", "merged", "asks you". */
     val status: String = "",
     /** The board's "doing now" line, or what an agent asks. */
     val detail: String = "",
@@ -61,12 +58,12 @@ data class BriefItem(
     val paneId: String = "",
     /** A task's pull request. */
     val pr: String = "",
-    /** A [com.makefunstuff.herdr.core.board.BoardStatus] name for a task; empty for an agent. */
+    /** A [com.makefunstuff.herdr.core.board.WorkStatus] name for a task; empty for an agent. */
     val board: String = "",
     /** A task's progress, 0 to 100, while it works. */
     val progress: Int? = null,
 ) {
-    enum class Kind { Failed, Waiting, Merged, Report, Done, Finished, Working }
+    enum class Kind { Waiting, Merged, Done, Finished, Working }
 
     val isTask: Boolean get() = taskId.isNotEmpty()
 

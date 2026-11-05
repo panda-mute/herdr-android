@@ -1,7 +1,8 @@
 package com.makefunstuff.herdr.ui.agents
 
+import androidx.compose.ui.graphics.Color
+
 import com.makefunstuff.herdr.core.hc.HcMapping
-import com.makefunstuff.herdr.core.board.TaskLine
 import com.makefunstuff.herdr.core.chat.OptionRole
 
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -42,8 +43,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.makefunstuff.herdr.core.api.AgentStatus
-import com.makefunstuff.herdr.core.board.BoardAction
-import com.makefunstuff.herdr.core.board.BoardTask
 import com.makefunstuff.herdr.core.board.WorkCard
 import com.makefunstuff.herdr.core.chat.Markdown
 import com.makefunstuff.herdr.core.board.WorkStatus
@@ -120,12 +119,11 @@ private fun MetaLine(key: String?, parts: List<String>, modifier: Modifier = Mod
 }
 
 /**
- * Where an agent works, for a meta line: the agent, its workspace (its task's repository when it works
- * on one: the board names the workspace after the task, which the line already shows), and its
- * machine when there are several.
+ * Where an agent works, for a meta line: the agent, its workspace (its task's list when it works on one:
+ * the workspace is named after the task, which the line already shows), and its machine when there are several.
  */
-private fun where(a: HomeAgent, task: BoardTask?, showMachine: Boolean) =
-    listOfNotNull(a.agent.displayName, task?.repo ?: a.workspace.ifEmpty { a.location }, a.machineLabel.takeIf { showMachine })
+private fun where(a: HomeAgent, task: WorkTask?, showMachine: Boolean) =
+    listOfNotNull(a.agent.displayName, task?.listName?.ifEmpty { null } ?: a.workspace.ifEmpty { a.location }, a.machineLabel.takeIf { showMachine })
 
 /**
  * A card of the Needs you list: hairline card, chosen on a wide window when it is open beside the
@@ -147,7 +145,7 @@ private fun WaitingCard(
             if (actions.isNotEmpty()) customActions = actions
         },
         padded = true, onClick = onOpen, onLongClick = onMenu, onClickLabel = label,
-        color = if (selected) c.hover else c.card, edge = if (selected) c.lineStrong else c.line,
+        color = if (selected) c.selected else Color.Transparent, edge = if (selected) c.accent else c.lineStrong,
     ) { content() }
 }
 
@@ -218,7 +216,8 @@ fun QuestionCard(
             title = q.task?.title ?: a.subtitle ?: a.displayName,
             key = q.task?.name,
             meta = where(q.agent, q.task, showMachine),
-            badge = { StatusBadge("needs you", AgentStatus.Blocked.color()) },
+            // Its section says it needs you; the card doesn't say it again.
+            badge = {},
         )
         Column(Modifier.padding(start = 34.dp, top = Space.s), verticalArrangement = Arrangement.spacedBy(Space.xs)) {
             Text(
@@ -264,66 +263,6 @@ fun QuestionCard(
     }
 }
 
-/**
- * A board task waiting for you as a card: its key, status and what the board says of it, its agent's
- * mark when one runs; the answer it most likely needs ([answer]: approve and merge, fix, …) and Open
- * (the review card for finished work, else the task).
- */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-fun TaskCard(
-    w: Waiting.Task,
-    showMachine: Boolean,
-    selected: Boolean,
-    busy: String?,
-    answer: Pair<BoardAction, String>?,
-    onOpen: () -> Unit,
-    onAnswer: () -> Unit,
-) {
-    val c = Herdr.colors
-    val t = w.task
-    val says = remember(t.msg) { TaskLine.line(t.msg) }
-    val actions = listOfNotNull(answer?.takeIf { busy == null }?.let { CustomAccessibilityAction(it.second) { onAnswer(); true } })
-    WaitingCard(selected, onOpen, null, "Open task", actions) {
-        CardHead(
-            mark = {
-                w.agent?.agent?.let { AgentMark(it.agent ?: it.displayName) }
-                    ?: Box(Modifier.size(22.dp), contentAlignment = Alignment.Center) { Icon(HerdrIcons.SquareKanban, null, tint = c.text, modifier = Modifier.size(20.dp)) }
-            },
-            title = t.title,
-            key = t.name,
-            meta = listOfNotNull(
-                says.takeIf { it.isNotEmpty() },
-                t.prNumber.takeIf { it.isNotEmpty() }?.let { "PR #$it" },
-                (w.agent?.agent?.displayName ?: t.agent).takeIf { it.isNotEmpty() && says.isEmpty() },
-                w.machineLabel.takeIf { showMachine },
-            ),
-            badge = { StatusBadge(t.status.word, t.status.color()) },
-        )
-        if (busy != null) {
-            Box(Modifier.padding(start = 22.dp, top = Space.s)) { BusyLine(busy) }
-            return@WaitingCard
-        }
-        FlowRow(
-            Modifier.padding(start = 34.dp, top = Space.m),
-            horizontalArrangement = Arrangement.spacedBy(Space.s),
-            verticalArrangement = Arrangement.spacedBy(Space.s),
-        ) {
-            if (answer != null) {
-                val icon = when (answer.first) {
-                    BoardAction.Approve, BoardAction.ApprovePlan -> HerdrIcons.Check
-                    BoardAction.Tell -> HerdrIcons.Reply
-                    else -> HerdrIcons.RotateCcw
-                }
-                // Approve is the one filled: a fix or a reply is a step on the way, the merge is the yes.
-                val primary = answer.first == BoardAction.Approve || answer.first == BoardAction.ApprovePlan
-                AnswerButton(answer.second, icon, primary = primary, enabled = true, onClick = onAnswer)
-            }
-            AnswerButton("Open", null, primary = answer == null, enabled = true, onClick = onOpen)
-        }
-    }
-}
-
 /** A Shepherdr 3 space whose coordinator asks you something, as a card: Open goes to its chat, where the question is. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -335,10 +274,39 @@ fun CoordinatorCard(w: Waiting.Coordinator, showMachine: Boolean, onOpen: () -> 
             title = "${w.space.name}'s Assistant asks you",
             key = null,
             meta = listOfNotNull("Answer it in the Assistant chat", w.machineLabel.takeIf { showMachine }),
-            badge = { StatusBadge(WorkStatus.Need.label, WorkStatus.Need.color()) },
+            badge = {},
         )
         FlowRow(Modifier.padding(start = 34.dp, top = Space.m), horizontalArrangement = Arrangement.spacedBy(Space.s)) {
             AnswerButton("Open", null, primary = true, enabled = true, onClick = onOpen)
+        }
+    }
+}
+
+/**
+ * An agent that asks for a secret by name, as 3.1's Needs you row says it ("Wants the secret GITHUB_TOKEN"): who
+ * asks (its task, else its space's Assistant) and why. Give it opens the masked box ([SecretSheet]); Open its chat.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun SecretCard(w: Waiting.Secret, showMachine: Boolean, onGive: () -> Unit, onOpen: () -> Unit) {
+    val c = Herdr.colors
+    WaitingCard(false, onOpen, null, "Open chat", listOf(CustomAccessibilityAction("Give it") { onGive(); true })) {
+        CardHead(
+            mark = { Box(Modifier.size(22.dp), contentAlignment = Alignment.Center) { Icon(HerdrIcons.KeyRound, null, tint = c.text, modifier = Modifier.size(20.dp)) } },
+            title = w.task?.title ?: "${w.space?.name ?: "A space"}'s Assistant",
+            key = w.task?.name,
+            meta = listOfNotNull("Wants the secret ${w.ask.name}", w.machineLabel.takeIf { showMachine }),
+            badge = {},
+        )
+        w.ask.why?.takeIf { it.isNotBlank() }?.let {
+            Text(
+                it, style = MaterialTheme.typography.bodyMedium, color = c.text, maxLines = 3, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = 34.dp, top = Space.s),
+            )
+        }
+        FlowRow(Modifier.padding(start = 34.dp, top = Space.m), horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+            AnswerButton("Give it", HerdrIcons.KeyRound, primary = true, enabled = true, onClick = onGive)
+            AnswerButton("Open", null, primary = false, enabled = true, onClick = onOpen)
         }
     }
 }
@@ -387,7 +355,8 @@ fun WorkWaitingCard(
                 space.takeIf { it.isNotEmpty() },
                 w.machineLabel.takeIf { showMachine },
             ),
-            badge = { StatusBadge(work.status.label, work.status.color()) },
+            // Needs you or Ready: its section says which, and its button (Accept) too.
+            badge = {},
         )
         if (q != null) Text(
             Markdown.plain(q.title.ifEmpty { q.asks ?: "Waiting for your answer" }),
@@ -419,7 +388,7 @@ fun WorkWaitingCard(
  * An agent below Needs you as one line: its mark, what it works on over its key and where, and on the
  * right how far along it is (working), a dot for a finish not seen yet (done). A working one has a
  * thin bar under it: its task's progress when the board knows it, else one that only says it works.
- * The phone's triage shows last: how long it is snoozed, a crossed bell when muted, a pin.
+ * Last, a crossed bell when its space's Notify is Off, and a pin.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -429,17 +398,15 @@ fun AgentLine(
     selected: Boolean,
     onOpen: () -> Unit,
     onMenu: () -> Unit,
-    /** How long it is snoozed, as the row says it ("until 18:00"); null when it isn't. */
-    snoozed: String? = null,
     /** Its long-press sheet (triage, terminal, why this state, …) as TalkBack offers it. */
     actions: List<CustomAccessibilityAction> = emptyList(),
 ) {
     val c = Herdr.colors
     val a = row.agent.agent
-    val t: BoardTask? = row.task
+    val t: WorkTask? = row.task
     val status = a.agentStatus
     val working = status == AgentStatus.Working
-    val quiet = status == AgentStatus.Done && !row.new || status == AgentStatus.Idle || status == AgentStatus.Unknown || snoozed != null
+    val quiet = status == AgentStatus.Done && !row.new || status == AgentStatus.Idle || status == AgentStatus.Unknown
     val title = t?.title ?: a.subtitle ?: a.displayName
     Row(
         Modifier.fillMaxWidth().heightIn(min = 56.dp)
@@ -449,7 +416,7 @@ fun AgentLine(
                 this.selected = selected
                 contentDescription = listOfNotNull(
                     title, t?.name, a.displayName, if (row.new) "finished, new" else a.statusWord(),
-                    "pinned".takeIf { row.pinned }, snoozed?.let { "snoozed $it" }, "muted".takeIf { row.muted },
+                    "pinned".takeIf { row.pinned }, "notify off".takeIf { row.muted },
                 ).joinToString(", ")
                 if (actions.isNotEmpty()) customActions = actions
             }
@@ -473,8 +440,7 @@ fun AgentLine(
             }
         }
         val trailing = when {
-            // Snoozed, it says only until when.
-            working && snoozed == null -> listOfNotNull(t?.progress?.let { "$it%" }, t?.eta?.let { "${it}m left" }).joinToString(" · ")
+            working -> listOfNotNull(t?.progress?.let { "$it%" }, t?.eta?.let { "${it}m left" }).joinToString(" · ")
             else -> ""
         }
         if (trailing.isNotEmpty()) {
@@ -486,12 +452,6 @@ fun AgentLine(
             Text("new", style = MaterialTheme.typography.labelMedium, color = c.done)
             Spacer(Modifier.width(Space.xs))
             StatusDot(c.done)
-        }
-        if (snoozed != null) {
-            Spacer(Modifier.width(Space.m))
-            Text(snoozed, style = MaterialTheme.typography.labelMedium, color = c.muted, maxLines = 1)
-            Spacer(Modifier.width(Space.xs))
-            Icon(HerdrIcons.Clock, null, tint = c.accent, modifier = Modifier.size(16.dp))
         }
         if (row.muted) {
             Spacer(Modifier.width(Space.s))

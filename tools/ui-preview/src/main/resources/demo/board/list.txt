@@ -1,9 +1,0 @@
-AND-9 Show when each machine last answered
-API-3 Speed up /jobs on large tables
-WEB-4 Rewrite the install page
-AND-6 Add app screenshots to the README
-EVAL-2 Long-context eval on ckpt-0612
-API-5 Rate-limit the export endpoint per tenant
-WEB-5 Dark mode for the docs
-AND-10 Haptics when an agent needs you
-AND-2 Replace agent terminals with native chat views

@@ -1,5 +1,7 @@
 package com.makefunstuff.herdr.ui.board
 
+import androidx.compose.ui.graphics.RectangleShape
+
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
@@ -13,7 +15,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -35,9 +36,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.makefunstuff.herdr.core.board.BoardStatus
-import com.makefunstuff.herdr.core.board.BoardTask
-import com.makefunstuff.herdr.core.board.TaskLine
 import com.makefunstuff.herdr.core.board.WorkSpace
 import com.makefunstuff.herdr.core.board.WorkStatus
 import com.makefunstuff.herdr.core.board.WorkTask
@@ -127,7 +125,7 @@ internal fun BoardRow(
         append(line)
     }
     Row(
-        Modifier.fillMaxWidth().heightIn(min = 56.dp).clip(RoundedCornerShape(8.dp))
+        Modifier.fillMaxWidth().heightIn(min = 56.dp).clip(RectangleShape)
             .combinedClickable(onClickLabel = onClickLabel, onClick = onOpen, onLongClickLabel = onLongClick?.let { "show more actions" }, onLongClick = onLongClick)
             .semantics(mergeDescendants = true) {
                 contentDescription = description
@@ -179,42 +177,13 @@ internal fun WorkTaskRow(t: WorkTask, onOpen: () -> Unit, space: String = "", sh
     )
 }
 
-/**
- * A herdr-projects 1.x task as a [BoardRow]: its badge's one word in the row's mark and colour, and
- * what that word leaves out ("Review failed") first on its line.
- */
-@Composable
-internal fun TaskRow(
-    t: BoardTask,
-    onOpen: () -> Unit,
-    onMenu: () -> Unit,
-    actions: List<CustomAccessibilityAction> = emptyList(),
-    /** Opens its agent's chat, while its agent's pane is on the machine. */
-    onAgent: (() -> Unit)? = null,
-    showWord: Boolean = true,
-) {
-    val status = WorkTasks.status(t.status)
-    val quiet = t.status == BoardStatus.Done || t.status == BoardStatus.Archived
-    val doing = TaskLine.line(t.msg).takeIf { !quiet }
-    val pr = if (t.pr.isEmpty()) null else "PR " + t.prNumber.let { if (it.isEmpty()) t.pr else "#$it" }
-    BoardRow(
-        name = t.name, title = t.title,
-        line = listOfNotNull(t.status.detail, doing?.ifEmpty { null }, pr, "research".takeIf { t.research }).joinToString(" · "),
-        status = status,
-        description = listOfNotNull(t.name, t.status.word, t.status.detail, t.title).joinToString(", "),
-        onOpen = onOpen, onClickLabel = "Open details",
-        progress = t.progress, eta = t.eta, agent = t.agent, onAgent = onAgent, pinned = t.pinned,
-        onLongClick = onMenu, actions = actions, showWord = showWord,
-    )
-}
-
 /** A space whose coordinator waits for you, as a row: opens its chat, where the question is. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun CoordinatorAsksRow(s: WorkSpace, onOpen: () -> Unit) {
     val c = Herdr.colors
     Row(
-        Modifier.fillMaxWidth().heightIn(min = 56.dp).clip(RoundedCornerShape(8.dp))
+        Modifier.fillMaxWidth().heightIn(min = 56.dp).clip(RectangleShape)
             .combinedClickable(onClickLabel = "Open the Assistant chat", onClick = onOpen).padding(vertical = Space.s),
         verticalAlignment = Alignment.CenterVertically,
     ) {

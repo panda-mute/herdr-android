@@ -17,20 +17,14 @@ import com.makefunstuff.herdr.ui.common.LocalContainer
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.withTimeoutOrNull
 
-/**
- * The boards of the connected machines that have one, as last read, in the machines' order: herdr-projects
- * 1.x's and Shepherdr 3's, whose [HomeBoard.work] is the board as it sent it (a task there acts through Shepherdr).
- */
+/** The Shepherdr boards of the connected machines, as last read, in the machines' order. */
 @Composable
 fun rememberBoards(): List<HomeBoard> {
     val container = LocalContainer.current
     val hosts by container.hosts.hosts.collectAsStateWithLifecycle()
     val lists by container.boards.lists.collectAsStateWithLifecycle()
     return remember(hosts, lists) {
-        hosts.filter { it.online && it.hasWorkBoard }.mapNotNull { h ->
-            // A Shepherdr 3 machine's list counts only as Shepherdr sent it, never an old herdr-projects launcher's.
-            lists[h.machine.id]?.takeIf { !h.onShepherdr || it.work != null }?.let { HomeBoard(h.machine.id, h.machine.label, it.tasks, it.work) }
-        }
+        hosts.filter { it.online && it.onShepherdr }.mapNotNull { h -> lists[h.machine.id]?.work?.let { HomeBoard(h.machine.id, h.machine.label, it) } }
     }
 }
 
@@ -46,15 +40,11 @@ fun rememberNeedsYou(boards: List<HomeBoard> = rememberBoards()): List<Waiting> 
     return remember(hosts, boards, seen) { Home.of(HomeAgent.of(hosts), boards, seen).needsYou }
 }
 
-/** The Shepherdr 3 boards of the connected machines, as last read, by machine id: their spaces and tasks. */
+/** The Shepherdr boards of the connected machines, as last read, by machine id: their spaces and tasks. */
 @Composable
 fun rememberWorkBoards(): Map<String, WorkOverview> {
-    val container = LocalContainer.current
-    val hosts by container.hosts.hosts.collectAsStateWithLifecycle()
-    val lists by container.boards.lists.collectAsStateWithLifecycle()
-    return remember(hosts, lists) {
-        hosts.filter { it.online && it.onShepherdr }.mapNotNull { h -> lists[h.machine.id]?.work?.let { h.machine.id to it } }.toMap()
-    }
+    val boards = rememberBoards()
+    return remember(boards) { boards.associate { it.machineId to it.work } }
 }
 
 /** Machines whose board didn't answer the last read, by label, with what went wrong. */
@@ -64,7 +54,7 @@ fun rememberBoardProblems(): List<Pair<String, String>> {
     val hosts by container.hosts.hosts.collectAsStateWithLifecycle()
     val lists by container.boards.lists.collectAsStateWithLifecycle()
     return remember(hosts, lists) {
-        hosts.filter { it.online && it.hasWorkBoard }.mapNotNull { h -> lists[h.machine.id]?.problem?.let { h.machine.label to it } }
+        hosts.filter { it.online && it.onShepherdr }.mapNotNull { h -> lists[h.machine.id]?.problem?.let { h.machine.label to it } }
     }
 }
 
@@ -77,7 +67,7 @@ fun ReadBoards(readNow: Channel<Unit>, everyMs: Long = 15_000) {
     val container = LocalContainer.current
     val owner = LocalLifecycleOwner.current
     val hosts by container.hosts.hosts.collectAsStateWithLifecycle()
-    val ids = hosts.filter { it.online && it.hasWorkBoard }.joinToString(",") { it.machine.id }
+    val ids = hosts.filter { it.online && it.onShepherdr }.joinToString(",") { it.machine.id }
     LaunchedEffect(ids) {
         if (ids.isEmpty()) return@LaunchedEffect
         owner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {

@@ -2,8 +2,7 @@ package com.makefunstuff.herdr.brief
 
 import com.makefunstuff.herdr.core.api.AgentStatus
 import com.makefunstuff.herdr.core.api.SessionSnapshot
-import com.makefunstuff.herdr.core.board.BoardTask
-import com.makefunstuff.herdr.core.board.WorkTasks
+import com.makefunstuff.herdr.core.board.WorkTask
 import com.makefunstuff.herdr.core.brief.Baseline
 import com.makefunstuff.herdr.core.brief.Brief
 import com.makefunstuff.herdr.core.brief.BriefLine
@@ -15,7 +14,6 @@ import com.makefunstuff.herdr.core.brief.MachineLook
 import com.makefunstuff.herdr.core.chat.BlockedPrompt
 import com.makefunstuff.herdr.core.host.HostSession
 import com.makefunstuff.herdr.core.host.HostStatus
-import com.makefunstuff.herdr.core.push.PushLook
 import com.makefunstuff.herdr.core.ssh.Machine
 import com.makefunstuff.herdr.data.HostManager
 import com.makefunstuff.herdr.data.MachineStore
@@ -133,7 +131,7 @@ class BriefWork(
     }
 
     /** While on screen: [machineId]'s tasks ([tasks]) or agents ([snapshot]) as the app shows them. */
-    fun looked(machineId: String, tasks: List<BoardTask>?, snapshot: SessionSnapshot?) {
+    fun looked(machineId: String, tasks: List<WorkTask>?, snapshot: SessionSnapshot?) {
         if (!hosts.isForeground) return
         synchronized(looking) { looking[machineId] = Baseline.of(looking[machineId] ?: store.state.value.baselines[machineId], clock(), tasks, snapshot) }
     }
@@ -186,7 +184,7 @@ class BriefWork(
     }
 
     /** One machine: how it stands and what its journal says; the reason when it can't be reached. With its full task list. */
-    private suspend fun look(m: Machine, since: Long): Pair<MachineLook, List<BoardTask>?> {
+    private suspend fun look(m: Machine, since: Long): Pair<MachineLook, List<WorkTask>?> {
         val baseline = store.state.value.baselines[m.id]
         return try {
             withTimeout(LOOK_MS) { hosts.borrow(m.id) { s -> read(s, m, since, baseline) } }
@@ -199,7 +197,7 @@ class BriefWork(
         }
     }
 
-    private suspend fun read(s: HostSession, m: Machine, since: Long, baseline: Baseline?): Pair<MachineLook, List<BoardTask>?> {
+    private suspend fun read(s: HostSession, m: Machine, since: Long, baseline: Baseline?): Pair<MachineLook, List<WorkTask>?> {
         // Online, or needing the person (a refused key, a changed host key): that won't change by waiting.
         val state = withTimeoutOrNull(CONNECT_MS) { s.state.first { it.online || it.status is HostStatus.Attention } }
         (state?.status as? HostStatus.Attention)?.let { throw IOException(it.message) }
@@ -207,13 +205,8 @@ class BriefWork(
         val conn = s.awaitConnection(5_000)
         val snapshot = runCatching { api.snapshot() }.getOrElse { if (it is CancellationException) throw it; null }
         if (!s.state.value.boardChecked) s.checkBoard()
-        val hasBoard = s.state.value.hasWorkBoard
-        val tasks = when {
-            // Shepherdr 3: its tasks in the rows the brief reads.
-            s.state.value.onShepherdr -> runCatching { s.awaitWorkBoard().overview().tasks.map(WorkTasks::row) }.getOrNull()
-            hasBoard -> runCatching { PushLook.tasks(s.awaitBoard()) }.getOrNull()
-            else -> null
-        }
+        val hasBoard = s.state.value.onShepherdr
+        val tasks = if (hasBoard) runCatching { s.awaitWorkBoard().overview().tasks }.getOrNull() else null
         // What each agent that asks wants, from its screen.
         val questions = snapshot?.agents.orEmpty().filter { it.agentStatus == AgentStatus.Blocked }.mapNotNull { a ->
             val text = runCatching { api.readPane(a.paneId, source = "visible", lines = 60).text }.getOrNull() ?: return@mapNotNull null

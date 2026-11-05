@@ -567,6 +567,33 @@ class TranscriptFollowerTest {
         assertEquals(listOf("@@missing"), run(home, ref, subagent = "c3"))
         assertFailsWith<IllegalArgumentException> { TranscriptFollower.command(ref, subagent = "../x") }
     }
+
+    @Test
+    fun findsAHerdrCoreAgentsTranscriptFromItsProcess() {
+        val home = kotlin.io.path.createTempDirectory("home").toFile()
+        File(home, ".claude/sessions").mkdirs()
+        File(home, ".claude/projects/-data-x").apply { mkdirs() }.resolve("abc-123.jsonl").writeText("{\"a\":1}\n{\"b\":2}\n")
+        val rollout = File(home, ".codex/sessions/2026/11/05").apply { mkdirs() }.resolve("rollout-2026-11-05T08-00-00-0199-ccc.jsonl").apply { writeText("x\ny\n") }
+        // Claude Code started through a wrapper: its own process is the shell's child.
+        val claude = ProcessBuilder("sh", "-c", "sleep 30; true").start()
+        // codex keeps its rollout file open.
+        val codex = ProcessBuilder("sh", "-c", "exec 3<'${rollout.absolutePath}'; sleep 30").start()
+        try {
+            val child = (1..50).firstNotNullOfOrNull { claude.toHandle().children().findFirst().orElse(null) ?: run { Thread.sleep(50); null } }!!
+            File(home, ".claude/sessions/${child.pid()}.json").writeText("""{"pid":${child.pid()},"sessionId":"abc-123","cwd":"/data/x"}""")
+            assertEquals(listOf("{\"a\":1}", "{\"b\":2}"), run(home, AgentSessionRef("claude", "pid", claude.pid().toString())).drop(1))
+            Thread.sleep(100)
+            assertEquals(listOf("x", "y"), run(home, AgentSessionRef("codex", "pid", codex.pid().toString())).drop(1))
+            // A Claude Code that hasn't written its first turn yet, or no agent at all: the screen stays.
+            File(home, ".claude/sessions/${child.pid()}.json").writeText("""{"sessionId":"dead-beef"}""")
+            assertEquals(listOf("@@missing"), run(home, AgentSessionRef("claude", "pid", claude.pid().toString())))
+            assertEquals(listOf("@@missing"), run(home, AgentSessionRef("claude", "pid", "999999999")))
+        } finally {
+            claude.toHandle().descendants().forEach { it.destroy() }
+            claude.destroy()
+            codex.destroy()
+        }
+    }
 }
 
 class TranscriptFollowerCancelTest {

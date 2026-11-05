@@ -273,9 +273,9 @@ private fun ProviderCard(p: ProviderUsage, now: Long, zone: ZoneId, keys: Map<St
         if (tasks.isNotEmpty()) {
             Heading("Board tasks that used it most")
             tasks.forEach { t ->
-                val name = if (t.coordinator) "Coordinator" else keys[t.id] ?: t.id.substringAfterLast('/').let { "#$it" }
+                val name = if (t.coordinator) "Assistant" else keys[t.id] ?: t.id.substringAfterLast('/').let { "#$it" }
                 UseRow(
-                    if (t.coordinator) "The Coordinator" else "$name · ${t.title.ifEmpty { t.id }}",
+                    if (t.coordinator) "The Assistant" else "$name · ${t.title.ifEmpty { t.id }}",
                     useWords(t.tokens, t.cost, p),
                     onClick = if (t.coordinator) null else ({ onTask(t.id) }),
                 )

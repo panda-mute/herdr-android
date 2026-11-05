@@ -5,11 +5,17 @@ import com.makefunstuff.herdr.core.push.AlertRules
 import com.makefunstuff.herdr.core.push.PushSeal
 import com.makefunstuff.herdr.core.push.QuietHours
 import com.makefunstuff.herdr.core.push.Watch
+import com.makefunstuff.herdr.core.push.WebPush
+import com.makefunstuff.herdr.core.push.WebPushKeys
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import java.io.File
 import java.util.Base64
 import java.util.UUID
@@ -35,7 +41,7 @@ data class PushState(
     val quiet: QuietHours = QuietHours(),
     /** Which kinds reach the phone, and whether they stay silent while you are at a machine. */
     val rules: AlertRules = AlertRules(),
-    /** One-shot watches set from the long-press sheets, oldest first; each is removed once it fires. */
+    /** One-shot watches set from the long-press sheets before Notify: each becomes its space's Notify: All once its agent is found ([com.makefunstuff.herdr.core.home.NotifyMove]). */
     val watches: List<Watch> = emptyList(),
     val machines: Map<String, MachinePush> = emptyMap(),
 ) {
@@ -63,8 +69,12 @@ data class MachinePush(
     val lastAt: Long = 0,
     /** Whether its subscription asks for what runs (Live Updates); null before one was made with it. */
     val live: Boolean? = null,
-    /** What its subscription watches ([com.makefunstuff.herdr.core.push.HerdrPush.watching]); null before one was made with it. */
+    /** The agents an older subscription followed for the one-shot watches (`pane:…`); null or empty: none, as subscriptions are made now. */
     val watching: String? = null,
+    /** Its Shepherdr 3 service's task alerts (Web Push): the keys this phone subscribed there with; made once. */
+    val webPush: WebPushKeys? = null,
+    /** The address its Shepherdr 3 service sends task alerts to; null when not subscribed there. */
+    val tasksTo: String? = null,
 ) {
     val keyBytes: ByteArray? get() = key.takeIf { it.isNotEmpty() }?.let { runCatching { Base64.getDecoder().decode(it) }.getOrNull() }
 }
@@ -98,12 +108,32 @@ class PushStore(private val file: File) {
         return key
     }
 
+    /** The machine's Web Push keys for its Shepherdr 3 service, made the first time they are asked for. */
+    @Synchronized
+    fun webKeys(id: String): WebPushKeys {
+        state.value.machine(id).webPush?.let { return it }
+        val keys = WebPush.newKeys()
+        machine(id) { it.copy(webPush = keys) }
+        return keys
+    }
+
+    /** Whether a Shepherdr 3 service sends this phone its task alerts: a task's agent then alerts as its task alone. */
+    val taskAlerts: Boolean get() = state.value.on && state.value.machines.values.any { it.tasksTo != null && !it.off }
+
     /** Every machine's key, to find which one sealed a push. */
     fun keys(): Map<String, ByteArray> = state.value.machines.mapNotNull { (id, m) -> m.keyBytes?.let { id to it } }.toMap()
 
     private fun load(): PushState {
-        val loaded = runCatching { if (file.exists()) json.decodeFromString(PushState.serializer(), file.readText()) else null }.getOrNull()
-            ?: PushState()
+        val loaded = runCatching { if (file.exists()) json.decodeFromJsonElement(PushState.serializer(), known(json.parseToJsonElement(file.readText()))) else null }
+            .getOrNull() ?: PushState()
         return if (loaded.phoneId.isEmpty()) loaded.copy(phoneId = UUID.randomUUID().toString()) else loaded
+    }
+
+    /** [saved] without the watches of a kind this app no longer has (a herdr-projects task's), so the rest still loads. */
+    private fun known(saved: JsonElement): JsonElement {
+        val o = saved as? JsonObject ?: return saved
+        val watches = o["watches"] as? JsonArray ?: return saved
+        val kinds = Watch.What.entries.map { it.name }.toSet()
+        return JsonObject(o + ("watches" to JsonArray(watches.filter { ((it as? JsonObject)?.get("what") as? JsonPrimitive)?.content in kinds })))
     }
 }

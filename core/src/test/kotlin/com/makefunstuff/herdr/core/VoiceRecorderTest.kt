@@ -55,6 +55,46 @@ class VoiceRecorderTest {
         assertEquals(State.Idle, r.state.value)
     }
 
+    @Test fun withTalkToTypeATapDictatesAndAHoldStillRecords() {
+        var taps = 0
+        r.tap = { taps++ }
+        r.down()
+        r.up(heldFor = 100)
+        assertEquals(1, taps)
+        assertEquals(State.Idle, r.state.value)
+        assertEquals(listOf("start", "cancel"), mic.calls)
+        assertTrue(sent.isEmpty())
+        r.down()
+        now += 3_000
+        r.up(heldFor = 3_000)
+        assertEquals(1, taps)
+        assertEquals(listOf("/files/voice/a.m4a" to 3_000L), sent)
+    }
+
+    @Test fun withTalkToTypeRecordStartsAHandsFreeVoiceMessage() {
+        r.tap = { error("not a tap") }
+        r.record()
+        assertEquals(false, assertIs<State.Recording>(r.state.value).held)
+        now += 2_000
+        r.stop()
+        assertEquals(listOf("/files/voice/a.m4a" to 2_000L), sent)
+    }
+
+    @Test fun allowedAfterATapItDictatesAfterRecordItRecords() {
+        var taps = 0
+        r.tap = { taps++ }
+        mic.allowed = false
+        r.down()
+        assertEquals(State.Asking, r.state.value)
+        r.answered(granted = true, forever = false)
+        assertEquals(1, taps)
+        assertEquals(State.Idle, r.state.value)
+        r.record()
+        r.answered(granted = true, forever = false)
+        assertEquals(1, taps)
+        assertEquals(false, assertIs<State.Recording>(r.state.value).held)
+    }
+
     @Test fun slidingAwayAndLettingGoCancels() {
         r.down()
         r.slide(cancel = true)

@@ -44,60 +44,6 @@ data class WorktreeInfo(
     @SerialName("is_linked_worktree") val isLinkedWorktree: Boolean = false,
 )
 
-/** One checkout of a repository, from `worktree.list`. */
-@Serializable
-data class GitWorktree(
-    val path: String,
-    val branch: String? = null,
-    val label: String = "",
-    @SerialName("is_bare") val isBare: Boolean = false,
-    @SerialName("is_detached") val isDetached: Boolean = false,
-    @SerialName("is_prunable") val isPrunable: Boolean = false,
-    @SerialName("is_linked_worktree") val isLinkedWorktree: Boolean = false,
-    @SerialName("open_workspace_id") val openWorkspaceId: String? = null,
-) {
-    val isOpen: Boolean get() = openWorkspaceId != null
-
-    /** What to call this checkout: its branch, or what it is when it has none. */
-    val title: String
-        get() = branch?.takeIf { it.isNotBlank() } ?: when {
-            isBare -> "bare repository"
-            isDetached -> "detached HEAD"
-            else -> path.substringAfterLast('/')
-        }
-}
-
-/** The repository a `worktree.list` call resolved to. */
-@Serializable
-data class WorktreeSource(
-    @SerialName("repo_key") val repoKey: String = "",
-    @SerialName("repo_name") val repoName: String = "",
-    @SerialName("repo_root") val repoRoot: String = "",
-    @SerialName("source_checkout_path") val sourceCheckoutPath: String = "",
-    @SerialName("source_workspace_id") val sourceWorkspaceId: String? = null,
-)
-
-@Serializable
-data class WorktreeList(
-    val source: WorktreeSource = WorktreeSource(),
-    val worktrees: List<GitWorktree> = emptyList(),
-)
-
-/** The workspace a worktree was created in or opened as. */
-@Serializable
-data class WorktreeOpened(
-    val workspace: WorkspaceInfo,
-    val worktree: GitWorktree,
-    @SerialName("already_open") val alreadyOpen: Boolean = false,
-)
-
-@Serializable
-data class WorktreeRemoved(
-    @SerialName("workspace_id") val workspaceId: String = "",
-    val path: String = "",
-    val forced: Boolean = false,
-)
-
 @Serializable
 data class TabInfo(
     @SerialName("tab_id") val tabId: String,
@@ -186,7 +132,9 @@ data class AgentInfo(
 
 /**
  * Where an agent keeps its conversation, as its herdr integration reports it: a transcript file
- * path, or a session id that the agent's own storage layout turns into one.
+ * path, or a session id that the agent's own storage layout turns into one. herdr-core reports none,
+ * so for its agents the app sets kind `pid`: the agent's process, which the transcript is found from
+ * on the machine ([com.makefunstuff.herdr.core.chat.TranscriptFollower.FIND]).
  */
 @Serializable
 data class AgentSessionRef(
@@ -239,8 +187,6 @@ data class SessionSnapshot(
     fun tab(id: String): TabInfo? = tabs.firstOrNull { it.tabId == id }
     fun pane(id: String): PaneInfo? = panes.firstOrNull { it.paneId == id }
     fun layout(tabId: String): TabLayout? = layouts.firstOrNull { it.tabId == tabId }
-    fun paneRect(paneId: String): LayoutRect? =
-        layouts.firstNotNullOfOrNull { l -> l.panes.firstOrNull { it.paneId == paneId }?.rect }
 
     /** "workspace › tab" for a pane, using labels where herdr has them. */
     fun location(workspaceId: String, tabId: String): String {

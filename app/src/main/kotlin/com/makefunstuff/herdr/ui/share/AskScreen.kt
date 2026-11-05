@@ -55,18 +55,19 @@ import com.makefunstuff.herdr.ui.theme.Space
 
 /** Where a tap from outside the app goes: [Routes.ask]'s `to`. */
 object Ask {
-    /** The Quick Settings tile and the home-screen widget: a Coordinator chat. */
+    /** The Quick Settings tile, the Ask widget and the launcher's shortcut: the Chat tab, the shown space's Assistant. */
     const val COORDINATOR = "coordinator"
-    /** The status widget's counts: a board. */
+    /** The status widget's counts: the Tasks tab, Needs you first. */
     const val BOARD = "board"
-    /** The share sheet and "Send to Coordinator" on selected text: a Coordinator chat, with what was shared in its message box. */
+    /** The share sheet and "Send to the Assistant" on selected text: an Assistant's chat, with what was shared in its message box. */
     const val SHARE = "share"
 }
 
 /**
- * The way in from outside the app ([Ask]). It goes on at once when the machine is clear (the
- * Coordinator used last, or the only machine that can have one; for the counts, the board with the
- * most waiting for you), and otherwise asks which machine, with what is being sent above.
+ * The way in from outside the app ([Ask]). The tile, the widgets and the shortcut go on at once: to
+ * the Chat tab (the shown space's Assistant) or the Tasks tab. A share goes on at once when the
+ * machine is clear (the Assistant used last, or the only machine that has one), and otherwise asks
+ * which machine, with what is being sent above.
  */
 @Composable
 fun AskScreen(nav: NavController, to: String) {
@@ -103,12 +104,11 @@ fun AskScreen(nav: NavController, to: String) {
 
     // Decided once, as the screen opens: where to go on at once, or null to ask.
     val first = remember {
-        val waiting = if (board) container.tally.boardWaiting() else null
         when {
-            share && container.shares.pending.value == null -> Start(Routes.AGENTS)
-            waiting != null -> target(waiting)
-            board && container.tally.agentWaiting() -> Start(Routes.AGENTS)
-            else -> AskTargets.choose(candidates, last, share)?.let(::target)
+            share && container.shares.pending.value == null -> Start(Routes.TASKS)
+            share -> AskTargets.choose(candidates, last, true)?.let(::target)
+            board -> Start(Routes.TASKS)
+            else -> Start(Routes.CHAT)
         }
     }
     var picked by remember { mutableStateOf<Start?>(null) }
@@ -130,11 +130,7 @@ fun AskScreen(nav: NavController, to: String) {
         containerColor = Herdr.colors.ground,
         topBar = {
             HerdrTopBar(
-                when {
-                    share -> "Send to the Coordinator"
-                    board -> "Open a work board"
-                    else -> "Ask the Coordinator"
-                },
+                "Send to the Assistant",
                 subtitle = if (on.size > 1) "Choose the machine" else null,
                 onBack = ::leave,
             )
@@ -143,7 +139,7 @@ fun AskScreen(nav: NavController, to: String) {
         if (on.isEmpty()) {
             EmptyState(
                 "No machines yet",
-                "Add the machine that runs herdr and its work board, and its Coordinator is a tap away from here.",
+                "Add the machine that runs herdr and Shepherdr, and its Assistant is a tap away from here.",
                 icon = HerdrIcons.Monitor,
             ) { PrimaryButton("Add machine") { nav.navigate(Routes.edit()) { popUpTo(Routes.ASK) { inclusive = true } } } }
             return@Scaffold
@@ -182,7 +178,7 @@ private class Start(val route: String, val machineId: String? = null)
 
 private fun boardOf(host: HostState?): AskTargets.Board = when {
     host == null || !host.online -> AskTargets.Board.Unknown
-    host.hasBoard -> AskTargets.Board.Here
+    host.onShepherdr -> AskTargets.Board.Here
     host.boardChecked -> AskTargets.Board.None
     else -> AskTargets.Board.Unknown
 }
@@ -217,14 +213,14 @@ private fun MachineRow(m: Machine, host: HostState?, board: AskTargets.Board, us
     ListRow(
         m.label,
         subtitle = when (board) {
-            AskTargets.Board.Here -> if (used) "Work board · used last" else "Work board"
-            AskTargets.Board.None -> "No work board here"
+            AskTargets.Board.Here -> if (used) "Assistant · used last" else "Assistant"
+            AskTargets.Board.None -> "No Shepherdr here"
             AskTargets.Board.Unknown -> listOfNotNull(status.label(), "used last".takeIf { used }).joinToString(" · ")
         },
         leading = { Box(Modifier.size(20.dp), contentAlignment = Alignment.Center) { StatusDot(status.color()) } },
         chevron = board != AskTargets.Board.None,
         enabled = board != AskTargets.Board.None,
-        onClickLabel = "Open ${m.label}'s Coordinator",
+        onClickLabel = "Open ${m.label}'s Assistant",
         onClick = onClick,
     )
 }

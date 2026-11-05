@@ -44,8 +44,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -68,6 +66,10 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -94,6 +96,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.RectangleShape
+import com.makefunstuff.herdr.ui.theme.Mono
+import com.makefunstuff.herdr.ui.theme.caps
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.makefunstuff.herdr.ui.theme.Herdr
@@ -101,27 +106,24 @@ import com.makefunstuff.herdr.ui.theme.Radius
 import com.makefunstuff.herdr.ui.theme.Space
 
 /*
- * The app's shared components (docs/DESIGN.md), drawn in the herdr web UI's visual language:
- * tonal surfaces and hairlines, one neutral fill at two strengths for pressed and chosen, amber
- * only for your own action, the chosen lens and focus. Screens build from these instead of stock
- * Material ones, so spacing, shapes and colours come from one place.
+ * The app's shared components (docs/DESIGN.md), drawn as the Herdr desktop's workbench: flat
+ * fills and 1dp frames, square corners, no shadows or gradients; module headings in mono capitals,
+ * status as a square LED and its word, amber for your own action, focus and what is shown. Screens
+ * build from these instead of stock Material ones, so spacing, shapes and colours come from one place.
  */
 
+/** Every shape is square on the workbench; the names say what each one is for. */
 object HerdrShapes {
-    /** `.modal` on a phone: a bottom sheet with `--radius-xl` top corners. */
-    val Sheet = RoundedCornerShape(topStart = Radius.xl, topEnd = Radius.xl)
-    val Dialog = RoundedCornerShape(Radius.xl)
-    /** Cards and menus: `--radius-lg`. */
-    val Card = RoundedCornerShape(Radius.l)
-    /** Buttons, fields, rows: `--radius-md`. */
-    val Field = RoundedCornerShape(Radius.m)
-    val Tile = RoundedCornerShape(Radius.m)
-    /** Badges and inner controls: `--radius-sm`. */
-    val Badge = RoundedCornerShape(Radius.s)
-    val Pill = RoundedCornerShape(50)
+    val Sheet = RectangleShape
+    val Dialog = RectangleShape
+    val Card = RectangleShape
+    val Field = RectangleShape
+    val Tile = RectangleShape
+    val Badge = RectangleShape
+    val Pill = RectangleShape
 }
 
-/** A `--hairline` in `--border`, the edge of cards, fields, bars and buttons. */
+/** A 1dp frame, the edge of modules, fields, bars and buttons. */
 @Composable
 fun Modifier.hairline(shape: Shape, color: Color = Herdr.colors.line): Modifier =
     if (color.alpha == 0f) this else this.border(1.dp, color, shape)
@@ -178,9 +180,8 @@ fun HerdrDialog(
             Surface(
                 color = sheetColor,
                 shape = HerdrShapes.Dialog,
-                shadowElevation = 16.dp,
                 modifier = Modifier.padding(Space.l).widthIn(max = 420.dp).fillMaxWidth().imePadding()
-                    .hairline(HerdrShapes.Dialog).then(NoClick),
+                    .hairline(HerdrShapes.Dialog, Herdr.colors.accent).then(NoClick),
             ) {
                 Column(Modifier.padding(top = Space.xl, start = Space.xl, end = Space.xl, bottom = Space.l)) {
                     if (title != null) Box(Modifier.padding(bottom = Space.s).semantics { heading() }) {
@@ -226,10 +227,11 @@ fun HerdrSheet(
         tonalElevation = 0.dp,
         scrimColor = Herdr.colors.scrim,
         dragHandle = {
-            Box(
-                Modifier.padding(top = Space.m, bottom = Space.s).width(36.dp).height(4.dp)
-                    .clip(HerdrShapes.Pill).background(Herdr.colors.lineStrong),
-            )
+            // The sheet's top edge is its amber frame; the handle a short dim bar under it.
+            Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(Modifier.fillMaxWidth().height(1.dp).background(Herdr.colors.accent))
+                Box(Modifier.padding(top = Space.m, bottom = Space.s).width(28.dp).height(3.dp).background(Herdr.colors.lineStrong))
+            }
         },
     ) {
         Box {
@@ -245,8 +247,8 @@ fun HerdrSheet(
 fun SheetTitle(title: String, subtitle: String? = null, modifier: Modifier = Modifier) {
     Column(modifier.fillMaxWidth().padding(start = Space.xl, end = Space.xl, top = Space.xs, bottom = Space.m)) {
         Text(
-            title, style = MaterialTheme.typography.titleLarge, color = Herdr.colors.strong, maxLines = 2, overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.semantics { heading() },
+            title.caps(), style = MaterialTheme.typography.titleLarge, color = Herdr.colors.strong, maxLines = 2, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.semantics { heading(); contentDescription = title },
         )
         if (subtitle != null) Text(
             subtitle, style = MaterialTheme.typography.bodySmall, color = Herdr.colors.muted, maxLines = 2, overflow = TextOverflow.Ellipsis,
@@ -323,7 +325,7 @@ fun MenuRow(label: String, icon: ImageVector, onClick: () -> Unit, enabled: Bool
 @Composable
 fun ErrorMessage(text: String, modifier: Modifier = Modifier, onRetry: (() -> Unit)? = null) {
     val c = Herdr.colors
-    Surface(color = c.dangerTint, shape = HerdrShapes.Field, modifier = modifier.fillMaxWidth()) {
+    Surface(color = c.dangerTint, shape = HerdrShapes.Field, modifier = modifier.fillMaxWidth().hairline(HerdrShapes.Field, c.red)) {
         Row(
             Modifier.padding(start = Space.m, top = Space.s, bottom = Space.s, end = Space.xs).heightIn(min = 40.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -341,8 +343,8 @@ fun ErrorMessage(text: String, modifier: Modifier = Modifier, onRetry: (() -> Un
 fun Notice(text: String, modifier: Modifier = Modifier, color: Color? = null, icon: ImageVector = HerdrIcons.Info) {
     val c = Herdr.colors
     Surface(
-        color = color?.let { c.tint(it) } ?: c.card, shape = HerdrShapes.Field,
-        modifier = modifier.fillMaxWidth().hairline(HerdrShapes.Field, if (color == null) c.line else Color.Transparent),
+        color = color?.let { c.tint(it) } ?: Color.Transparent, shape = HerdrShapes.Field,
+        modifier = modifier.fillMaxWidth().hairline(HerdrShapes.Field, color ?: c.lineStrong),
     ) {
         Row(Modifier.padding(horizontal = Space.m, vertical = Space.m), verticalAlignment = Alignment.Top) {
             Icon(icon, null, tint = color ?: c.muted, modifier = Modifier.size(18.dp))
@@ -378,17 +380,18 @@ fun ToastHost(modifier: Modifier = Modifier.fillMaxSize()) {
             if (m != null) last.value = m
             val msg = last.value
             val c = Herdr.colors
-            // The web UI's in-app alert: an island-black card in both themes (`--droplet-*`).
+            // The desktop's toast: a panel framed in amber (red for an error).
             if (msg != null) Surface(
-                color = Color.Black,
-                contentColor = Color(0xFFF5F5F7),
-                shape = HerdrShapes.Pill, shadowElevation = 6.dp,
-                modifier = Modifier.widthIn(max = 560.dp).clickable(onClickLabel = "Dismiss") { Toasts.dismiss() }
+                color = c.panel,
+                contentColor = c.strong,
+                shape = HerdrShapes.Pill,
+                modifier = Modifier.widthIn(max = 560.dp).hairline(HerdrShapes.Pill, if (msg.error) c.red else c.accent)
+                    .clickable(onClickLabel = "Dismiss") { Toasts.dismiss() }
                     .semantics { liveRegion = LiveRegionMode.Polite },
             ) {
                 Row(Modifier.padding(horizontal = Space.l, vertical = Space.m).heightIn(min = 24.dp), verticalAlignment = Alignment.CenterVertically) {
                     if (msg.error) {
-                        Icon(HerdrIcons.CircleAlert, null, tint = Color(0xFFFF8A80), modifier = Modifier.size(18.dp))
+                        Icon(HerdrIcons.CircleAlert, null, tint = c.red, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(Space.s))
                     }
                     Text(msg.text.lineSequence().first().take(200), style = MaterialTheme.typography.bodyMedium)
@@ -411,10 +414,13 @@ fun LoadingState(label: String = "Loading", modifier: Modifier = Modifier) {
     }
 }
 
-/** The one spinner: 24dp, thin, dim on a hairline track (waiting is not a state colour, nor amber). */
+/** The one spinner: 24dp, thin, dim on a hairline track, square ends (waiting is not a state colour, nor amber). */
 @Composable
 fun Spinner(modifier: Modifier = Modifier, size: Dp = 24.dp) {
-    CircularProgressIndicator(modifier.size(size), strokeWidth = 2.dp, color = Herdr.colors.muted, trackColor = Herdr.colors.line)
+    CircularProgressIndicator(
+        modifier.size(size), strokeWidth = 2.dp, color = Herdr.colors.muted, trackColor = Herdr.colors.line,
+        strokeCap = androidx.compose.ui.graphics.StrokeCap.Butt,
+    )
 }
 
 /** Full-area error with what happened and a way out. */
@@ -441,20 +447,19 @@ fun StateBlock(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Box(
-            Modifier.size(52.dp).background(iconTint?.let { c.tint(it) } ?: c.card, CircleShape)
-                .hairline(CircleShape, if (iconTint == null) c.line else Color.Transparent),
+            Modifier.size(52.dp).background(c.ground).hairline(HerdrShapes.Tile, iconTint ?: c.lineStrong),
             contentAlignment = Alignment.Center,
         ) {
             Icon(icon, null, tint = iconTint ?: c.muted, modifier = Modifier.size(24.dp))
         }
         Spacer(Modifier.height(Space.l))
         Text(
-            title, style = MaterialTheme.typography.titleLarge, color = c.strong, textAlign = TextAlign.Center,
-            modifier = Modifier.semantics { heading() },
+            title.caps(), style = MaterialTheme.typography.titleLarge, color = c.strong, textAlign = TextAlign.Center,
+            modifier = Modifier.background(c.ground).padding(horizontal = Space.xs).semantics { heading(); contentDescription = title },
         )
         if (body != null) {
             Spacer(Modifier.height(Space.xs))
-            Text(body, style = MaterialTheme.typography.bodyMedium, color = c.muted, textAlign = TextAlign.Center)
+            Text(body, style = MaterialTheme.typography.bodyMedium, color = c.muted, textAlign = TextAlign.Center, modifier = Modifier.background(c.ground).padding(horizontal = Space.xs))
         }
         if (action != null) {
             Spacer(Modifier.height(Space.l))
@@ -495,6 +500,25 @@ fun BarTitle(title: String, subtitle: String? = null) {
     }
 }
 
+/** Opens the spaces drawer; given around the top-level tabs on a phone, where a bar's leading button opens it. */
+val LocalBarDrawer = compositionLocalOf<(() -> Unit)?> { null }
+
+/** A screen shown as a tab (the Chat tab's chat): its bar opens the drawer in place of its back arrow. */
+val LocalInTab = compositionLocalOf { false }
+
+/** What a tab adds after a screen's own bar actions (the Chat tab's ⋯ with the space's tabs). */
+val LocalBarMore = compositionLocalOf<(@Composable RowScope.() -> Unit)?> { null }
+
+/**
+ * "Change this screen", given around the app's screens (none in a bubble): a long press on a bar's title opens it,
+ * as the ⋯ menus' row does, and the bar shown last tells it its [title].
+ */
+class ScreenChange(val open: () -> Unit) {
+    var title by mutableStateOf("")
+}
+
+val LocalScreenChange = compositionLocalOf<ScreenChange?> { null }
+
 /**
  * The bar over a screen, as the web UI's phone header: `--bg-panel` with a hairline under it. With
  * [onBack] it is a detail screen's bar (back arrow, 16sp strong title, the place under it dim);
@@ -512,26 +536,38 @@ fun HerdrTopBar(
     actions: @Composable RowScope.() -> Unit = {},
 ) {
     val c = Herdr.colors
+    val drawer = LocalBarDrawer.current?.takeIf { onBack == null || LocalInTab.current }
+    val more = LocalBarMore.current
     Row(
         modifier.fillMaxWidth().background(c.panel).drawBehind {
-            drawLine(c.line, Offset(0f, size.height - 0.5f), Offset(size.width, size.height - 0.5f), 1.dp.toPx())
+            drawLine(c.lineStrong, Offset(0f, size.height - 0.5f), Offset(size.width, size.height - 0.5f), 1.dp.toPx())
         }.statusBarsPadding()
             .heightIn(min = 56.dp)
-            .padding(start = if (onBack == null) Space.screen else Space.xs, end = Space.xs),
+            .padding(start = if (onBack == null && drawer == null) Space.screen else Space.xs, end = Space.xs),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (onBack != null) BarIcon(HerdrIcons.ArrowLeft, backLabel, onBack)
-        Box(Modifier.weight(1f).padding(start = if (onBack != null) Space.xs else 0.dp, end = Space.s)) {
+        if (drawer != null) BarIcon(HerdrIcons.Sidebar, "Spaces", drawer)
+        else if (onBack != null) BarIcon(HerdrIcons.ArrowLeft, backLabel, onBack)
+        val change = LocalScreenChange.current
+        if (change != null) SideEffect { change.title = title }
+        Box(
+            Modifier.weight(1f).padding(start = if (onBack != null || drawer != null) Space.xs else 0.dp, end = Space.s).then(
+                if (change == null) Modifier
+                else Modifier.pointerInput(change) { detectTapGestures(onLongPress = { change.open() }) }
+                    .semantics { onLongClick("Change this screen") { change.open(); true } },
+            ),
+        ) {
             when {
                 titleContent != null -> titleContent()
                 onBack == null && subtitle == null -> Text(
-                    title, style = MaterialTheme.typography.headlineMedium, color = c.strong, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.semantics { heading() },
+                    title.caps(), style = MaterialTheme.typography.headlineMedium, color = c.strong, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.semantics { heading(); contentDescription = title },
                 )
                 else -> BarTitle(title, subtitle)
             }
         }
         Row(verticalAlignment = Alignment.CenterVertically, content = actions)
+        if (more != null) Row(verticalAlignment = Alignment.CenterVertically, content = more)
     }
 }
 
@@ -543,7 +579,7 @@ fun HerdrTopBar(
 fun BarIcon(icon: ImageVector, contentDescription: String, onClick: () -> Unit, badge: Int = 0, enabled: Boolean = true, selected: Boolean? = null) {
     val c = Herdr.colors
     Box(
-        Modifier.size(48.dp).clip(RoundedCornerShape(Radius.l))
+        Modifier.size(48.dp)
             .then(if (selected == true) Modifier.background(c.accentTint) else Modifier)
             .then(
                 if (selected == null) Modifier.clickable(enabled = enabled, onClickLabel = null, role = Role.Button, onClick = onClick)
@@ -578,8 +614,7 @@ fun HerdrFab(
         shape = HerdrShapes.Pill,
         color = c.primary,
         contentColor = c.onPrimary,
-        shadowElevation = 4.dp,
-        modifier = Modifier.heightIn(min = 52.dp),
+        modifier = Modifier.heightIn(min = 52.dp).hairline(HerdrShapes.Pill, c.ground),
     ) {
         Row(
             Modifier.clip(HerdrShapes.Pill)
@@ -590,7 +625,7 @@ fun HerdrFab(
             horizontalArrangement = Arrangement.spacedBy(Space.s),
         ) {
             Icon(icon, null, modifier = Modifier.size(20.dp))
-            if (text != null) Text(text, style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold))
+            if (text != null) Text(text.caps(), style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold))
         }
     }
 }
@@ -600,13 +635,13 @@ fun HerdrFab(
 fun CountBadge(count: Int, modifier: Modifier = Modifier) {
     val c = Herdr.colors
     Box(
-        modifier.defaultMinSize(minWidth = 16.dp, minHeight = 16.dp).background(c.red, CircleShape).padding(horizontal = 4.dp),
+        modifier.defaultMinSize(minWidth = 16.dp, minHeight = 16.dp).background(c.red).padding(horizontal = 4.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             if (count > 99) "99+" else "$count",
-            style = TextStyle(fontSize = MaterialTheme.typography.labelSmall.fontSize, fontWeight = FontWeight.SemiBold),
-            color = c.panel,
+            style = TextStyle(fontFamily = Mono, fontSize = MaterialTheme.typography.labelSmall.fontSize, fontWeight = FontWeight.SemiBold),
+            color = c.onPrimary,
             maxLines = 1,
         )
     }
@@ -615,7 +650,7 @@ fun CountBadge(count: Int, modifier: Modifier = Modifier) {
 /** The bar of primary actions a form keeps at the bottom, in thumb reach. */
 @Composable
 fun BottomActionBar(modifier: Modifier = Modifier, content: @Composable RowScope.() -> Unit) {
-    val lineColor = Herdr.colors.line
+    val lineColor = Herdr.colors.lineStrong
     Row(
         modifier.fillMaxWidth().background(Herdr.colors.panel).drawBehind {
             drawLine(lineColor, Offset(0f, 0.5f), Offset(size.width, 0.5f), 1.dp.toPx())
@@ -628,9 +663,9 @@ fun BottomActionBar(modifier: Modifier = Modifier, content: @Composable RowScope
 }
 
 // ---------------------------------------------------------------------------------------------
-// Buttons (`.btn`): `--radius-md` corners, 48dp tall to tap, 13sp medium. Primary is the user's
-// own amber with ink text; secondary the neutral `--bg-elevated` with a hairline; quiet has no
-// fill or edge; danger is the danger tint with a red edge and only confirms something destructive.
+// Buttons: square, 48dp tall to tap, mono labels. Primary is your own amber with ink text;
+// secondary a frame on the ground; quiet has no fill or edge; danger is the danger tint with a red
+// frame and only confirms something destructive.
 
 private val ButtonPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp)
 
@@ -680,7 +715,7 @@ fun PrimaryButton(text: String, modifier: Modifier = Modifier, enabled: Boolean 
 
 @Composable
 fun SecondaryButton(onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true, contentPadding: PaddingValues = ButtonPadding, content: @Composable RowScope.() -> Unit) =
-    PillButton(onClick, Herdr.colors.card, Herdr.colors.strong, modifier, enabled, contentPadding, edge = Herdr.colors.line, body = content)
+    PillButton(onClick, Color.Transparent, Herdr.colors.strong, modifier, enabled, contentPadding, edge = Herdr.colors.lineStrong, body = content)
 
 @Composable
 fun SecondaryButton(text: String, modifier: Modifier = Modifier, enabled: Boolean = true, onClick: () -> Unit) =
@@ -722,9 +757,8 @@ fun DangerButton(text: String, modifier: Modifier = Modifier, enabled: Boolean =
 // Chips, segments and status
 
 /**
- * A filter or choice, as the web UI's recent-folder chips: a neutral pill (`--bg-elevated`, a
- * hairline). Chosen, it takes the stronger neutral fill (`--bg-hover`), a strong edge and strong
- * text: selection is neutral, never amber. 48dp target, 34dp drawn.
+ * A filter or choice: a framed cell on the ground. Chosen, it is framed in amber with amber
+ * text, as the desktop frames what is shown. 48dp target, 32dp drawn.
  */
 @Composable
 fun HerdrChip(
@@ -743,15 +777,15 @@ fun HerdrChip(
         contentAlignment = Alignment.Center,
     ) {
         Row(
-            Modifier.heightIn(min = 34.dp).clip(HerdrShapes.Pill)
-                .background(if (selected) c.hover else c.card)
-                .hairline(HerdrShapes.Pill, if (selected) c.lineStrong else c.line)
-                .padding(horizontal = 14.dp, vertical = 6.dp),
+            Modifier.heightIn(min = 32.dp)
+                .background(if (selected) c.accentTint else Color.Transparent)
+                .hairline(HerdrShapes.Pill, if (selected) c.accent else c.lineStrong)
+                .padding(horizontal = 12.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             CompositionLocalProvider(
-                LocalContentColor provides when { !enabled -> c.off; selected -> c.strong; else -> c.text },
+                LocalContentColor provides when { !enabled -> c.off; selected -> c.accent; else -> c.text },
                 LocalTextStyle provides MaterialTheme.typography.labelLarge,
             ) {
                 if (leadingIcon != null) Box(Modifier.size(16.dp), contentAlignment = Alignment.Center) { leadingIcon() }
@@ -766,8 +800,8 @@ fun HerdrChip(text: String, selected: Boolean, onClick: () -> Unit, modifier: Mo
     HerdrChip(selected, onClick, { Text(text, maxLines = 1, overflow = TextOverflow.Ellipsis) }, modifier)
 
 /**
- * A row of mutually exclusive choices, as the web UI's `.segmented`: one `--bg-elevated` track with
- * a hairline, the chosen segment on `--bg-hover` in strong text, the others dim.
+ * A row of mutually exclusive choices: one framed track, the chosen segment filled amber with ink
+ * (as the desktop's shown space slot), the others dim.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -781,14 +815,14 @@ fun SegmentedPills(options: List<String>, selected: Int, onSelect: (Int) -> Unit
         return
     }
     Row(
-        modifier.fillMaxWidth().clip(HerdrShapes.Field).background(c.card).hairline(HerdrShapes.Field).padding(2.dp),
+        modifier.fillMaxWidth().hairline(HerdrShapes.Field, c.lineStrong).padding(2.dp),
         horizontalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         options.forEachIndexed { i, label ->
             val on = i == selected
             Box(
-                Modifier.weight(1f).heightIn(min = 44.dp).clip(HerdrShapes.Badge)
-                    .background(if (on) c.hover else Color.Transparent)
+                Modifier.weight(1f).heightIn(min = 44.dp)
+                    .background(if (on) c.primary else Color.Transparent)
                     .clickable(role = Role.Tab, onClick = { onSelect(i) })
                     .semantics { this.selected = on }
                     .padding(horizontal = Space.xs),
@@ -796,7 +830,7 @@ fun SegmentedPills(options: List<String>, selected: Int, onSelect: (Int) -> Unit
             ) {
                 Text(
                     label, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    color = if (on) c.strong else c.muted,
+                    color = if (on) c.onPrimary else c.muted,
                 )
             }
         }
@@ -804,30 +838,28 @@ fun SegmentedPills(options: List<String>, selected: Int, onSelect: (Int) -> Unit
 }
 
 /**
- * A state as a badge (`.badge`): the word in the state's colour on its tint, `--radius-sm`. Idle
- * and unknown are dim on `--bg-elevated`. The word is always there, so colour is never alone.
+ * A state, as the desktop's pane header says it: a square LED and the word in mono capitals, in
+ * the state's colour, flat. Idle and unknown are dim. The word is always there, so colour is never alone.
  */
 @Composable
 fun StatusBadge(text: String, color: Color, modifier: Modifier = Modifier) {
     val c = Herdr.colors
     val quiet = color == c.idle || color == c.muted
     Row(
-        modifier.clip(HerdrShapes.Badge).background(if (quiet) c.card else c.tint(color))
-            .hairline(HerdrShapes.Badge, if (quiet) c.line else Color.Transparent)
-            .padding(horizontal = Space.s, vertical = 2.dp),
+        modifier.padding(vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(5.dp),
     ) {
-        Box(Modifier.size(6.dp).background(color, CircleShape))
-        Text(text, style = MaterialTheme.typography.labelMedium, color = if (quiet) c.muted else color, maxLines = 1)
+        Led(if (quiet) c.off else color, size = 6.dp)
+        Text(text.caps(), style = MaterialTheme.typography.labelSmall, color = if (quiet) c.muted else color, maxLines = 1)
     }
 }
 
-/** Status as text: a dot and a dim label, for rows that already carry a lot. */
+/** Status as text: an LED and a dim label, for rows that already carry a lot. */
 @Composable
 fun StatusLabel(text: String, color: Color, modifier: Modifier = Modifier) {
     Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        Box(Modifier.size(7.dp).background(color, CircleShape))
+        Led(color)
         Text(text, style = MaterialTheme.typography.labelMedium, color = Herdr.colors.muted, maxLines = 1)
     }
 }
@@ -886,7 +918,7 @@ fun fieldColors() = Herdr.colors.let { c ->
     OutlinedTextFieldDefaults.colors(
         focusedContainerColor = c.input, unfocusedContainerColor = c.input, disabledContainerColor = c.card,
         errorContainerColor = c.input,
-        focusedBorderColor = c.accent, unfocusedBorderColor = c.line, disabledBorderColor = c.line, errorBorderColor = c.red,
+        focusedBorderColor = c.accent, unfocusedBorderColor = c.lineStrong, disabledBorderColor = c.line, errorBorderColor = c.red,
         focusedTextColor = c.strong, unfocusedTextColor = c.strong, disabledTextColor = c.muted, errorTextColor = c.strong,
         focusedLabelColor = c.muted, unfocusedLabelColor = c.muted, errorLabelColor = c.red,
         focusedSupportingTextColor = c.muted, unfocusedSupportingTextColor = c.muted, errorSupportingTextColor = c.red,
@@ -934,41 +966,46 @@ fun FieldLabel(text: String, modifier: Modifier = Modifier) {
     )
 }
 
-/** A section's head: parted by space and a dim 13sp heading, never by a rule. */
+/**
+ * A section's head, as the desktop's module headers: the name in mono capitals, then a 1dp rule
+ * running to the edge (or to [trailing]). [color] marks a section that needs you.
+ */
 @Composable
 fun SectionHeading(
     text: String,
     modifier: Modifier = Modifier,
-    top: Dp = Space.xxl,
+    top: Dp = Space.xl,
     color: Color = Herdr.colors.muted,
     trailing: (@Composable () -> Unit)? = null,
 ) {
+    val rule = Herdr.colors.line
     Row(
         modifier.fillMaxWidth().padding(top = top, bottom = Space.s).heightIn(min = 24.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            text,
+            text.caps(),
             style = MaterialTheme.typography.titleSmall,
             color = color,
-            modifier = Modifier.weight(1f).semantics { heading() },
+            maxLines = 1, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.semantics { heading(); contentDescription = text },
         )
+        Box(Modifier.weight(1f).padding(horizontal = Space.s).height(1.dp).background(rule))
         trailing?.invoke()
     }
 }
 
 /**
- * A card, as the web UI's settings groups and its cards in the chat: `--bg-elevated` with a
- * `--border` hairline and `--radius-lg` corners, no shadow; pressed, it takes `--bg-hover`. Holds a
- * group of rows (no padding) or, with [padded], content.
+ * A module: a 1dp frame on the ground, flat, square, no shadow. Holds a group of rows (no padding)
+ * or, with [padded], content. Never put one inside another: a module holds rows and sections.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun QuietCard(
     modifier: Modifier = Modifier,
     padded: Boolean = false,
-    color: Color = Herdr.colors.card,
-    edge: Color = Herdr.colors.line,
+    color: Color = Color.Transparent,
+    edge: Color = Herdr.colors.lineStrong,
     onClick: (() -> Unit)? = null,
     onLongClick: (() -> Unit)? = null,
     onClickLabel: String? = null,
@@ -990,8 +1027,8 @@ fun QuietCard(
 }
 
 /**
- * The leading cell of a row: an icon or a letter on the quiet `--bg-hover` tile (`--radius-md`),
- * or with [tint] on that colour's tint. [dot] draws a status dot on its corner.
+ * The leading cell of a row: an icon or a letter in a square framed tile, or with [tint] on that
+ * colour's tint. [dot] draws a status LED on its corner.
  */
 @Composable
 fun IconTile(
@@ -1006,15 +1043,15 @@ fun IconTile(
     val c = Herdr.colors
     Box(modifier.size(size)) {
         Box(
-            Modifier.matchParentSize().clip(HerdrShapes.Tile).background(background ?: tint?.let { c.tint(it) } ?: c.hover),
+            Modifier.matchParentSize().background(background ?: tint?.let { c.tint(it) } ?: c.card).hairline(HerdrShapes.Tile, c.line),
             contentAlignment = Alignment.Center,
         ) {
             if (icon != null) Icon(icon, null, tint = tint ?: c.text, modifier = Modifier.size(size / 2))
             else if (letter != null) Text(letter, style = MaterialTheme.typography.titleMedium, color = tint ?: c.text)
         }
         if (dot != null) Box(
-            Modifier.align(Alignment.TopEnd).offset(x = 3.dp, y = (-3).dp).size(12.dp)
-                .background(LocalRowBackground.current.takeOrElse { c.ground }, CircleShape).padding(2.dp).background(dot, CircleShape),
+            Modifier.align(Alignment.TopEnd).offset(x = 3.dp, y = (-3).dp).size(11.dp)
+                .background(LocalRowBackground.current.takeOrElse { c.ground }).padding(2.dp).background(dot),
         )
     }
 }
@@ -1092,9 +1129,9 @@ fun ListRow(
 }
 
 /**
- * One tappable action row, as the web UI's row sheet draws it: a dim 20dp icon, the label, an
- * optional dim second line, an optional chevron or trailing content. 52dp tall at the least; the
- * whole row is the target; chosen, it sits on `--bg-hover` with a check.
+ * One tappable action row: a dim 20dp icon, the label, an optional dim second line, an optional
+ * chevron or trailing content. 52dp tall at the least; the whole row is the target; chosen, it sits
+ * on the selected fill with an amber bar at its start, as the desktop's shown space.
  */
 @Composable
 fun ActionRow(
@@ -1130,7 +1167,7 @@ fun ActionRow(
             .fillMaxWidth()
             .heightIn(min = 52.dp)
             .clip(HerdrShapes.Field)
-            .then(if (selected) Modifier.background(c.hover) else Modifier)
+            .then(if (selected) Modifier.background(c.selected).drawBehind { drawRect(c.accent, size = androidx.compose.ui.geometry.Size(3.dp.toPx(), size.height)) } else Modifier)
             .then(if (onClick != null && enabled) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(horizontal = Space.m, vertical = Space.s),
     ) {
@@ -1175,11 +1212,29 @@ fun SwitchRow(label: String, detail: String? = null, checked: Boolean, enabled: 
             if (detail != null) Text(detail, style = MaterialTheme.typography.bodySmall, color = Herdr.colors.muted)
         }
         Spacer(Modifier.width(Space.m))
-        androidx.compose.material3.Switch(checked = checked, onCheckedChange = null, enabled = enabled, colors = switchColors())
+        HerdrSwitch(checked, enabled)
     }
 }
 
-/** The web UI's settings switch: amber track when on (your choice), a hairline track when off. */
+/**
+ * The workbench's switch, square: a framed track with a square knob; on, the track is amber with
+ * an ink knob at its end. It draws only; the row around it toggles.
+ */
+@Composable
+fun HerdrSwitch(checked: Boolean, enabled: Boolean = true, modifier: Modifier = Modifier) {
+    val c = Herdr.colors
+    Box(
+        modifier.size(width = 40.dp, height = 22.dp)
+            .background(if (checked && enabled) c.primary else c.input)
+            .hairline(HerdrShapes.Field, if (checked && enabled) c.primary else if (enabled) c.lineStrong else c.line)
+            .padding(3.dp),
+        contentAlignment = if (checked) Alignment.CenterEnd else Alignment.CenterStart,
+    ) {
+        Box(Modifier.size(16.dp).background(if (!enabled) c.off else if (checked) c.onPrimary else c.muted))
+    }
+}
+
+/** Material's switch in the workbench's colours, for the few places that need its own (drag, semantics): amber on, framed off. */
 @Composable
 fun switchColors() = Herdr.colors.let { c ->
     androidx.compose.material3.SwitchDefaults.colors(
@@ -1207,7 +1262,7 @@ fun RowDivider(inset: Dp = Space.l) {
     Box(Modifier.fillMaxWidth().padding(start = inset).height(1.dp).background(Herdr.colors.line))
 }
 
-/** Code text (JetBrains Mono) on the ground, in a hairline box: keys, paths, fingerprints. */
+/** Code text (Geist Mono) on the ground, in a framed box: keys, paths, fingerprints. */
 @Composable
 fun MonoBlock(text: String, modifier: Modifier = Modifier, maxLines: Int = Int.MAX_VALUE) {
     Text(

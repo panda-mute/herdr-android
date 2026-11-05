@@ -1,5 +1,6 @@
 package com.makefunstuff.herdr.core
 
+import com.makefunstuff.herdr.core.api.AgentSessionRef
 import com.makefunstuff.herdr.core.api.AgentStatus
 import com.makefunstuff.herdr.core.hc.HcClient
 import com.makefunstuff.herdr.core.hc.HcConnection
@@ -175,6 +176,20 @@ class HerdrCoreTest {
         assertEquals(1L, agents["t4"]!!.completionSeq)
         assertEquals(list.terminals.first { it.address == "t4" }.statusMs, agents["t4"]!!.stateChangeSeq)
         assertEquals("/home/dev/src/demo", agents["t4"]!!.cwd)
+        // hc reports no session: the chat finds the transcript from the agent's process.
+        assertEquals(AgentSessionRef("claude", "pid", "1946559", "herdr-core"), agents["t4"]!!.agentSession)
+        assertEquals(AgentSessionRef("codex", "pid", "1945809", "herdr-core"), agents["t2"]!!.agentSession)
+    }
+
+    @Test
+    fun onlyClaudeAndCodexHereAreLookedUpByTheirProcess() {
+        fun t(address: String, name: String, pid: Long = 42) =
+            HcTerminal(address, createdMs = 1, foreground = com.makefunstuff.herdr.core.hc.HcForeground(name = name, pid = pid))
+        assertNull(HcMapping.sessionOf(t("t1", "pi")))
+        assertNull(HcMapping.sessionOf(t("t2", "claude", pid = 0)))
+        // Its process runs on the machine this core added, which the app doesn't reach.
+        assertNull(HcMapping.sessionOf(t("rohan/t3", "claude")))
+        assertEquals("42", HcMapping.sessionOf(t("t4", "codex"))!!.value)
     }
 
     @Test

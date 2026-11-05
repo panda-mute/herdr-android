@@ -1,5 +1,6 @@
 package com.makefunstuff.herdr.ui.code
 
+import com.makefunstuff.herdr.ui.change.ChangeScreenRow
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -134,6 +135,7 @@ fun DiffScreen(nav: NavController, spot: CodeSpot, src: String, path: String) {
                     MenuRow("Text size and wrapping", HerdrIcons.ALargeSmall, { menu = false; showView = true })
                     MenuRow(if (pending > 0) "Comments · $pending waiting" else "Comments", HerdrIcons.MessageSquare, { menu = false; nav.navigate(Routes.codeNotes(spot)) })
                     MenuRow("Copy the file's path", HerdrIcons.Copy, { menu = false; context.copyToClipboard("Path", path) })
+                    ChangeScreenRow { menu = false }
                 }
             }
         },

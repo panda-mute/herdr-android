@@ -25,6 +25,9 @@
     <!-- Voice messages in the chats: the phone records you and the recording goes to the agent.
          Asked for the first time the mic is used. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- "Update ready" (Settings › Change the app): the app installs its own update, built on the person's
+         machine or CI's release, through Android's installer, which asks the person every time. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <!-- Push apps (UnifiedPush distributors such as ntfy) that give the app an address for its machines. -->
     <queries>
@@ -136,7 +139,8 @@
                 <action android:name="android.service.quicksettings.action.QS_TILE" />
             </intent-filter>
         </service>
-        <!-- The home-screen widgets: one that opens the Coordinator chat, one with the counts across machines. -->
+        <!-- The home-screen widgets: one that opens the Coordinator chat, one with the counts across machines, and
+             one listing what needs you with its buttons. -->
         <receiver
             android:name=".share.AskWidget"
             android:exported="false"
@@ -154,6 +158,15 @@
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>
             <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_status_info" />
+        </receiver>
+        <receiver
+            android:name=".share.NeedsWidget"
+            android:exported="false"
+            android:label="@string/widget_needs">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_needs_info" />
         </receiver>
 
         <!-- A notification's button, the app's own look at its machines while it is closed, the scheduled
@@ -188,8 +201,9 @@
                 <action android:name="android.intent.action.TIMEZONE_CHANGED" />
             </intent-filter>
         </receiver>
+        <!-- Android's installer answering an update: its prompt for the person, or why it didn't install. -->
+        <receiver android:name=".change.InstallReceiver" android:exported="false" />
         <!-- A Live Update's Stop for a task, which asks first, and Keep going. -->
-        <receiver android:name=".push.LiveReceiver" android:exported="false" />
         <!-- Pushes from the machines through a push app (UnifiedPush). Only its token is taken, and only
              pushes sealed with a machine's own key are shown. -->
         <receiver android:name=".push.PushReceiver" android:exported="true">

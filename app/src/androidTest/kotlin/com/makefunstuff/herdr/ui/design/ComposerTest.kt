@@ -31,14 +31,13 @@ import com.makefunstuff.herdr.HerdrApp
 import com.makefunstuff.herdr.data.DraftStore
 import com.makefunstuff.herdr.ui.common.LocalContainer
 import com.makefunstuff.herdr.ui.common.rememberDraft
-import com.makefunstuff.herdr.ui.coordinator.CoordinatorComposer
 import com.makefunstuff.herdr.ui.theme.HerdrTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 
-/** The chat composer both chats share: Send, Stop, sending, keys, drafts, and the Coordinator's two ways to send. */
+/** The chat composer: Send, Stop, sending, keys, drafts, attaching. */
 @OptIn(ExperimentalTestApi::class)
 class ComposerTest {
     @get:Rule val rule = createComposeRule()
@@ -50,65 +49,6 @@ class ComposerTest {
     }
 
     private val field get() = rule.onNode(hasSetTextAction())
-
-    @Test fun coordinatorSendsOrSendsAndStartsAgents() {
-        var draft by mutableStateOf("")
-        var start by mutableStateOf(false)
-        val sent = mutableListOf<Pair<String, Boolean>>()
-        rule.setContent {
-            HerdrTheme {
-                CoordinatorComposer(
-                    draft = draft, onDraft = { draft = it }, enabled = true, hint = "Tell the Coordinator…",
-                    startAgents = start, onStartAgents = { start = it },
-                    onSend = { delegate -> sent += draft to delegate; draft = ""; start = false },
-                )
-            }
-        }
-        // Plain Send: the message goes to the Coordinator, no agents started.
-        field.performTextInput("Add a dark mode toggle")
-        rule.onNodeWithContentDescription("Send").assertIsEnabled().performClick()
-        assertEquals(listOf("Add a dark mode toggle" to false), sent)
-
-        // "Start agents" on: Send says so, and sends with the board's Tab.
-        field.performTextInput("Fix the flaky test")
-        rule.onNodeWithText("Start agents").assertIsOff().performClick()
-        rule.onNodeWithText("Start agents").assertIsOn()
-        rule.onNodeWithContentDescription("Send and start agents").assertIsEnabled().performClick()
-        assertEquals("Fix the flaky test" to true, sent.last())
-
-        // It is one message's choice: off again for the next one.
-        rule.onNodeWithText("Start agents").assertIsOff()
-        rule.onNodeWithContentDescription("Send").assertIsNotEnabled()
-    }
-
-    @Test fun startAgentsIsATouchTarget() {
-        rule.setContent {
-            HerdrTheme { CoordinatorComposer("hi", {}, true, "Tell the Coordinator…", false, {}, {}) }
-        }
-        rule.onNodeWithText("Start agents").assertIsDisplayed()
-        rule.onNodeWithContentDescription("Send").atLeast48()
-    }
-
-    @Test fun attachIsOnTheLeftOfBothChats() {
-        var picks = 0
-        var uploading by mutableStateOf(false)
-        rule.setContent {
-            HerdrTheme {
-                CoordinatorComposer(
-                    "look at this", {}, true, "Tell the Coordinator…", false, {}, {},
-                    onAttach = { picks++ }, uploading = uploading,
-                )
-            }
-        }
-        rule.onNodeWithContentDescription("Attach files").atLeast48()
-        rule.onNodeWithContentDescription("Attach files").assertIsEnabled().performClick()
-        assertEquals(1, picks)
-        // While a file is copied, Send waits and the text stays.
-        uploading = true
-        rule.onNodeWithContentDescription("Send").assertIsNotEnabled()
-        rule.onNodeWithContentDescription("Attach files").assertIsNotEnabled()
-        rule.onNodeWithText("look at this").assertIsDisplayed()
-    }
 
     @Test fun agentComposerTakesTheAttachButton() {
         var picks = 0

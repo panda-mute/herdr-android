@@ -8,7 +8,9 @@ import com.makefunstuff.herdr.core.board.WorkBoard
 import com.makefunstuff.herdr.core.board.WorkCard
 import com.makefunstuff.herdr.core.board.WorkOverview
 import com.makefunstuff.herdr.core.board.WorkSpace
+import com.makefunstuff.herdr.core.board.WorkAgentChoice
 import com.makefunstuff.herdr.core.board.WorkStatus
+import com.makefunstuff.herdr.core.board.WorkTab
 import com.makefunstuff.herdr.core.board.WorkTask
 import com.makefunstuff.herdr.core.board.WorkTaskDetails
 import com.makefunstuff.herdr.core.board.WorkTasks
@@ -19,7 +21,9 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.intOrNull
 import java.io.IOException
 
 /**
@@ -63,6 +67,10 @@ class V2WorkBoard(private val connect: suspend () -> ShepherdrClient, private va
 
     override suspend fun evidence(task: WorkTask): V2Evidence = connect().evidence(task.id)
 
+    override suspend fun folder(task: WorkTask): TaskFolder = connect().taskFolder(task.id)
+
+    override suspend fun pullRequest(task: WorkTask): V2PrAnswer = connect().taskPr(task.id)
+
     /** Done with nothing merged (`herdr-task done`), by its chat key as the task's row menu sends it. */
     override suspend fun close(task: WorkTask): String {
         val o = connect().actRaw(V2Actions.close(task.chat.ifEmpty { V2Board.workerChat(task.id) }))
@@ -87,6 +95,12 @@ class V2WorkBoard(private val connect: suspend () -> ShepherdrClient, private va
         return ""
     }
 
+    override suspend fun keepSecret(chat: String, ask: V2SecretAsk, level: String, value: String): String {
+        if (value.isEmpty()) throw IOException("Type or paste the value first")
+        connect().act(V2Actions.secret(chat, ask.id, ask.name, level, value))
+        return "Kept for " + (ask.levels.firstOrNull { it.id == level }?.label ?: level)
+    }
+
     override suspend fun coordinator(space: String): CoordinatorThread =
         V2Board.thread(space, connect().chat(chatOf(space)))
 
@@ -103,6 +117,14 @@ class V2WorkBoard(private val connect: suspend () -> ShepherdrClient, private va
         return ""
     }
 
+    override suspend fun react(space: String, task: WorkTask?, message: String, emoji: String) {
+        connect().act(V2Actions.react(task?.let(::agentChat) ?: chatOf(space), message, emoji))
+    }
+
+    override suspend fun earlier(space: String, task: WorkTask?) {
+        connect().act(V2Actions.earlier(task?.let(::agentChat) ?: chatOf(space)))
+    }
+
     override suspend fun upload(space: String, name: String, data: ByteArray, type: String): String =
         connect().upload(name, data, type)
 
@@ -117,6 +139,15 @@ class V2WorkBoard(private val connect: suspend () -> ShepherdrClient, private va
         connect().voice(task?.let(::agentChat) ?: chatOf(space))
 
     override suspend fun dictate(audio: ByteArray, type: String): String = connect().dictate(audio, type)
+
+    override suspend fun autopilot(space: String, on: Boolean) {
+        connect().act(V2Actions.autopilot(space, on))
+    }
+
+    override suspend fun autopilotSetting(key: String, value: String) {
+        connect().act(V2Actions.autopilotSetting(key, value))
+    }
+    override suspend fun canDictate(): Boolean = connect().canDictate()
 
     /** Its agent's chat from the live link, as [coordinatorThreads] follows a space's. */
     override fun taskThreads(task: WorkTask, everyMs: Long): Flow<CoordinatorThread> {
@@ -153,6 +184,48 @@ class V2WorkBoard(private val connect: suspend () -> ShepherdrClient, private va
         }
         val o = connect().act(action)
         return (o["to"] as? JsonPrimitive)?.contentOrNull ?: a.keeper
+    }
+
+    override suspend fun tabAgents(space: String): List<WorkAgentChoice> {
+        val o = connect().act(V2Actions.tabAgents(space))
+        return (o["agents"] as? JsonArray).orEmpty().mapNotNull { e ->
+            val a = e as? JsonObject ?: return@mapNotNull null
+            fun str(k: String) = (a[k] as? JsonPrimitive)?.contentOrNull
+            val kind = str("kind") ?: return@mapNotNull null
+            WorkAgentChoice(kind, str("name") ?: kind, (a["installed"] as? JsonPrimitive)?.booleanOrNull == true)
+        }
+    }
+
+    override suspend fun renameTab(space: String, tab: WorkTab, name: String) {
+        connect().act(V2Actions.tabRename(tab.id, space.takeIf { tab.id == null }, name.trim().take(80)))
+    }
+
+    override suspend fun closeTab(id: String) {
+        connect().act(V2Actions.tabClose(id))
+    }
+
+    override suspend fun restartTab(tab: WorkTab, kind: String?) {
+        connect().act(V2Actions.tabSwitch(tab.chat, kind))
+    }
+
+    override suspend fun modelMenu(chat: String): V2ModelMenu {
+        val menu = connect().act(V2Actions.modelMenu(chat))["menu"] as? JsonObject ?: throw IOException("Couldn't read what it runs on.")
+        return ShepherdrJson.decodeFromJsonElement(V2ModelMenu.serializer(), menu)
+    }
+
+    override suspend fun restartWith(chat: String, pick: V2ModelPick, level: String?) {
+        connect().act(V2Actions.restart(chat, pick, level))
+    }
+
+    override suspend fun assistantWorkers(space: String): Int =
+        (connect().act(V2Actions.assistantClose(space, "count"))["workers"] as? JsonPrimitive)?.intOrNull ?: 0
+
+    override suspend fun closeAssistant(space: String, stopWorkers: Boolean) {
+        connect().act(V2Actions.assistantClose(space, if (stopWorkers) "stop" else "keep"))
+    }
+
+    override suspend fun closeSpace(space: String) {
+        connect().act(V2Actions.spaceRemove(space))
     }
 
     private fun agentChat(task: WorkTask) = task.chat.ifEmpty { throw IOException("${task.name} has no agent yet") }
@@ -224,13 +297,32 @@ object V2Board {
                 needsYou = p.status == V2Status.Need || s.asks.containsKey(p.id) || s.needs.any { it.place == p.id } ||
                     tasks.any { it.space == p.id && it.status.needsYou },
                 unreachable = p.unreachableSince != null,
-                asks = s.asks.containsKey(p.id) || s.needs.any { it.place == p.id && it.task == null },
+                // A secret ask is its own item on Needs you (Waiting.Secret), not the Assistant's question.
+                asks = s.asks.containsKey(p.id) || s.needs.any { it.place == p.id && it.task == null && it.secret == null },
                 level = p.level,
                 store = p.store?.key.orEmpty(),
                 emoji = p.emoji,
+                pilot = Autopilot.pilotOf(s, p),
+                tabs = tabs(s, p),
             )
         }
-        return WorkOverview(spaces, tasks, s.artifacts, s.needs)
+        return WorkOverview(spaces, tasks, s.artifacts, s.needs, Autopilot.settingsOf(s))
+    }
+
+    /** [p]'s tabs as 3.1's bar has them (`barTabs`): its Assistant's first, then the others. */
+    fun tabs(s: V2Snapshot, p: V2Place): List<WorkTab> {
+        val a = p.assistantTab
+        val assistant = WorkTab(
+            id = a?.id, name = a?.name ?: "Assistant", named = a?.named == true, chat = p.chat.ifEmpty { assistantChat(p.id) },
+            agent = a?.agent ?: a?.cli, state = a?.state ?: "idle", assistant = true, live = a?.live == true,
+            remote = s.host.isNotEmpty() && p.machine != s.host,
+        )
+        return listOf(assistant) + p.tabs.map { t ->
+            WorkTab(
+                id = t.id, name = t.name, named = t.named, chat = t.term, agent = t.agent ?: t.cli, state = t.state,
+                live = (t.agent ?: t.cli) != null, remote = '/' in t.term.drop(2),
+            )
+        }
     }
 
     fun task(t: V2Task) = WorkTask(

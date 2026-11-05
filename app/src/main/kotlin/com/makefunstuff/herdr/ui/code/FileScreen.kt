@@ -94,7 +94,6 @@ fun FileScreen(nav: NavController, spot: CodeSpot, path: String, line: Int?) {
     var chosen by remember { mutableStateOf<IntRange?>(null) }
     var anchor by remember { mutableStateOf<Int?>(null) }
     var commenting by remember { mutableStateOf(false) }
-    var quick by remember { mutableStateOf<com.makefunstuff.herdr.ui.quick.QuickPlace?>(null) }
     val list = rememberLazyListState(initialFirstVisibleItemIndex = ((line ?: 1) - 4).coerceAtLeast(0))
     val pending = notes.count { it.machineId == spot.machine && it.root == spot.dir }
 
@@ -118,13 +117,6 @@ fun FileScreen(nav: NavController, spot: CodeSpot, path: String, line: Int?) {
                 if (source) BarIcon(HerdrIcons.Hash, "Go to line", { goTo = true }, enabled = rows.isNotEmpty())
                 BarIcon(HerdrIcons.ALargeSmall, "Text size and wrapping", { showView = true })
                 BarIcon(HerdrIcons.MessageSquare, "Comments", { nav.navigate(Routes.codeNotes(spot)) }, badge = pending)
-                // A quick command on this file, and on the lines chosen in it ({{file}}, {{selection}}).
-                if (host.classic) BarIcon(HerdrIcons.Zap, "Quick commands", {
-                    quick = com.makefunstuff.herdr.ui.quick.QuickPlace(
-                        spot.machine, spot.dir, label = name, pane = spot.pane, task = spot.task, taskName = spot.taskName, file = path,
-                        selection = chosen?.joinToString("\n") { rows[it].text }.orEmpty(),
-                    )
-                })
             }
         },
         bottomBar = {
@@ -172,7 +164,6 @@ fun FileScreen(nav: NavController, spot: CodeSpot, path: String, line: Int?) {
         chosen = null
         scope.launch { list.scrollToItem((n - 4).coerceAtLeast(0)) }
     }
-    quick?.let { place -> com.makefunstuff.herdr.ui.quick.QuickSheets(nav, place, onDismiss = { quick = null }) }
     val range = chosen
     if (commenting && range != null) {
         val (start, end) = lineSpan(rows, range)

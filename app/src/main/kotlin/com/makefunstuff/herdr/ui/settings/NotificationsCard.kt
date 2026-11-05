@@ -104,7 +104,7 @@ fun NotificationsCard(onQuietHours: () -> Unit, onRules: () -> Unit) {
             SecondaryButton("Allow notifications") { allow() }
         }
 
-        LinkRow("What reaches the phone", rulesLabel(st.rules, st.watches.size), onRules)
+        LinkRow("What reaches the phone", rulesLabel(st.rules), onRules)
 
         PushAppLine(st, pushApps, phone::label, onGet = phone::getPushApp, onAsk = { container.pushHosts.turnOn() })
 

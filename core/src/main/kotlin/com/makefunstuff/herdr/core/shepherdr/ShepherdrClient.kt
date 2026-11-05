@@ -82,6 +82,12 @@ object V2Actions {
         put("emoji", emoji)
     }
 
+    /** The page of [chat]'s log before what it shows (`Search earlier`, `Loading earlier…`): the chat then comes again, longer. */
+    fun earlier(chat: String): JsonObject = buildJsonObject {
+        put("type", "earlier")
+        put("chat", chat)
+    }
+
     /** Marks task [task]'s chat's task done with nothing merged (`herdr-task done`): its chat key, `<task>/worker`. */
     fun close(chat: String): JsonObject = buildJsonObject {
         put("type", "close")
@@ -100,10 +106,100 @@ object V2Actions {
         put("task", task)
     }
 
+    /**
+     * Keeps [value] as secret [name] at [level] ([V2SecretLevel.id]), for the agent in [chat] that asked ([ask]: its
+     * card's id), as the web's masked card sends it: the service puts it in the vault with `herdr-secret set` (on its
+     * stdin) and tells the agent its name only. Never logged or kept: this object lives as long as the request.
+     */
+    fun secret(chat: String, ask: String, name: String, level: String, value: String): JsonObject = buildJsonObject {
+        put("type", "secret")
+        put("level", level)
+        put("name", name)
+        put("value", value)
+        put("card", buildJsonObject { put("chat", chat); put("id", ask) })
+    }
+
     /** Stops the agent in [chat]: the task goes back to To do, its work stays. */
     fun stop(chat: String): JsonObject = buildJsonObject {
         put("type", "stop")
         put("chat", chat)
+    }
+
+    /** Switches [place]'s Autopilot on or off, as its Assistant's header switch (`herdr-task autopilot on|off`). */
+    fun autopilot(place: String, on: Boolean): JsonObject = buildJsonObject {
+        put("type", "mode")
+        put("place", place)
+        put("mode", if (on) "autopilot" else "regular")
+    }
+
+    /**
+     * Sets one of Settings › Autopilot's rows ([Autopilot.HEARTBEAT], [Autopilot.EVERY], [Autopilot.EVENTS]): the
+     * same in every space of the machine, so Everywhere's.
+     */
+    fun autopilotSetting(key: String, value: String): JsonObject = buildJsonObject {
+        put("type", "setting")
+        put("key", key)
+        put("place", "all")
+        put("value", value)
+    }
+
+    /** The agents a new tab of [place] can run, and Switch agent's list (`tab-agents`): each one's kind, name, installed. */
+    fun tabAgents(place: String): JsonObject = buildJsonObject {
+        put("type", "tab-agents")
+        put("place", place)
+    }
+
+    /** Names tab [tab] (the window's tab id), or the Assistant's tab of [place] when it has no id yet; empty unnames it. */
+    fun tabRename(tab: String?, place: String?, name: String): JsonObject = buildJsonObject {
+        put("type", "tab-rename")
+        if (tab != null) put("tab", tab) else put("place", place)
+        put("name", name)
+    }
+
+    /** Closes tab [tab]: its programs end. */
+    fun tabClose(tab: String): JsonObject = buildJsonObject {
+        put("type", "tab-close")
+        put("tab", tab)
+    }
+
+    /** Restarts the agent in [chat]'s tab, as it runs now, or as agent [kind] (Switch agent): `restart.sh` in its tab. */
+    fun tabSwitch(chat: String, kind: String? = null): JsonObject = buildJsonObject {
+        put("type", "tab-switch")
+        put("chat", chat)
+        kind?.let { put("kind", it) }
+    }
+
+    /** What the agent in [chat] runs on and what its CLIs offer: the model menu. */
+    fun modelMenu(chat: String): JsonObject = buildJsonObject {
+        put("type", "model-menu")
+        put("chat", chat)
+    }
+
+    /** Restarts the agent in [chat] on [pick] (its [level] the effort), as the model menu's Restart with…. */
+    fun restart(chat: String, pick: V2ModelPick, level: String?): JsonObject = buildJsonObject {
+        put("type", "restart")
+        put("chat", chat)
+        put("kind", pick.agent)
+        put("model", pick.model.orEmpty())
+        put("effort", level.orEmpty())
+        put("speed", if (pick.fast) "fast" else "normal")
+        put("perm", pick.perm.orEmpty())
+    }
+
+    /**
+     * Closes [place]'s Assistant: [mode] `count` only counts the workers it started, `stop` ends them first, `keep`
+     * lets them finish.
+     */
+    fun assistantClose(place: String, mode: String): JsonObject = buildJsonObject {
+        put("type", "assistant-close")
+        put("place", place)
+        put("mode", mode)
+    }
+
+    /** Closes space [place]: its tabs close and every program in them ends. */
+    fun spaceRemove(place: String): JsonObject = buildJsonObject {
+        put("type", "space-remove")
+        put("place", place)
     }
 
     /** What the live link is told: the chats on screen. Sent as not visible, so the machine's alerts keep coming. */
@@ -176,6 +272,37 @@ class ShepherdrClient(private val transport: ShepherdrTransport) {
         ShepherdrJson.decodeFromJsonElement(V2Evidence.serializer(), act(V2Actions.evidence(task)))
 
     /**
+     * Subscribes [endpoint] (the phone's UnifiedPush address) to the service's push alerts, as a web page subscribes
+     * (`POST /api/push/subscribe`): the alerts come encrypted for [keys] ([com.makefunstuff.herdr.core.push.WebPush]).
+     * [device] names the phone in the service's list.
+     */
+    suspend fun subscribePush(endpoint: String, keys: com.makefunstuff.herdr.core.push.WebPushKeys, device: String) {
+        val body = buildJsonObject {
+            put("sub", buildJsonObject {
+                put("endpoint", endpoint)
+                put("keys", buildJsonObject { put("p256dh", keys.public); put("auth", keys.auth) })
+            })
+            put("device", device)
+        }
+        ok(transport.http("POST", "/api/push/subscribe", body.toString()))
+    }
+
+    /** Where [task] works ([Worktree.folderOf]), as the web app's Files reads it (`GET /api/worktree?what=dir`). */
+    suspend fun taskFolder(task: String): TaskFolder {
+        val d = ShepherdrJson.decodeFromJsonElement(V2TaskDir.serializer(), worktree(task, "dir"))
+        d.error?.let { throw IOException(it) }
+        return Worktree.folderOf(task, d.root?.takeIf { it.isNotEmpty() } ?: throw IOException(Worktree.NO_FOLDER))
+    }
+
+    /** [task]'s pull request and its checks, gh asked on its machine (`GET /api/worktree?what=pr`). */
+    suspend fun taskPr(task: String): V2PrAnswer =
+        ShepherdrJson.decodeFromJsonElement(V2PrAnswer.serializer(), worktree(task, "pr"))
+
+    /** A task's worktree as the web app's Files, Changes and Pull request read it: git and gh run on the task's machine. */
+    private suspend fun worktree(task: String, what: String): JsonObject =
+        ok(transport.http("GET", "/api/worktree?" + query("task" to task, "what" to what), timeoutMs = 75_000))
+
+    /**
      * Keeps a file on the service's machine for a message (`POST /api/upload`, where the Herdr window keeps pasted
      * ones): its path, to send with a message ([V2Actions.send]'s attachments). An agent on another machine gets a copy.
      */
@@ -217,6 +344,19 @@ class ShepherdrClient(private val transport: ShepherdrTransport) {
         val o = ok(HttpReply(r.status, r.body.toString(Charsets.UTF_8)))
         (o["error"] as? JsonPrimitive)?.contentOrNull?.let { throw IOException(it) }
         return (o["text"] as? JsonPrimitive)?.contentOrNull.orEmpty()
+    }
+
+    /**
+     * Whether the service's machine writes speech down ([dictate]: whisper.cpp and its model there). Asked with no
+     * audio: a service that has them says it can't read the recording, one without says it needs them, and one
+     * older than dictation doesn't know the path.
+     */
+    suspend fun canDictate(): Boolean {
+        val r = transport.bytes("POST", "/api/dictate", ByteArray(0), "audio/mp4")
+        if (r.status in 200..299) return true
+        val error = runCatching { ShepherdrJson.parseToJsonElement(r.body.toString(Charsets.UTF_8)).jsonObject["error"] }.getOrNull()
+        val why = (error as? JsonPrimitive)?.contentOrNull ?: return false
+        return r.status == 400 && !why.contains("needs whisper", ignoreCase = true)
     }
 
     /**
@@ -354,7 +494,7 @@ object V2Events {
     /** A snapshot, its lists read item by item where the whole doesn't read. */
     fun snapshot(o: JsonObject): V2Snapshot {
         runCatching { return ShepherdrJson.decodeFromJsonElement(V2Snapshot.serializer(), o) }
-        val lists = listOf("places", "machines", "tasks", "artifacts", "asks", "last", "read", "needs", "alerts")
+        val lists = listOf("places", "machines", "tasks", "artifacts", "asks", "last", "read", "needs", "alerts", "settings", "off")
         val base = runCatching { ShepherdrJson.decodeFromJsonElement(V2Snapshot.serializer(), JsonObject(o - lists.toSet())) }.getOrElse { V2Snapshot() }
         fun <T> each(k: String, s: kotlinx.serialization.KSerializer<T>): List<T>? =
             (o[k] as? JsonArray)?.mapNotNull { runCatching { ShepherdrJson.decodeFromJsonElement(s, it) }.getOrNull() }
@@ -367,6 +507,8 @@ object V2Events {
             artifacts = each("artifacts", V2Artifact.serializer()),
             needs = each("needs", V2Need.serializer()).orEmpty(),
             alerts = each("alerts", V2Alert.serializer()).orEmpty(),
+            settings = each("settings", V2SettingSection.serializer()).orEmpty(),
+            off = (o["off"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.contentOrNull },
             asks = map("asks") { it.contentOrNull },
             last = map("last") { it.doubleOrNull },
             read = map("read") { it.doubleOrNull },

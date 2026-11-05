@@ -52,7 +52,7 @@ object AskTargets {
         Here,
         /** Not connected yet (or not reachable): it may have one. */
         Unknown,
-        /** Connected, and herdr-projects isn't installed there. */
+        /** Connected, and Shepherdr isn't running there. */
         None,
     }
 

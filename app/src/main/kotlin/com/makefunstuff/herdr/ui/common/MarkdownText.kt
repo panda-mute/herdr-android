@@ -1,5 +1,7 @@
 package com.makefunstuff.herdr.ui.common
 
+import androidx.compose.ui.graphics.RectangleShape
+
 import com.makefunstuff.herdr.ui.theme.Mono
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.size
@@ -32,7 +34,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -127,7 +128,7 @@ fun MarkdownText(
 @Composable
 fun CodeBlock(text: String, modifier: Modifier = Modifier, maxLines: Int = Int.MAX_VALUE, copyable: Boolean = false) {
     val context = LocalContext.current
-    val shape = RoundedCornerShape(Radius.l)
+    val shape = RectangleShape
     Box(modifier.fillMaxWidth().clip(shape).background(Herdr.colors.panel).border(1.dp, Herdr.colors.line, shape)) {
         Text(
             text,
@@ -159,7 +160,7 @@ private fun TableBlock(rows: List<List<String>>) {
     val line = Herdr.colors.line
     Column(
         Modifier.horizontalScroll(rememberScrollState())
-            .border(1.dp, line, RoundedCornerShape(Radius.m)).clip(RoundedCornerShape(Radius.m)),
+            .border(1.dp, line, RectangleShape).clip(RectangleShape),
     ) {
         rows.forEachIndexed { r, row ->
             if (r > 0) HorizontalDivider(color = line)

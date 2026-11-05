@@ -3,7 +3,11 @@ package com.makefunstuff.herdr.push
 import com.makefunstuff.herdr.core.push.Alert
 import com.makefunstuff.herdr.core.push.AlertChange
 import com.makefunstuff.herdr.core.push.AlertRules
+import com.makefunstuff.herdr.core.push.Notify
 import com.makefunstuff.herdr.core.push.QuietSummary
+import com.makefunstuff.herdr.core.board.WorkOverview
+import com.makefunstuff.herdr.core.board.WorkStatus
+import com.makefunstuff.herdr.core.board.WorkTask
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import java.nio.file.Files
@@ -121,10 +125,12 @@ class InboxTest {
         inbox.apply(listOf(AlertChange.Show(alert("task:m1:r/7", "approval"))), quiet = false, rules = AlertRules(wentWrong = false))
         inbox.apply(listOf(AlertChange.Show(alert("task:m1:r/7", "failed").copy(kind = Alert.Kind.WentWrong))), quiet = false, rules = AlertRules(wentWrong = false))
         assertEquals(listOf("show task:m1:r/7 approval", "cancel task:m1:r/7"), sink.log.takeLast(2))
-        // A watch you set comes whatever is switched off.
-        val watch = Alert("watch:m1:ChecksPass:r/7", "", Alert.Kind.Watch, "m1", "AND-7's checks passed", "Board view")
-        inbox.apply(listOf(AlertChange.Show(watch)), quiet = true, rules = AlertRules(needsYou = false, wentWrong = false))
-        assertEquals("show watch:m1:ChecksPass:r/7  quiet", sink.log.last())
+        // A space set to Notify: All tells each finish of its agents, with Finished off everywhere; one set to Off, nothing.
+        val spaces = AlertRules().withSpace("m1/api", Notify.All).withSpace("m1/web", Notify.Off)
+        inbox.apply(listOf(AlertChange.Show(finished("agent:m1:p7", "done#1").copy(space = "api"))), quiet = false, rules = spaces)
+        assertEquals("show agent:m1:p7 done#1", sink.log.last())
+        inbox.apply(listOf(AlertChange.Show(alert("agent:m1:p8", "blocked#1").copy(space = "web"))), quiet = false, rules = spaces)
+        assertEquals("cancel agent:m1:p8", sink.log.last())
     }
 
     @Test fun aMutedAgentStaysQuiet() {
@@ -135,13 +141,64 @@ class InboxTest {
         // Muted: it asks, and nothing shows (one up from before comes down); another agent still comes through.
         inbox.apply(listOf(AlertChange.Show(asks), AlertChange.Show(alert("agent:m1:p2", "blocked#2").copy(paneId = "p2"))), quiet = false)
         assertEquals(listOf("cancel agent:m1:p1", "show agent:m1:p2 blocked#2"), sink.log)
-        // A watch you set on it still comes, and so does its task's news.
-        val watch = Alert("watch:m1:AgentDone:p1", "", Alert.Kind.Watch, "m1", "claude finished", "Fixed it", paneId = "p1")
-        inbox.apply(listOf(AlertChange.Show(watch), AlertChange.Show(alert("task:m1:r/7", "approval").copy(paneId = "p1", taskId = "r/7"))), quiet = false)
-        assertEquals(listOf("show watch:m1:AgentDone:p1 ", "show task:m1:r/7 approval"), sink.log.takeLast(2))
         // Unmuted, its next news shows.
         muted.clear()
         inbox.apply(listOf(AlertChange.Show(alert("agent:m1:p1", "blocked#9").copy(paneId = "p1"))), quiet = false)
         assertEquals("show agent:m1:p1 blocked#9", sink.log.last())
+    }
+
+    @Test fun waitingListsWhatWaitsUntilItIsOver() {
+        val inbox = Inbox(file, Recorder())
+        inbox.apply(listOf(AlertChange.Show(alert("agent:m1:p1", "blocked#4"))), quiet = false, now = 1)
+        inbox.apply(listOf(AlertChange.Show(alert("task:m1:HERD-4", "news:HERD-4 · Finished"))), quiet = false, now = 2)
+        // What only tells (an agent that finished) isn't listed; newest first.
+        inbox.apply(listOf(AlertChange.Show(finished("agent:m1:p2", "done#2"))), quiet = false, now = 3)
+        assertEquals(listOf("task:m1:HERD-4", "agent:m1:p1"), inbox.waiting.value.map { it.alert.tag })
+        // Answered at the desk: it finished, or the service took it down.
+        inbox.apply(listOf(AlertChange.Show(finished("agent:m1:p1", "done#5"))), quiet = false, now = 4)
+        inbox.apply(listOf(AlertChange.Clear("task:m1:HERD-4")), quiet = false, now = 5)
+        assertEquals(emptyList<String>(), inbox.waiting.value.map { it.alert.tag })
+    }
+
+    @Test fun waitingThroughQuietHoursAndRestarts() {
+        Inbox(file, Recorder()).apply(listOf(AlertChange.Show(alert("agent:m1:p1", "blocked#4"))), quiet = false, hold = true, now = 1)
+        // Held for the night, swiped away or not: it waits, in the widget too.
+        assertEquals(listOf("agent:m1:p1"), Inbox(file, Recorder()).waiting.value.map { it.alert.tag })
+        // Switched off: not listed.
+        val inbox = Inbox(file, Recorder())
+        inbox.apply(listOf(AlertChange.Show(alert("agent:m1:p1", "blocked#5"))), quiet = false, rules = AlertRules(needsYou = false), now = 2)
+        assertEquals(emptyList<String>(), inbox.waiting.value.map { it.alert.tag })
+    }
+
+    @Test fun aButtonUnderWayAndHowItWent() {
+        val sink = Recorder()
+        val inbox = Inbox(file, sink)
+        val a = alert("agent:m1:p1", "blocked#4")
+        inbox.apply(listOf(AlertChange.Show(a)), quiet = false)
+        inbox.working(a, "Approve…")
+        assertEquals("Approve…", inbox.waiting.value.single().busy)
+        inbox.show(a, quiet = true, note = "That agent is gone.")
+        assertEquals("" to "That agent is gone.", inbox.waiting.value.single().let { it.busy to it.note })
+        inbox.working(a, "Approve…")
+        inbox.finished(a, "Answered: Yes")
+        assertEquals(emptyList<String>(), inbox.waiting.value.map { it.alert.tag })
+    }
+
+    @Test fun seenInTheAppAsOver() {
+        val inbox = Inbox(file, Recorder())
+        inbox.apply(listOf(AlertChange.Show(alert("agent:m1:p1", "blocked#4")), AlertChange.Show(alert("agent:m1:p2", "blocked#2"))), quiet = false, now = 1)
+        // The app showed p1 at work again and p2 still asking.
+        inbox.markSeen(listOf(AlertChange.Clear("agent:m1:p1"), AlertChange.Show(alert("agent:m1:p2", "blocked#2"))), now = 2)
+        assertEquals(listOf("agent:m1:p2"), inbox.waiting.value.map { it.alert.tag })
+    }
+
+    @Test fun aBoardReadTakesOffWhatWasAcceptedElsewhere() {
+        val inbox = Inbox(file, Recorder())
+        val ready = alert("task:m1:HERD-4", "news:HERD-4 · Finished").copy(task = "HERD-4", accept = true)
+        inbox.apply(listOf(AlertChange.Show(ready)), quiet = false, now = 1)
+        inbox.looked("m1", WorkOverview(spaces = emptyList(), tasks = listOf(WorkTask("HERD-4", "HERD-4", "", "s1", WorkStatus.Ready))), now = 2)
+        assertEquals(1, inbox.waiting.value.size)
+        inbox.looked("m1", WorkOverview(spaces = emptyList(), tasks = listOf(WorkTask("HERD-4", "HERD-4", "", "s1", WorkStatus.Done))), now = 3)
+        assertEquals(emptyList<String>(), inbox.waiting.value.map { it.alert.tag })
     }
 }

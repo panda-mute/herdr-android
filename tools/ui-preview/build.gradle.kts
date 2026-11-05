@@ -48,9 +48,10 @@ val androidOnly = listOf(
     "com/makefunstuff/herdr/ui/common/Attach.kt",
     "com/makefunstuff/herdr/ui/common/CodeScanner.kt",
     "com/makefunstuff/herdr/ui/common/Mic.kt",
+    "com/makefunstuff/herdr/ui/common/Ears.kt",
     "com/makefunstuff/herdr/ui/common/Playback.kt",
+    "com/makefunstuff/herdr/ui/common/SecureWindow.kt",
     "com/makefunstuff/herdr/ui/images/ImageCodec.kt",
-    "com/makefunstuff/herdr/ui/preview/PageView.kt",
     "com/makefunstuff/herdr/core/ssh/SshConnector.kt",
     "com/makefunstuff/herdr/push/AndroidPush.kt",
     "com/makefunstuff/herdr/push/AndroidAlerts.kt",
@@ -73,13 +74,15 @@ val androidOnly = listOf(
     "com/makefunstuff/herdr/voice/PhoneSpeech.kt",
     "com/makefunstuff/herdr/voice/VoiceService.kt",
     "com/makefunstuff/herdr/voice/VoiceMic.kt",
+    "com/makefunstuff/herdr/change/AndroidThisApp.kt",
+    "com/makefunstuff/herdr/ui/change/ScreenShot.kt",
 )
 
 sourceSets.main {
     kotlin.srcDir("../../core/src/main/kotlin")
     kotlin.srcDir("../../app/src/main/kotlin")
     kotlin.exclude(androidOnly)
-    // The app's fonts, so the screens are drawn in Pretendard and JetBrains Mono as on the phone.
+    // The app's fonts, so the screens are drawn in Geist and Geist Mono as on the phone.
     resources.srcDir("../../app/src/main/res/font")
 }
 

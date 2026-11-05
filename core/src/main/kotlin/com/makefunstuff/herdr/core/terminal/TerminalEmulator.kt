@@ -5,12 +5,16 @@ package com.makefunstuff.herdr.core.terminal
  *
  * herdr streams a pane as ANSI "blits": cursor positioning, SGR styles and text, with an
  * occasional full repaint. This emulator covers that plus the usual cursor, erase, scroll-region
- * and alternate-screen sequences so ordinary terminal output also renders sensibly. It keeps no
- * scrollback; herdr owns scrolling.
+ * and alternate-screen sequences so ordinary terminal output also renders sensibly.
+ *
+ * With a [historyLimit] it keeps a scrollback, as a classic terminal does: the lines that scroll off
+ * the top of the main screen, up to that many, and [scrollBack] shows them. Without one (classic
+ * herdr, which owns scrolling on the host) it keeps none. [row], [cell] and [lineText] read what is
+ * shown, the screen or the history scrolled to.
  *
  * Not thread-safe by itself: callers hold [lock] while feeding or reading.
  */
-class TerminalEmulator(cols: Int, rows: Int) {
+class TerminalEmulator(cols: Int, rows: Int, val historyLimit: Int = 0) {
     val lock = Any()
 
     var cols: Int = cols.coerceAtLeast(1); private set
@@ -40,6 +44,21 @@ class TerminalEmulator(cols: Int, rows: Int) {
     private var savedBg = Cell.DEFAULT_COLOR
     private var savedAttrs = 0
 
+    /** The scrollback, oldest first; each line as wide as the screen was when it scrolled off. */
+    private val history = ArrayDeque<Array<Cell>>()
+    val historySize: Int get() = history.size
+
+    /** Lines ever dropped from the oldest end of the history: a line's [absolute] number stays its own. */
+    private var dropped = 0L
+
+    /** How many lines back the view is scrolled into the history; 0 shows the live screen. */
+    var scrolledBack = 0; private set
+
+    /** A found match to mark: [line] as [absolute] numbers it, columns [from] to [to] inclusive. */
+    var mark: Mark? = null
+
+    data class Mark(val line: Long, val from: Int, val to: Int)
+
     /** Increments whenever the visible content changes. */
     var revision: Long = 0; private set
 
@@ -58,15 +77,93 @@ class TerminalEmulator(cols: Int, rows: Int) {
     private var utf8Need = 0
     private var utf8Code = 0
 
-    fun cell(x: Int, y: Int): Cell = grid.lines[y][x]
+    /** The cell shown at [x], [y]. */
+    fun cell(x: Int, y: Int): Cell = row(y)[x]
 
-    fun row(y: Int): Array<Cell> = grid.lines[y]
+    /** The row shown at [y]: the screen's, or the history's while scrolled back. */
+    fun row(y: Int): Array<Cell> {
+        if (scrolledBack == 0) return grid.lines[y]
+        val i = history.size - scrolledBack + y
+        return if (i < history.size) fitted(history[i]) else grid.lines[i - history.size]
+    }
 
-    fun lineText(y: Int): String = buildString {
-        for (c in grid.lines[y]) if (!c.isContinuation) append(c.text ?: " ")
-    }.trimEnd()
+    /** The text of the row shown at [y]. */
+    fun lineText(y: Int): String = text(row(y))
 
+    /** The text of the screen's line the cursor is on, wherever the view is scrolled. */
+    fun cursorLineText(): String = text(grid.lines[cursorY])
+
+    /** The text shown, the screen or the history scrolled to. */
     fun screenText(): String = (0 until rows).joinToString("\n") { lineText(it) }.trimEnd()
+
+    /** Every line's text, the history's then the screen's, numbered from [firstLine]. */
+    fun allLines(): List<String> = history.map(::text) + grid.lines.map(::text)
+
+    /** The [absolute] number of the oldest line [allLines] gives. */
+    val firstLine: Long get() = dropped
+
+    /** The number every line keeps while newer ones scroll in: [index] counts from the oldest kept line. */
+    fun absolute(index: Int): Long = dropped + index
+
+    /** The [absolute] number of the line shown at the view's top. */
+    val topLine: Long get() = dropped + history.size - scrolledBack
+
+    /**
+     * Scrolls the view [lines] back into the history (negative: forward, toward the screen), within
+     * what is kept. True when the view moved.
+     */
+    fun scrollBack(lines: Int): Boolean {
+        val to = (scrolledBack.toLong() + lines).coerceIn(0L, history.size.toLong()).toInt()
+        if (to == scrolledBack) return false
+        scrolledBack = to
+        revision++
+        return true
+    }
+
+    /** Scrolls so the line [absolute] numbers [line] is shown, a third down the view if it isn't already. */
+    fun reveal(line: Long) {
+        val index = (line - dropped).coerceIn(0L, (history.size + rows - 1).toLong()).toInt()
+        val top = history.size - scrolledBack
+        if (index in top until top + rows) return
+        scrollBack(history.size - index + rows / 3 - scrolledBack)
+    }
+
+    /**
+     * Puts [lines] (plain text, oldest first) above the history, as if they had scrolled off before
+     * it: what `terminal.read` had before the terminal was attached. Kept within [historyLimit].
+     */
+    fun prependHistory(lines: List<String>) {
+        if (historyLimit <= 0 || lines.isEmpty()) return
+        val room = historyLimit - history.size
+        if (room <= 0) return
+        for (line in lines.takeLast(room).asReversed()) history.addFirst(plainRow(line))
+        revision++
+    }
+
+    private fun plainRow(line: String): Array<Cell> {
+        val row = Array(cols) { Cell.BLANK }
+        var x = 0
+        var i = 0
+        while (i < line.length && x < cols) {
+            val cp = line.codePointAt(i)
+            i += Character.charCount(cp)
+            val width = CharWidth.of(cp)
+            if (width == 0 || cp < 0x20) continue
+            if (width == 2 && x == cols - 1) break
+            row[x] = Cell(String(Character.toChars(cp)), Cell.DEFAULT_COLOR, Cell.DEFAULT_COLOR, 0)
+            if (width == 2) row[x + 1] = Cell(Cell.CONTINUATION, Cell.DEFAULT_COLOR, Cell.DEFAULT_COLOR, 0)
+            x += width
+        }
+        return row
+    }
+
+    /** A history line at the screen's width now: cut, or filled with blanks. */
+    private fun fitted(line: Array<Cell>): Array<Cell> =
+        if (line.size == cols) line else Array(cols) { x -> line.getOrElse(x) { Cell.BLANK } }
+
+    private fun text(line: Array<Cell>): String = buildString {
+        for (c in line) if (!c.isContinuation) append(c.text ?: " ")
+    }.trimEnd()
 
     fun resize(newCols: Int, newRows: Int) {
         val c = newCols.coerceAtLeast(1)
@@ -341,7 +438,12 @@ class TerminalEmulator(cols: Int, rows: Int) {
                 for (y in 0 until cursorY) clearCells(y, 0, cols)
                 clearCells(cursorY, 0, cursorX + 1)
             }
-            2, 3 -> for (y in 0 until rows) clearCells(y, 0, cols)
+            2 -> for (y in 0 until rows) clearCells(y, 0, cols)
+            // xterm's: the scrollback goes too.
+            3 -> {
+                for (y in 0 until rows) clearCells(y, 0, cols)
+                if (grid === main) clearHistory()
+            }
         }
     }
 
@@ -367,6 +469,16 @@ class TerminalEmulator(cols: Int, rows: Int) {
 
     private fun scrollUp(top: Int, bottom: Int, n: Int) {
         val count = minOf(n, bottom - top + 1)
+        // Off the top of the main screen: into the history, the view staying on what it shows.
+        if (historyLimit > 0 && top == 0 && grid === main) {
+            for (y in 0 until count) history.addLast(grid.lines[y])
+            if (scrolledBack > 0) scrolledBack += count
+            while (history.size > historyLimit) {
+                history.removeFirst()
+                dropped++
+            }
+            scrolledBack = scrolledBack.coerceAtMost(history.size)
+        }
         for (y in top..bottom) {
             grid.lines[y] = if (y + count <= bottom) grid.lines[y + count] else Array(cols) { blank() }
         }
@@ -389,7 +501,14 @@ class TerminalEmulator(cols: Int, rows: Int) {
         fg = savedFg; bg = savedBg; attrs = savedAttrs
     }
 
+    private fun clearHistory() {
+        dropped += history.size
+        history.clear()
+        scrolledBack = 0
+    }
+
     private fun reset() {
+        clearHistory()
         main = Grid(cols, rows)
         alt = Grid(cols, rows)
         grid = main

@@ -3,16 +3,17 @@ package com.makefunstuff.herdr.core.push
 import com.makefunstuff.herdr.core.api.AgentInfo
 import com.makefunstuff.herdr.core.api.AgentStatus
 import com.makefunstuff.herdr.core.api.SessionSnapshot
-import com.makefunstuff.herdr.core.board.BoardTask
+import com.makefunstuff.herdr.core.board.WorkStatus
+import com.makefunstuff.herdr.core.board.WorkTask
 import kotlinx.serialization.Serializable
 
 /**
  * One thing the status widget counts: an agent or a board task that needs you or works. The rest
- * is what ties a task's own agents to it ([LiveItems.belongs]), so they are counted once.
+ * is what ties a task's own agent to it ([Tally.belongs]), so they are counted once.
  */
 @Serializable
 data class TallyItem(
-    /** [Alerts.agentTag] or [Alerts.taskTag]. */
+    /** [Alerts.agentTag] or [Tally.taskTag]. */
     val tag: String,
     val needsYou: Boolean,
     /** When this was learned, on the phone's clock (ms). */
@@ -53,8 +54,7 @@ data class Counts(val needYou: Int = 0, val working: Int = 0, val machines: Int 
  * work, across machines. Told from every source the app has: what it sees on screen, its own looks
  * while closed, the board's list, and the machines' pushes. Plain data, so the rules are tested here.
  *
- * - A task's own agents (its worker, its reviewer) count as the task, as in the Live Updates.
- * - A board task counts on its own machine only: another machine's task is counted from there.
+ * - A task's own agent counts as the task.
  * - What works and was not confirmed for [WORK_MS] is no longer counted (its machine may be gone),
  *   and what needs you after [NEED_MS] neither.
  */
@@ -72,15 +72,20 @@ object Tally {
         return TallyItem(Alerts.agentTag(machineId, a.paneId), needsYou, at, agentName = a.name.orEmpty(), workspace = workspace)
     }
 
-    fun task(machineId: String, t: BoardTask, at: Long): TallyItem? {
-        if (t.machine.isNotEmpty()) return null
+    fun taskTag(machineId: String, taskId: String) = "task:$machineId:$taskId"
+
+    fun task(machineId: String, t: WorkTask, at: Long): TallyItem? {
         val needsYou = when {
-            t.needsYou -> true
-            LiveItems.running(t) -> false
+            t.status.needsYou -> true
+            t.status == WorkStatus.Work || t.status == WorkStatus.Merging -> false
             else -> return null
         }
-        return TallyItem(Alerts.taskTag(machineId, t.id), needsYou, at, taskId = t.id, taskName = t.name)
+        return TallyItem(taskTag(machineId, t.id), needsYou, at, taskId = t.id, taskName = t.name)
     }
+
+    /** Whether the agent in [workspace] works on task [taskId]: Shepherdr opens a task's workspace under its id (`HA-10`, `HA-10 Fix login`). */
+    fun belongs(workspace: String, taskId: String): Boolean =
+        taskId.isNotEmpty() && (workspace == taskId || workspace.startsWith("$taskId "))
 
     /** Everything [snapshot] says about [machineId]'s agents (the app sees it on screen, or looked). */
     fun withAgents(s: TallyState, machineId: String, snapshot: SessionSnapshot, at: Long): TallyState {
@@ -89,33 +94,25 @@ object Tally {
     }
 
     /** The board's whole list of [machineId]'s tasks. */
-    fun withTasks(s: TallyState, machineId: String, tasks: List<BoardTask>, at: Long): TallyState {
+    fun withTasks(s: TallyState, machineId: String, tasks: List<WorkTask>, at: Long): TallyState {
         val items = tasks.mapNotNull { task(machineId, it, at) }
         return s.copy(tasks = s.tasks + (machineId to TallyPart(items, at)))
     }
 
-    /** What a push from [machineId] says: one agent's or task's new state, or (its live event) all that works there. */
+    /** What a push from [machineId] says: one agent's new state, or (its live event) all that works there. */
     fun withPush(s: TallyState, machineId: String, events: List<PushEvent>, at: Long): TallyState = events.fold(s) { acc, e ->
         when (e) {
             is PushEvent.Agent -> acc.copy(agents = acc.agents.one(machineId, Alerts.agentTag(machineId, e.agent.paneId), agent(machineId, e.agent, e.where.substringBefore(" › "), at), at))
-            is PushEvent.Task -> {
-                if (e.task.machine.isNotEmpty()) acc
-                else acc.copy(tasks = acc.tasks.one(machineId, Alerts.taskTag(machineId, e.task.id), task(machineId, e.task, at), at))
-            }
             is PushEvent.Live -> {
                 var next = acc
                 e.agents?.let { list ->
                     val working = list.mapNotNull { agent(machineId, it.agent, it.workspace.ifEmpty { it.where.substringBefore(" › ") }, at) }
                     next = next.copy(agents = next.agents.working(machineId, working, at))
                 }
-                e.tasks?.let { list ->
-                    val running = list.mapNotNull { task(machineId, it.task, at) }
-                    next = next.copy(tasks = next.tasks.working(machineId, running, at))
-                }
                 next
             }
             // A machine low on RAM or disk is neither an agent nor a task: the counts stay.
-            PushEvent.Test, is PushEvent.Health, is PushEvent.Quick, is PushEvent.Usage, is PushEvent.Takeover -> acc
+            PushEvent.Test, is PushEvent.Health, is PushEvent.Usage -> acc
         }
     }
 
@@ -152,7 +149,7 @@ object Tally {
         val ts = tasks?.items.orEmpty().filter(::fresh)
         // A task's own agent is the task: counted only when the task isn't, in the same state.
         val ags = agents?.items.orEmpty().filter(::fresh).filter { a ->
-            ts.none { it.needsYou == a.needsYou && LiveItems.belongs(a.agentName, a.workspace, it.taskId, it.taskName) }
+            ts.none { it.needsYou == a.needsYou && belongs(a.workspace, it.taskId) }
         }
         return Machine(
             needTasks = ts.count { it.needsYou },

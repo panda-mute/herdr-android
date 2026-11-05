@@ -1,6 +1,7 @@
 package com.makefunstuff.herdr.ui.common
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -11,6 +12,13 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.makefunstuff.herdr.core.board.WorkBoard
+import com.makefunstuff.herdr.core.chat.Dictation
+import com.makefunstuff.herdr.core.chat.DictationCheck
+import com.makefunstuff.herdr.core.chat.MachineEars
 import com.makefunstuff.herdr.core.chat.VoiceNote
 import com.makefunstuff.herdr.core.chat.VoiceNotes
 import com.makefunstuff.herdr.core.chat.VoiceRecorder
@@ -35,6 +43,8 @@ import java.util.UUID
 class VoiceMessages internal constructor(
     /** For the composer's mic; null on a phone without a microphone. */
     val recorder: VoiceRecorder?,
+    /** Talk to type, a tap on that mic; null on a phone without a microphone. */
+    val dictation: Dictation?,
     val notes: List<VoiceNote>,
     val online: Boolean,
     val player: VoicePlayer,
@@ -60,6 +70,9 @@ val LocalVoiceMessages = staticCompositionLocalOf<VoiceMessages?> { null }
  * is still the screen's only while they run: one that changed (another space picked) refuses. A sent one
  * not on the phone any more is read back with [fetch] to play. Waiting ones go on their own when the
  * chat opens or the machine comes back ([online]), in the order recorded.
+ *
+ * A tap on the mic talks to type ([VoiceMessages.dictation]): written down by [board]'s machine where Shepherdr
+ * has whisper.cpp there (asked once a while per [machine], [DictationCheck]), else by the phone's recogniser.
  */
 @Composable
 fun rememberVoiceMessages(
@@ -68,6 +81,9 @@ fun rememberVoiceMessages(
     upload: suspend (file: File, name: String) -> String,
     deliver: suspend (remote: String, id: String) -> Unit,
     fetch: suspend (remote: String) -> ByteArray,
+    machine: String? = null,
+    /** The machine's board, null where it has none (so no Shepherdr to write speech down). */
+    board: (suspend () -> WorkBoard?)? = null,
 ): VoiceMessages {
     val container = LocalContainer.current
     val store = container.voice
@@ -120,8 +136,46 @@ fun rememberVoiceMessages(
         store.add(VoiceNote(UUID.randomUUID().toString(), chat, file.path, millis, container.clock()))
         pump()
     }
+    // Talk to type: the machine writes it down where it can, else the phone does.
+    val phone = rememberPhoneEars()
+    val machineBoard by rememberUpdatedState(board)
+    var writes by remember(machine) { mutableStateOf(machine?.let { DictationCheck.known(it, container.clock()) }) }
+    LaunchedEffect(machine, online) {
+        val b = machineBoard
+        if (machine == null || b == null || !online || writes != null) return@LaunchedEffect
+        // Not known (the machine didn't answer): asked again when the chat opens next.
+        val can = try { b()?.canDictate() ?: false } catch (e: CancellationException) { throw e } catch (_: Throwable) { null } ?: return@LaunchedEffect
+        DictationCheck.keep(machine, can, container.clock())
+        writes = can
+    }
+    val writesNow by rememberUpdatedState(writes)
+    val dictation = remember(recorder) {
+        recorder?.let {
+            Dictation(container.clock, scope) {
+                val b = machineBoard
+                val onMachine = b?.let { MachineEars(phone.tape()) { audio, type -> (b() ?: throw java.io.IOException("Shepherdr isn't on this machine")).dictate(audio, type) } }
+                when {
+                    writesNow == true && onMachine != null -> onMachine
+                    phone.recogniser != null -> phone.recogniser.invoke()
+                    // Not known yet and the phone can't: the machine may.
+                    writesNow == null -> onMachine
+                    else -> null
+                }
+            }
+        }
+    }
     // A recording belongs to the chat it began in: another one picked meanwhile (a space) drops it.
-    LaunchedEffect(chat) { recorder?.cancel() }
+    LaunchedEffect(chat) { recorder?.cancel(); dictation?.cancel() }
+    // Put away, the phone gives the app no microphone: what was said is dropped, off the screen too.
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(dictation, lifecycle) {
+        val away = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_STOP) dictation?.cancel() }
+        lifecycle.addObserver(away)
+        onDispose {
+            lifecycle.removeObserver(away)
+            dictation?.cancel()
+        }
+    }
     // The chat opened, or the machine is back: what waits goes, also the ones that failed before.
     LaunchedEffect(chat, online) {
         if (!online) return@LaunchedEffect
@@ -132,6 +186,7 @@ fun rememberVoiceMessages(
     val fetched = remember(store) { File(store.dir, "fetched") }
     return VoiceMessages(
         recorder = recorder,
+        dictation = dictation,
         notes = notes,
         online = online,
         player = player,

@@ -34,13 +34,36 @@ object TranscriptFollower {
     internal val CODEX = """codex) all=${'$'}(find "${'$'}{CODEX_HOME:-${'$'}HOME/.codex}/sessions" \( -name "*${'$'}value.jsonl" -o -name "*${'$'}{value}_*.jsonl" \) 2>/dev/null | LC_ALL=C sort); f=${'$'}(printf '%s\n' "${'$'}all" | tail -n 1) ;;"""
 
     /**
-     * Sets `f` to the transcript of the session in `kind` (path|id), `value` and `agent`, or leaves it
-     * empty; the chat search ([ChatSearch]) finds its files the same way.
+     * Sets `f` to the transcript of the session in `kind` (path|id|pid), `value` and `agent`, or leaves
+     * it empty; the chat search ([ChatSearch]) finds its files the same way. A `pid` (a herdr-core
+     * agent's process, which reports no session) is looked up as Shepherdr 3.1 does: Claude Code
+     * names its session in `sessions/<pid>.json`, codex keeps its rollout file open; the process's
+     * children are tried too, for an agent started through a wrapper.
      */
     internal val FIND = """
         if [ "${'$'}kind" = path ]; then
           f="${'$'}value"
           case "${'$'}f" in "~/"*) f="${'$'}HOME/${'$'}{f#\~/}" ;; esac
+        elif [ "${'$'}kind" = pid ]; then
+          kids() { for k in ${'$'}(pgrep -P "${'$'}1" 2>/dev/null); do echo "${'$'}k"; kids "${'$'}k"; done; }
+          for p in "${'$'}value" ${'$'}(kids "${'$'}value"); do
+            case "${'$'}agent" in
+              claude)
+                d="${'$'}{CLAUDE_CONFIG_DIR:-${'$'}HOME/.claude}"
+                [ -f "${'$'}d/sessions/${'$'}p.json" ] || continue
+                id=${'$'}(sed -n 's/.*"sessionId": *"\([0-9a-fA-F-]*\)".*/\1/p' "${'$'}d/sessions/${'$'}p.json" | head -n 1)
+                [ -n "${'$'}id" ] || continue
+                for c in "${'$'}d"/projects/*/"${'$'}id".jsonl; do [ -f "${'$'}c" ] && f="${'$'}c" && break; done
+                break ;;
+              codex)
+                if [ -d "/proc/${'$'}p/fd" ]; then
+                  f=${'$'}(for x in /proc/"${'$'}p"/fd/*; do readlink "${'$'}x"; done 2>/dev/null | grep '/rollout-.*\.jsonl${'$'}' | head -n 1)
+                else
+                  f=${'$'}(lsof -p "${'$'}p" -Fn 2>/dev/null | sed -n 's/^n//p' | grep '/rollout-.*\.jsonl${'$'}' | head -n 1)
+                fi
+                [ -n "${'$'}f" ] && break ;;
+            esac
+          done
         else
           case "${'$'}agent" in
             claude) for c in "${'$'}{CLAUDE_CONFIG_DIR:-${'$'}HOME/.claude}"/projects/*/"${'$'}value".jsonl; do [ -f "${'$'}c" ] && f="${'$'}c" && break; done ;;

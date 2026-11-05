@@ -46,14 +46,12 @@ object BriefWords {
     /** "Since 23:10 yesterday". */
     fun since(b: Brief, zone: ZoneId): String = "Since ${time(b.since, b.at, zone)}"
 
-    /** The brief in one line: "1 failed · 2 wait for you · 3 merged · 1 report", or "Nothing new · 4 at work". */
+    /** The brief in one line: "2 wait for you · 3 merged · 1 done", or "Nothing new · 4 at work". */
     fun headline(b: Brief): String {
-        val others = b.done.size - b.merged - b.reports
+        val others = b.done.size - b.merged
         val parts = listOfNotNull(
-            b.failed.size.takeIf { it > 0 }?.let { "$it failed" },
             b.waiting.size.takeIf { it > 0 }?.let { "$it wait${if (it == 1) "s" else ""} for you" },
             b.merged.takeIf { it > 0 }?.let { "$it merged" },
-            b.reports.takeIf { it > 0 }?.let { "$it report${if (it == 1) "" else "s"}" },
             others.takeIf { it > 0 }?.let { "$it done" },
             b.finished.size.takeIf { it > 0 }?.let { "${it} agent${if (it == 1) "" else "s"} finished" },
         )
@@ -63,10 +61,8 @@ object BriefWords {
 
     /** An item's one line in the notification. */
     private fun line(i: BriefItem): String = when (i.kind) {
-        BriefItem.Kind.Failed -> "Failed: ${i.title} (${i.status})"
         BriefItem.Kind.Waiting -> if (i.isTask) "Waits: ${i.title} (${i.status})" else "Asks: ${i.name} · ${i.title}"
         BriefItem.Kind.Merged -> "Merged: ${i.title}"
-        BriefItem.Kind.Report -> "Report: ${i.title}"
         BriefItem.Kind.Done -> "Done: ${i.title}"
         BriefItem.Kind.Finished -> "Finished: ${i.name} · ${i.title}"
         BriefItem.Kind.Working -> "Working: ${i.title}"
@@ -74,7 +70,7 @@ object BriefWords {
 
     /** The notification's lines: what needs you first, then what was done; at most [LINES]. */
     fun lines(b: Brief): List<String> {
-        val all = (b.failed + b.waiting + b.done + b.finished).map(::line)
+        val all = (b.waiting + b.done + b.finished).map(::line)
         val shown = all.take(if (all.size > LINES) LINES - 1 else LINES)
         val more = all.size - shown.size
         return shown + listOfNotNull(
@@ -120,8 +116,7 @@ object BriefWords {
     }
 
     /**
-     * The brief read aloud, as when driving: a greeting and what it covers, what went wrong, what waits
-     * for you, what was done, the agents that finished, what is at work, and the machines it couldn't
+     * The brief read aloud, as when driving: a greeting and what it covers, what waits for you, what was done, the agents that finished, what is at work, and the machines it couldn't
      * reach. Titles rather than task keys (a voice reads `AND-7` as "and 7"), and at most [SPOKEN]
      * items of a section.
      */
@@ -145,7 +140,6 @@ object BriefWords {
         }
 
         if (b.quiet) out += BriefLine("Nothing new happened.")
-        section("${many(b.failed.size, "task")} went wrong:", b.failed) { "${it.title}: ${it.status}" }
         section(if (b.waiting.size == 1) "One thing waits for you:" else "${b.waiting.size} things wait for you:", b.waiting) {
             if (it.isTask) "${it.title}: ${it.status}"
             else listOf("${it.name} asks", if (it.title != it.name) " about ${it.title}" else "", it.detail.takeIf { d -> d.isNotBlank() }?.let { d -> ": $d" }.orEmpty()).joinToString("")
@@ -153,7 +147,6 @@ object BriefWords {
         val mixed = b.done.map { it.kind }.distinct().size > 1
         val doneHeader = when {
             b.done.all { it.kind == BriefItem.Kind.Merged } -> "${many(b.done.size, "task")} merged:"
-            b.done.all { it.kind == BriefItem.Kind.Report } -> if (b.done.size == 1) "One research report is ready:" else "${b.done.size} research reports are ready:"
             else -> "${many(b.done.size, "task")} done:"
         }
         section(doneHeader, b.done) { if (mixed) "${it.title}, ${it.status}" else it.title }

@@ -81,6 +81,13 @@ class TerminalPainter(var palette: TerminalPalette = TerminalPalette.Default) {
         canvas.fillRect(0f, 0f, px(emu.cols * cellW), px(emu.rows * cellH), p.background)
         val light = luminance(p.background) > 0.5
         underText?.invoke()
+        // A found match, as a selection is: on the ground, under the text.
+        emu.mark?.let { m ->
+            val y = m.line - emu.topLine
+            if (y in 0 until emu.rows) {
+                canvas.fillRect(px(m.from * cellW), px(y * cellH), px((m.to + 1) * cellW), px((y + 1) * cellH), (p.cursor and 0xFFFFFF) or (0x70 shl 24))
+            }
+        }
         for (y in 0 until emu.rows) {
             val row = emu.row(y)
             val top = px(y * cellH)
@@ -127,7 +134,7 @@ class TerminalPainter(var palette: TerminalPalette = TerminalPalette.Default) {
                 }
             }
         }
-        if (showCursor && emu.cursorVisible && emu.cursorY < emu.rows && emu.cursorX < emu.cols) {
+        if (showCursor && emu.cursorVisible && emu.scrolledBack == 0 && emu.cursorY < emu.rows && emu.cursorX < emu.cols) {
             canvas.fillRect(
                 px(emu.cursorX * cellW), px(emu.cursorY * cellH),
                 px((emu.cursorX + 1) * cellW), px((emu.cursorY + 1) * cellH),

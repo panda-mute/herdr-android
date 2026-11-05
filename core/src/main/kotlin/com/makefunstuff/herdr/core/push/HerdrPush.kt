@@ -2,8 +2,6 @@ package com.makefunstuff.herdr.core.push
 
 import com.makefunstuff.herdr.core.api.AgentStatus
 import com.makefunstuff.herdr.core.api.SessionSnapshot
-import com.makefunstuff.herdr.core.board.BoardClient
-import com.makefunstuff.herdr.core.board.BoardTask
 import com.makefunstuff.herdr.core.ssh.HerdrCommands.quote
 import com.makefunstuff.herdr.core.ssh.MachineConnection
 import kotlinx.coroutines.CancellationException
@@ -19,7 +17,7 @@ import java.util.Base64
 
 /**
  * herdr-push (host/herdr-push) on a machine: the app copies it there over SSH, subscribes this phone
- * and starts it, so the machine can tell the phone about its agents and tasks while the app is closed.
+ * and starts it, so the machine can tell the phone about its agents while the app is closed.
  */
 object HerdrPush {
     /** Where the app puts it on a machine. */
@@ -74,10 +72,8 @@ object HerdrPush {
         key: ByteArray,
         session: String,
         herdrPath: String?,
-        boardPath: String?,
         live: Boolean = false,
-        /** The tasks and agents (by pane) the phone watches here ([Watch]): herdr-push tells it each change of theirs. */
-        watchTasks: Collection<String> = emptyList(),
+        /** Agents (by pane) herdr-push tells each change of (the app's one-shot watches did; it asks for none now). */
         watchPanes: Collection<String> = emptyList(),
     ): String = buildJsonObject {
         put("id", id)
@@ -86,17 +82,10 @@ object HerdrPush {
         put("key", Base64.getEncoder().encodeToString(key))
         put("session", session.ifEmpty { "default" })
         herdrPath?.takeIf { it.isNotBlank() }?.let { put("herdr", it) }
-        boardPath?.takeIf { it.isNotBlank() }?.let { put("board", it) }
         // Live Updates: also what is running, as it changes.
         if (live) put("live", true)
-        if (watchTasks.isNotEmpty()) put("watch_tasks", kotlinx.serialization.json.JsonArray(watchTasks.sorted().map(::JsonPrimitive)))
         if (watchPanes.isNotEmpty()) put("watch_panes", kotlinx.serialization.json.JsonArray(watchPanes.sorted().map(::JsonPrimitive)))
     }.toString()
-
-    /** What a phone's watches ask of [machineId]'s herdr-push, in one string: a change of it needs a new subscription. */
-    fun watching(watches: List<Watch>, machineId: String): String =
-        watches.filter { it.machineId == machineId }.map { if (it.what == Watch.What.AgentDone) "pane:" + it.paneId else "task:" + it.taskId }
-            .distinct().sorted().joinToString(",")
 
     /** herdr-push's answer: its last JSON line with an `ok`. */
     fun answer(stdout: String): JsonObject? = stdout.lines().asReversed().firstNotNullOfOrNull { l ->
@@ -159,16 +148,12 @@ object HerdrPush {
 /** The app's own look at a machine while it is closed: what herdr-push would have sent about it. */
 object PushLook {
 
-    /** The board's tasks, or null when it didn't answer. */
-    suspend fun tasks(board: BoardClient): List<BoardTask>? =
-        runCatching { board.tasks() }.getOrElse { if (it is CancellationException) throw it; null }
-
     /**
-     * Every agent of [snapshot] and every task, as events; the notifications sort out what is new. A
-     * blocked agent's screen is read with [screen] (classic herdr's pane, or herdr-core's terminal).
+     * Every agent of [snapshot], as events; the notifications sort out what is new. A blocked agent's
+     * screen is read with [screen] (classic herdr's pane, or herdr-core's terminal).
      */
-    suspend fun events(screen: suspend (paneId: String) -> String, snapshot: SessionSnapshot, tasks: List<BoardTask>?): List<PushEvent> {
-        val agents = snapshot.agents.map { a ->
+    suspend fun events(screen: suspend (paneId: String) -> String, snapshot: SessionSnapshot): List<PushEvent> =
+        snapshot.agents.map { a ->
             val screen = if (a.agentStatus == AgentStatus.Blocked) {
                 try {
                     screen(a.paneId)
@@ -180,6 +165,4 @@ object PushLook {
             } else null
             PushEvent.Agent(a, snapshot.location(a.workspaceId, a.tabId), screen)
         }
-        return agents + tasks.orEmpty().map { PushEvent.Task(it) }
-    }
 }

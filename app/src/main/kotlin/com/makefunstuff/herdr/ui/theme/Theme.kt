@@ -1,7 +1,6 @@
 package com.makefunstuff.herdr.ui.theme
 
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
@@ -28,103 +27,109 @@ import com.makefunstuff.herdr.core.code.Role
 import com.makefunstuff.herdr.core.terminal.TerminalPalette
 
 /*
- * The app's look, as docs/DESIGN.md describes it: the herdr web UI's design tokens (its
- * src/styles.css `:root` and `[data-theme="light"]` blocks, amber palette; MIT, by devswha),
- * carried over value for value. "A warm terminal": amber-phosphor accent on lamp-lit graphite
- * (dark) or ledger paper (light). Amber is the one chrome colour (focus, the chosen lens, the
- * cursor, the user's own primary action); the agent states carry the other saturated colours and
- * none of them is amber. Screens read these through MaterialTheme and [Herdr]; nothing else
- * defines a colour.
+ * The app's look, as docs/DESIGN.md describes it: the Herdr desktop's `workbench` layout (an
+ * engineering-puzzle-game console), carried over to a phone. Dark is its theme value for value
+ * (herdr-app/themes/workbench.json): near-black panels, amber frames and accent, the theme's status
+ * colours. Light is the same language on paper: paper panels with dark-amber frames. Flat: frames
+ * and flat fills only, square corners, no shadows or gradients. Screens read these through
+ * MaterialTheme and [Herdr]; nothing else defines a colour.
  */
 
-/** The tokens, named as herdr-android's screens use them; each one's web UI token is beside it. */
+/** The tokens, named as the app's screens use them; each one's workbench theme key is beside it. */
 @Immutable
 class HerdrColors(
-    /** `--bg`: the screen's ground, the chat canvas. */
+    /** `background`: the screen's ground, the chat canvas, the terminal. */
     val ground: Color,
-    /** `--bg-panel`: the bars, the nav bar, sheets, dialogs and the terminal. */
+    /** `chrome`: the bars, the nav bar, the drawer, sheets and dialogs. */
     val panel: Color,
-    /** `--bg-elevated`: cards (with a [line] hairline), chips, secondary buttons, tracks, your chat turns. */
+    /** `surface`: chips, secondary buttons, tracks, your chat turns, a module's header strip. */
     val card: Color,
-    /** `--bg-hover`: the one neutral fill of a pressed or chosen row, chip or segment, and icon tiles. */
+    /** `hover`, a step darker in dark so the blocked red keeps 4.5:1 on it: a pressed row, chip or key; icon tiles. */
     val hover: Color,
-    /** `--bg-input`: text fields. */
+    /** `input`: text fields. */
     val input: Color,
-    /** `--border`: hairlines (cards, fields, bars, buttons). */
+    /** A hairline between rows, a field's edge: quieter than [lineStrong]. */
     val line: Color,
-    /** `--border-strong`: a hairline that has to show over a fill, the prompt card's edge. */
+    /** `border`: a module's frame, a keycap, an unchecked switch. */
     val lineStrong: Color,
-    /** `--text`: body and row titles. */
+    /** Amber at half strength: the frame of a module (a card, a sheet, a panel). [accent] frames the one in focus. */
+    val frame: Color,
+    /** `selected`: the chosen row (the open space, the chosen segment). */
+    val selected: Color,
+    /** `foreground`: body and row titles. */
     val text: Color,
-    /** `--text-strong`: screen, sheet and dialog titles, a chosen segment, emphasis. */
+    /** Titles, a chosen segment, emphasis. */
     val strong: Color,
-    /** `--text-dim`: secondary lines, icons, section heads, meta. */
+    /** `muted`: secondary lines, icons, module headings, meta. */
     val muted: Color,
-    /** Disabled controls and marks: the web UI draws them at 55% opacity; this is that, opaque. Not for text that must be read. */
+    /** `dim`: disabled controls, a resting LED, pins. Not for text that must be read. */
     val off: Color,
-    /** `--accent`: amber that reads as text (links, the chosen lens's glyph, focus, the cursor). Never a state. */
+    /** `accent`: amber that reads as text (links, the chosen tab, focus, the cursor) and frames what is in focus. */
     val accent: Color,
-    /** `--primary`: the fill of your own action (Send, primary buttons, the FAB). */
+    /** `accent`, as a fill: your own action (Send, primary buttons, the + button). */
     val primary: Color,
-    /** `--primary-text`: ink on [primary]. */
+    /** `accent_foreground`: ink on [primary]. */
     val onPrimary: Color,
-    /** `--status-blocked`: needs you, blocked, failed, destructive. */
+    /** `blocked`: needs you, blocked, failed, destructive. */
     val red: Color,
-    /** `--status-working`: an agent or a task at work. */
+    /** `working`: an agent or a task at work. Amber, as on the desktop: work is the console's own colour. */
     val working: Color,
-    /** `--status-done`: finished, connected, passed, ready to approve. */
+    /** `done`: finished, connected, passed, ready to accept. */
     val done: Color,
-    /** `--status-idle`: idle, to do, stopped, unknown. */
+    /** `idle`, as text: idle, to do, stopped, unknown. */
     val idle: Color,
-    /** `--notice`: a warning that something is partial or stale (offline, outdated, minor). */
+    /** The runtimes' chip ink (bun, node, python): `ansi6`, teal. */
+    val teal: Color,
+    /** A warning that something is partial or stale (offline, outdated, minor): `ansi11`. */
     val notice: Color,
-    /** `--danger-text`: text on the danger tint (the destructive button). */
+    /** Text on the danger tint (the destructive button). */
     val dangerText: Color,
-    /** `--scrim`, under sheets and dialogs. */
+    /** Under sheets and dialogs. */
     val scrim: Color,
-    /** `--bubble-border`: the edge of your chat turns (none in dark, where the fill alone parts them). */
+    /** The edge of your chat turns. */
     val bubbleBorder: Color,
-    /** `--term-selection`. */
+    /** `selection`: the terminal's selected cells. */
     val termSelection: Color,
+    /** The circuit board behind empty screens: its traces, buses, pads and parts (quiet, under any text's contrast). */
+    val circuit: List<Color>,
+    /** The terminal's 16 ANSI colours: the theme's `ansi`. */
+    val ansi: List<Color>,
     val dark: Boolean,
 ) {
-    /** `--bg-elevated` under its old name: chips, tiles and secondary buttons. */
+    /** [card] under its old name: chips, tiles and secondary buttons. */
     val field: Color get() = card
-    /** `--bg-hover` under its old name: a focused field, a pressed key, a sheet's handle. */
+    /** [hover] under its old name: a focused field, a pressed key, a sheet's handle. */
     val fieldFocused: Color get() = hover
-    /** Tertiary text: the web UI has three text strengths, so meta is [muted] too. */
+    /** Tertiary text: the theme has three text strengths, so meta is [muted] too. */
     val faint: Color get() = muted
 
-    /** A state's quiet background (`--status-*-tint`): 14% in dark, 12% in light. */
+    /** A state's quiet background: 14% in dark, 12% in light. */
     fun tint(c: Color): Color = c.copy(alpha = if (dark) 0.14f else 0.12f)
 
-    /** `--accent-tint`: a chosen pick, a marked line. */
+    /** A chosen pick, a marked line. */
     val accentTint: Color get() = accent.copy(alpha = if (dark) 0.13f else 0.10f)
 
-    /** `--shadow-card`'s colour: black at 35% on graphite, warm ink at a tenth on paper. */
-    val shadow: Color get() = if (dark) Color.Black.copy(alpha = 0.35f) else Color(0xFF282016).copy(alpha = 0.10f)
+    /** No shadows on the workbench: anything that floats is framed instead. Kept transparent for the few callers. */
+    val shadow: Color get() = Color.Transparent
 
-    /** `--danger-tint`: the destructive button's fill. */
+    /** The destructive button's fill. */
     val dangerTint: Color get() = red.copy(alpha = if (dark) 0.12f else 0.10f)
 
     /**
      * A chart's two series (a machine's RAM and CPU): blue and orange, checked for colour-blind
      * separation and 3:1 on `card` in both themes. Not states, and not amber.
      */
-    val chart1: Color get() = if (dark) Color(0xFF3987E5) else Color(0xFF2A78D6)
+    val chart1: Color get() = if (dark) Color(0xFF4AA3D8) else Color(0xFF2A78D6)
     val chart2: Color get() = Color(0xFFD95926)
 
-    /**
-     * Code's colours, the web UI's `--syntax-*` (components/HighlightedCode.css): comments dim,
-     * functions amber, inserted and deleted the done and blocked states, and six of their own.
-     */
+    /** Code's colours: comments dim, functions amber, inserted and deleted the done and blocked states, and six of their own. */
     fun syntax(role: Role): Color = when (role) {
-        Role.Keyword -> if (dark) Color(0xFFE8875F) else Color(0xFFA33A17)
-        Role.Str -> if (dark) Color(0xFFA8C17C) else Color(0xFF4B6B18)
-        Role.Number -> if (dark) Color(0xFFD6A0C9) else Color(0xFF8A3F7A)
-        Role.Type -> if (dark) Color(0xFF6CB8D6) else Color(0xFF155A72)
-        Role.Variable -> if (dark) Color(0xFFE0C08F) else Color(0xFF7A5418)
-        Role.Meta -> if (dark) Color(0xFFB49DD6) else Color(0xFF5D4791)
+        Role.Keyword -> if (dark) Color(0xFFFF7A6B) else Color(0xFF953414)
+        Role.Str -> if (dark) Color(0xFFA6E08F) else Color(0xFF365E14)
+        Role.Number -> if (dark) Color(0xFFCFA0F0) else Color(0xFF7A3F8A)
+        Role.Type -> if (dark) Color(0xFF7FC4F0) else Color(0xFF155A72)
+        Role.Variable -> if (dark) Color(0xFF8BE8DE) else Color(0xFF0E615A)
+        Role.Meta -> if (dark) Color(0xFFB07AD8) else Color(0xFF5D4791)
         Role.Comment -> muted
         Role.Function -> accent
         Role.Inserted -> done
@@ -134,29 +139,44 @@ class HerdrColors(
     /** A diff's added or removed line: the state's tint, a little lighter, so even a dim comment reads on it. */
     fun lineTint(c: Color): Color = c.copy(alpha = 0.10f)
 
-    /** `--line-number`: the code viewer's line numbers, quieter than the code beside them. */
+    /** The code viewer's line numbers, quieter than the code beside them. */
     val lineNumber: Color get() = muted
 }
 
+private fun ansi(vararg v: Long) = v.map { Color(it) }
+
+/** herdr-app/themes/workbench.json, the `ansi` list: the terminal's colours in both themes (the light one holds them at 4.5:1). */
+private val WORKBENCH_ANSI = ansi(
+    0xFF0D0F10, 0xFFE0574A, 0xFF7FC46A, 0xFFFFB000, 0xFF4AA3D8, 0xFFB07AD8, 0xFF4FD1C5, 0xFFC9CFCC,
+    0xFF4A5257, 0xFFFF7A6B, 0xFFA6E08F, 0xFFFFCC4D, 0xFF7FC4F0, 0xFFCFA0F0, 0xFF8BE8DE, 0xFFFFFFFF,
+)
+
 internal val DarkHerdr = HerdrColors(
-    ground = Color(0xFF12100E), panel = Color(0xFF181613), card = Color(0xFF211E1A), hover = Color(0xFF2A2621),
-    input = Color(0xFF1C1916), line = Color(0xFF2D2924), lineStrong = Color(0xFF3E3830),
-    text = Color(0xFFD8D0C3), strong = Color(0xFFF2EBDF), muted = Color(0xFF9B9183), off = Color(0xFF615A51),
-    accent = Color(0xFFF0A830), primary = Color(0xFFF0A830), onPrimary = Color(0xFF1B1407),
-    red = Color(0xFFFF7B70), working = Color(0xFF6CB8D6), done = Color(0xFF93C36B), idle = Color(0xFF9B9183),
-    notice = Color(0xFFE8C55C), dangerText = Color(0xFFFFD9D4),
-    scrim = Color(0x8C080604), bubbleBorder = Color.Transparent, termSelection = Color(0xFF4A3D26),
+    ground = Color(0xFF0D0F10), panel = Color(0xFF0A0D0C), card = Color(0xFF1B1F21), hover = Color(0xFF252B2E),
+    input = Color(0xFF090A0B), line = Color(0xFF283033), lineStrong = Color(0xFF4E5B57), frame = Color(0xFF7A5809),
+    selected = Color(0xFF1E3A40),
+    text = Color(0xFFDFE4E1), strong = Color(0xFFF4F6F5), muted = Color(0xFF8FA3A8), off = Color(0xFF66727A),
+    accent = Color(0xFFFFB000), primary = Color(0xFFFFB000), onPrimary = Color(0xFF0B0D0E),
+    red = Color(0xFFFF5A4A), working = Color(0xFFFFB000), done = Color(0xFF5FD38A), idle = Color(0xFF8FA3A8),
+    teal = Color(0xFF4FD1C5), notice = Color(0xFFFFCC4D), dangerText = Color(0xFFFFD3CE),
+    scrim = Color(0x99050606), bubbleBorder = Color(0xFF4E5B57), termSelection = Color(0xFF23404A),
+    // backgrounds/workbench.svg's own layers: traces, buses, pads, parts.
+    circuit = listOf(Color(0xFF122019), Color(0xFF1A2A21), Color(0xFF1D2F25), Color(0xFF2E2A1A)),
+    ansi = WORKBENCH_ANSI,
     dark = true,
 )
 
 internal val LightHerdr = HerdrColors(
-    ground = Color(0xFFEEEAE2), panel = Color(0xFFFAF8F3), card = Color(0xFFF2EEE6), hover = Color(0xFFE8E2D6),
-    input = Color(0xFFFFFDF9), line = Color(0xFFDCD4C6), lineStrong = Color(0xFFC5BAA8),
-    text = Color(0xFF2A251F), strong = Color(0xFF16120D), muted = Color(0xFF685E52), off = Color(0xFFADA496),
-    accent = Color(0xFF8C5000), primary = Color(0xFFC57D12), onPrimary = Color(0xFF1B1407),
-    red = Color(0xFFA82323), working = Color(0xFF155A72), done = Color(0xFF2F6317), idle = Color(0xFF685E52),
-    notice = Color(0xFF7A5A00), dangerText = Color(0xFF8F1D1D),
-    scrim = Color(0x59281F16), bubbleBorder = Color(0xFFDCD4C6), termSelection = Color(0xFFF0D9AE),
+    ground = Color(0xFFF1EEE6), panel = Color(0xFFECE8DE), card = Color(0xFFFBFAF6), hover = Color(0xFFE4E0D4),
+    input = Color(0xFFFFFFFF), line = Color(0xFFD5CFC0), lineStrong = Color(0xFF8E897C), frame = Color(0xFFB98A3A),
+    selected = Color(0xFFD9E6E3),
+    text = Color(0xFF1E2224), strong = Color(0xFF0B0D0E), muted = Color(0xFF4F5B60), off = Color(0xFF9AA2A3),
+    accent = Color(0xFF7A4C00), primary = Color(0xFFFFB000), onPrimary = Color(0xFF0B0D0E),
+    red = Color(0xFFA3211A), working = Color(0xFF7A4C00), done = Color(0xFF17623A), idle = Color(0xFF4F5B60),
+    teal = Color(0xFF0E7A70), notice = Color(0xFF6E5600), dangerText = Color(0xFF8F1D1D),
+    scrim = Color(0x59281F16), bubbleBorder = Color(0xFF8E897C), termSelection = Color(0xFFF0D9AE),
+    circuit = listOf(Color(0xFFE6E2D6), Color(0xFFE0DBCD), Color(0xFFDBD5C5), Color(0xFFE3D6B6)),
+    ansi = WORKBENCH_ANSI,
     dark = false,
 )
 
@@ -168,49 +188,52 @@ object Herdr {
         @Composable @ReadOnlyComposable get() = LocalHerdrColors.current
 }
 
-/** The 4dp grid (`--space-1`…`--space-8`). Screens space with these, not with their own numbers. */
+/** The 4dp grid. Screens space with these, not with their own numbers. */
 object Space {
     val xxs = 2.dp
-    /** `--space-1` */
     val xs = 4.dp
-    /** `--space-2` */
     val s = 8.dp
-    /** `--space-3` */
     val m = 12.dp
-    /** `--space-4` */
     val l = 16.dp
-    /** `--space-5` */
     val xl = 20.dp
-    /** `--space-6` */
     val xxl = 24.dp
-    /** `--space-8` */
     val xxxl = 32.dp
-    /** A screen's side margin (`--space-4`). */
+    /** A screen's side margin. */
     val screen = 16.dp
-    /** Inside a card (`--space-4`). */
-    val card = 16.dp
+    /** Inside a module. */
+    val card = 12.dp
 }
 
-/** `--radius-*`: [s] chips and badges, [m] buttons, fields and rows, [l] cards and menus, [xl] sheets and dialogs, [xxl] the composer. */
+/** Corners. The workbench has none: every one of these is square, kept by name so a screen says what it draws. */
 object Radius {
-    val s = 6.dp
-    val m = 8.dp
-    val l = 12.dp
-    val xl = 16.dp
-    val xxl = 24.dp
+    val s = 0.dp
+    val m = 0.dp
+    val l = 0.dp
+    val xl = 0.dp
+    val xxl = 0.dp
 }
 
-/** Pretendard (OFL), the web UI's interface face, Latin subset; other scripts fall back to the system's. */
-val Pretendard = FontFamily(
-    Font(R.font.pretendard_regular, FontWeight.Normal),
-    Font(R.font.pretendard_medium, FontWeight.Medium),
-    Font(R.font.pretendard_semibold, FontWeight.SemiBold),
-    // The web UI's `strong` is semibold; bold text gets the same face rather than a synthesized one.
-    Font(R.font.pretendard_semibold, FontWeight.Bold),
+/** Frames: a module's 1dp edge; [focus], the amber edge of what is in focus. */
+object Frame {
+    val width = 1.dp
+    val focus = 1.dp
+}
+
+/** Geist (OFL), the workbench's companion face for reading: body text, chat prose, row titles. */
+val Sans = FontFamily(
+    Font(R.font.geist_regular, FontWeight.Normal),
+    Font(R.font.geist_medium, FontWeight.Medium),
+    Font(R.font.geist_semibold, FontWeight.SemiBold),
+    Font(R.font.geist_semibold, FontWeight.Bold),
 )
 
-/** JetBrains Mono (OFL), the web UI's code face: code, paths, keys, the terminal. */
-val Mono = FontFamily(Font(R.font.jetbrains_mono_regular, FontWeight.Normal))
+/** Geist Mono (OFL), the workbench's interface face: headers, labels, buttons, code, paths, keys, the terminal. */
+val Mono = FontFamily(
+    Font(R.font.geist_mono_regular, FontWeight.Normal),
+    Font(R.font.geist_mono_medium, FontWeight.Medium),
+    Font(R.font.geist_mono_semibold, FontWeight.SemiBold),
+    Font(R.font.geist_mono_semibold, FontWeight.Bold),
+)
 
 internal val Dark = darkColorScheme(
     primary = DarkHerdr.primary, onPrimary = DarkHerdr.onPrimary,
@@ -258,49 +281,51 @@ internal val Light = lightColorScheme(
     surfaceContainerHighest = LightHerdr.hover,
 )
 
-private fun style(size: Int, line: Double, weight: FontWeight = FontWeight.Normal, tracking: Double = 0.0) = TextStyle(
-    fontFamily = Pretendard, fontSize = size.sp, lineHeight = (size * line).sp, fontWeight = weight,
+private fun style(size: Int, line: Double, weight: FontWeight = FontWeight.Normal, tracking: Double = 0.0, family: FontFamily = Sans) = TextStyle(
+    fontFamily = family, fontSize = size.sp, lineHeight = (size * line).sp, fontWeight = weight,
     letterSpacing = if (tracking == 0.0) TextStyle.Default.letterSpacing else tracking.em,
 )
 
 /**
- * The web UI's type scale (`--fs-*`, comfortable density) in sp, so it follows the phone's font
- * size: 22 display, 18 title, 16 large, 15 reading, 14 body, 13 small, 12 meta, 11 micro. Weights
- * 400 body, 500 controls, 600 labels and titles. Line heights 1.2 titles, 1.5 body, 1.65 prose.
+ * The type scale in sp, so it follows the phone's font size. The console's voice (titles, module
+ * headings, labels, buttons, the nav) is Geist Mono, written in capitals where it names a place
+ * (`Caps`); what is read at length (prose, row titles, body) is Geist, so a phone stays readable.
  */
 internal val HerdrTypography = Typography(
-    // Top-level screen titles: the display size (the web UI's greeting), tight tracking.
-    headlineLarge = style(22, 1.25, FontWeight.SemiBold, -0.02),
-    headlineMedium = style(22, 1.25, FontWeight.SemiBold, -0.02),
-    // Markdown h1, a task's title.
-    headlineSmall = style(18, 1.3, FontWeight.SemiBold, -0.01),
-    // `--fs-lg`: a detail bar's title, sheet and dialog titles.
-    titleLarge = style(16, 1.35, FontWeight.SemiBold, -0.01),
-    // Row and card titles: body size, medium.
+    // Top-level screen titles: mono, semibold, in capitals.
+    headlineLarge = style(18, 1.3, FontWeight.SemiBold, 0.04, Mono),
+    headlineMedium = style(18, 1.3, FontWeight.SemiBold, 0.04, Mono),
+    // A task's title, Markdown h1.
+    headlineSmall = style(18, 1.3, FontWeight.SemiBold),
+    // A detail bar's title, sheet and dialog titles: mono.
+    titleLarge = style(15, 1.35, FontWeight.SemiBold, 0.02, Mono),
+    // Row titles: the reading face, medium.
     titleMedium = style(14, 1.5, FontWeight.Medium),
-    // Section heads and captions: small, semibold, drawn dim.
-    titleSmall = style(13, 1.4, FontWeight.SemiBold),
-    // `--fs-chat` on `--lh-prose`: chat prose, your turns, menu rows, form values.
+    // Module headings: mono, small, semibold, tracked, in capitals.
+    titleSmall = style(12, 1.4, FontWeight.SemiBold, 0.08, Mono),
+    // Chat prose, your turns, menu rows, form values.
     bodyLarge = style(15, 1.6),
-    // `--fs-md`: body and dialog copy, secondary lines.
+    // Body and dialog copy, secondary lines.
     bodyMedium = style(14, 1.5),
-    // `--fs-xs`: subtitles, hints, meta lines.
+    // Subtitles, hints, meta lines.
     bodySmall = style(12, 1.5),
-    // `--fs-sm` medium: buttons, chips, segments.
-    labelLarge = style(13, 1.4, FontWeight.Medium),
-    // `--fs-xs` medium: counts, pills, nav labels.
-    labelMedium = style(12, 1.35, FontWeight.Medium),
-    // `--fs-2xs` semibold, caps tracking: badges and field labels (written in capitals).
-    labelSmall = style(11, 1.3, FontWeight.SemiBold, 0.06),
+    // Buttons, chips, segments: mono.
+    labelLarge = style(13, 1.4, FontWeight.Medium, 0.02, Mono),
+    // Counts, pills, nav labels: mono.
+    labelMedium = style(12, 1.35, FontWeight.Medium, 0.02, Mono),
+    // Badges and field labels, in capitals: mono, tracked.
+    labelSmall = style(11, 1.3, FontWeight.SemiBold, 0.08, Mono),
 )
 
-/** Code and terminal text: JetBrains Mono at `--fs-sm` on `--lh-code`. */
+/** Code and terminal text: Geist Mono. */
 val CodeStyle = TextStyle(fontFamily = Mono, fontSize = 13.sp, lineHeight = 20.sp)
 
-internal val HerdrShapesM3 = Shapes(
-    extraSmall = RoundedCornerShape(Radius.s), small = RoundedCornerShape(Radius.m), medium = RoundedCornerShape(Radius.l),
-    large = RoundedCornerShape(Radius.l), extraLarge = RoundedCornerShape(Radius.xl),
-)
+private val Square = androidx.compose.foundation.shape.RoundedCornerShape(0.dp)
+
+internal val HerdrShapesM3 = Shapes(extraSmall = Square, small = Square, medium = Square, large = Square, extraLarge = Square)
+
+/** How the workbench writes a heading, a label or a place: in capitals. */
+fun String.caps(): String = uppercase()
 
 @Composable
 fun HerdrTheme(dark: Boolean = isSystemInDarkTheme(), content: @Composable () -> Unit) {
@@ -315,7 +340,7 @@ fun HerdrTheme(dark: Boolean = isSystemInDarkTheme(), content: @Composable () ->
 }
 
 /**
- * A board status's colour: the board's tones folded onto the web UI's four agent states, so a
+ * A board status's colour: the board's tones folded onto the four agent states, so a
  * task and an agent in the same state look the same. Working and reviewing are at work; ready to
  * approve and done are done; to do, queued and archived are idle; everything that needs you is red.
  * The written status always goes with it.
@@ -327,7 +352,7 @@ fun HerdrColors.tone(t: BoardTone): Color = when (t) {
     BoardTone.Pink, BoardTone.Grey -> idle
 }
 
-/** The web UI's agent state colours. */
+/** The workbench's agent state colours. */
 fun HerdrColors.status(s: AgentStatus): Color = when (s) {
     AgentStatus.Blocked -> red
     AgentStatus.Working -> working
@@ -352,19 +377,13 @@ fun com.makefunstuff.herdr.core.api.AgentInfo.statusWord(): String =
     if (agentStatus == AgentStatus.Unknown) statusLabel else agentStatus.title().lowercase()
 
 /**
- * The terminal's colours: the web UI's `--term-*` tokens (panel ground, text, amber cursor) over
- * xterm.js's default ANSI colours, which the web UI keeps; any cell's text is held at 4.5:1 on its
- * background, as the web UI's xterm does (`minimumContrastRatio`).
+ * The terminal's colours: the workbench's ground, text and amber cursor over its own ANSI colours;
+ * any cell's text is held at 4.5:1 on its background.
  */
 fun HerdrColors.terminalPalette(): TerminalPalette = TerminalPalette(
     foreground = text.toArgb(),
-    background = panel.toArgb(),
+    background = ground.toArgb(),
     cursor = accent.toArgb(),
-    ansi = XTERM_ANSI,
+    ansi = ansi.map { it.toArgb() }.toIntArray(),
     minimumContrast = 4.5,
 )
-
-private val XTERM_ANSI = longArrayOf(
-    0xFF2E3436, 0xFFCC0000, 0xFF4E9A06, 0xFFC4A000, 0xFF3465A4, 0xFF75507B, 0xFF06989A, 0xFFD3D7CF,
-    0xFF555753, 0xFFEF2929, 0xFF8AE234, 0xFFFCE94F, 0xFF729FCF, 0xFFAD7FA8, 0xFF34E2E2, 0xFFEEEEEC,
-).map { it.toInt() }.toIntArray()

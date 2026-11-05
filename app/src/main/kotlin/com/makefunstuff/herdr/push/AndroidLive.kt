@@ -5,7 +5,6 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -14,7 +13,6 @@ import android.os.Build
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
-import com.makefunstuff.herdr.HerdrApp
 import com.makefunstuff.herdr.MainActivity
 import com.makefunstuff.herdr.R
 import com.makefunstuff.herdr.bubble.BubbleChat
@@ -51,17 +49,11 @@ class AndroidLive(private val context: Context) : LiveSink {
 
     /** [item]'s notification, as [show] posts it. */
     fun build(item: LiveItem, look: LiveLook = LiveLook.Normal, note: String? = null): Notification {
-        val ask = look == LiveLook.Ask
         val b = NotificationCompat.Builder(context, CHANNEL)
             .setSmallIcon(R.drawable.ic_notification)
             .setColor(AMBER)
             .setContentTitle(item.title)
-            .setContentText(
-                when {
-                    ask -> "Stop ${item.taskName}'s agent? Its run ends here; Continue on the board starts it again."
-                    else -> note ?: item.text
-                },
-            )
+            .setContentText(note ?: item.text)
             .setSubText(item.machineLabel)
             .setContentIntent(openIntent(item))
             .setOngoing(true)
@@ -72,20 +64,15 @@ class AndroidLive(private val context: Context) : LiveSink {
             .setTimeoutAfter(LiveWork.TIMEOUT_MS)
             .setStyle(progress(item))
         if (item.chip.isNotEmpty()) b.setShortCriticalText(item.chip)
-        // Without words for the chip, the time it has run: since this part of the run began.
+        // Without words for the chip, the time it has run.
         if (item.since > 0) b.setWhen(item.since).setShowWhen(true).setUsesChronometer(true) else b.setShowWhen(false)
         when (look) {
             LiveLook.Normal -> {
-                b.addAction(0, "Stop", if (item.stopAsks) receiverIntent(item, LiveReceiver.ASK) else stopIntent(item))
-                // A working agent's chat (the Coordinator's own, for its agent) floats over other apps, to steer it while reading something else.
-                if (item.kind == LiveItem.Kind.Agent && item.paneId.isNotEmpty() && Build.VERSION.SDK_INT >= 30) {
-                    val chat = if (item.coordinator) BubbleChat.Coordinator(item.machineId) else BubbleChat.Agent(item.machineId, item.paneId)
-                    b.addAction(0, "Float chat", AndroidAlerts.floatIntent(context, chat, item.title, item.tag))
+                b.addAction(0, "Stop", stopIntent(item))
+                // A working agent's chat floats over other apps, to steer it while reading something else.
+                if (item.paneId.isNotEmpty() && Build.VERSION.SDK_INT >= 30) {
+                    b.addAction(0, "Float chat", AndroidAlerts.floatIntent(context, BubbleChat.Agent(item.machineId, item.paneId), item.title, item.tag))
                 }
-            }
-            LiveLook.Ask -> {
-                b.addAction(0, "Stop it", stopIntent(item))
-                b.addAction(0, "Keep going", receiverIntent(item, LiveReceiver.KEEP))
             }
             LiveLook.Busy -> {}
         }
@@ -97,26 +84,18 @@ class AndroidLive(private val context: Context) : LiveSink {
     override fun active(): List<String> =
         context.getSystemService(NotificationManager::class.java).activeNotifications.mapNotNull { it.tag }.filter(LiveItems::isLive)
 
-    /** A task: its four parts in the board's colours, filled up to where it is. An agent: going, with no end known. */
-    private fun progress(item: LiveItem): NotificationCompat.ProgressStyle {
-        val style = NotificationCompat.ProgressStyle()
-        if (item.kind == LiveItem.Kind.Task) {
-            style.setProgressSegments(LiveItems.Part.entries.map { NotificationCompat.ProgressStyle.Segment(it.length).setColor((0xFF000000 or it.tone.rgb).toInt()) })
-            style.setProgress(item.progress ?: 0)
-        } else {
-            style.setProgressSegments(listOf(NotificationCompat.ProgressStyle.Segment(LiveItems.MAX).setColor(AMBER)))
-            style.setProgressIndeterminate(true)
-        }
-        return style
-    }
+    /** An agent: going, with no end known. */
+    private fun progress(item: LiveItem): NotificationCompat.ProgressStyle =
+        NotificationCompat.ProgressStyle()
+            .setProgressSegments(listOf(NotificationCompat.ProgressStyle.Segment(100).setColor(AMBER)))
+            .setProgressIndeterminate(true)
 
-    /** A tap: the task on the board, or the agent's chat. */
+    /** A tap: the agent's chat. */
     private fun openIntent(item: LiveItem): PendingIntent {
         val intent = Intent(context, MainActivity::class.java)
             .setData(Uri.parse("herdr://live/${Uri.encode(item.tag)}"))
             .putExtra(MainActivity.OPEN_MACHINE, item.machineId)
             .putExtra(MainActivity.OPEN_PANE, item.paneId)
-            .putExtra(MainActivity.OPEN_TASK, item.taskId)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         return PendingIntent.getActivity(context, item.tag.hashCode(), intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
     }
@@ -130,36 +109,9 @@ class AndroidLive(private val context: Context) : LiveSink {
         return PendingIntent.getForegroundService(context, item.tag.hashCode() * 31 + 1, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
     }
 
-    /** Asking first, and Keep going: only the notification changes, so no service. */
-    private fun receiverIntent(item: LiveItem, action: String): PendingIntent {
-        val intent = Intent(context, LiveReceiver::class.java)
-            .setAction(action)
-            .setData(Uri.parse("herdr://live/${Uri.encode(item.tag)}/$action"))
-            .putExtra(WorkService.LIVE, AndroidAlerts.json.encodeToString(LiveItem.serializer(), item))
-        val code = item.tag.hashCode() * 31 + if (action == LiveReceiver.ASK) 2 else 3
-        return PendingIntent.getBroadcast(context, code, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-    }
-
     companion object {
         const val CHANNEL = "live"
         private const val ID = 3
         private const val AMBER = 0xFFF0A830.toInt()
-    }
-}
-
-/** A task's Stop (which asks first) and Keep going. */
-class LiveReceiver : BroadcastReceiver() {
-    override fun onReceive(context: Context, intent: Intent) {
-        val live = (context.applicationContext as HerdrApp).container.liveWork
-        val item = intent.getStringExtra(WorkService.LIVE)?.let { runCatching { AndroidAlerts.json.decodeFromString(LiveItem.serializer(), it) }.getOrNull() } ?: return
-        when (intent.action) {
-            ASK -> live.ask(item)
-            KEEP -> live.keep(item)
-        }
-    }
-
-    companion object {
-        const val ASK = "com.makefunstuff.herdr.LIVE_ASK"
-        const val KEEP = "com.makefunstuff.herdr.LIVE_KEEP"
     }
 }

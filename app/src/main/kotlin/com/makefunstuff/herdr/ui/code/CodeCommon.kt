@@ -42,7 +42,7 @@ import kotlinx.coroutines.withContext
 
 /**
  * Where the code browser is: a machine, a folder on it (a checkout once it is opened), and where it
- * was opened from: a board task, an agent's pane. Every code screen's route carries it, so a
+ * was opened from: a Shepherdr task's view, an agent's pane. Every code screen's route carries it, so a
  * comment written anywhere in it can go to that task's or that agent's attention.
  */
 @Immutable
@@ -54,18 +54,21 @@ data class CodeSpot(
     val taskName: String? = null,
     /** The agent's pane it was opened from. */
     val pane: String? = null,
+    /** The machine whose Shepherdr board holds [task], when it isn't [machine] (the task works on another machine). */
+    val board: String? = null,
 ) {
-    /** The route's query: `dir=…&task=…&tname=…&pane=…`. */
+    /** The route's query: `dir=…&task=…&tname=…&pane=…&board=…`. */
     fun query(): String = listOfNotNull(
         "dir=" + Uri.encode(dir),
         task?.let { "task=" + Uri.encode(it) },
         taskName?.let { "tname=" + Uri.encode(it) },
         pane?.let { "pane=" + Uri.encode(it) },
+        board?.let { "board=" + Uri.encode(it) },
     ).joinToString("&")
 
     companion object {
         /** The query's part of a route pattern. */
-        const val ARGS = "dir={dir}&task={task}&tname={tname}&pane={pane}"
+        const val ARGS = "dir={dir}&task={task}&tname={tname}&pane={pane}&board={board}"
 
         fun of(machine: String, arg: (String) -> String?) = CodeSpot(
             machine,
@@ -73,6 +76,7 @@ data class CodeSpot(
             task = arg("task")?.let(Uri::decode)?.ifEmpty { null },
             taskName = arg("tname")?.let(Uri::decode)?.ifEmpty { null },
             pane = arg("pane")?.let(Uri::decode)?.ifEmpty { null },
+            board = arg("board")?.let(Uri::decode)?.ifEmpty { null },
         )
     }
 }

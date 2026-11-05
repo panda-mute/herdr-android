@@ -1,5 +1,6 @@
 package com.makefunstuff.herdr.ui.board
 
+import com.makefunstuff.herdr.ui.change.ChangeScreenRow
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -32,7 +33,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.navigation.NavController
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -54,13 +57,21 @@ import com.makefunstuff.herdr.core.host.HostSession
 import com.makefunstuff.herdr.core.shepherdr.OutgoingLine
 import com.makefunstuff.herdr.core.shepherdr.SpaceChat
 import com.makefunstuff.herdr.core.shepherdr.V2Board
+import androidx.compose.runtime.rememberUpdatedState
+import com.makefunstuff.herdr.core.shepherdr.ChatFind
+import com.makefunstuff.herdr.ui.coordinator.ChatJump
+import com.makefunstuff.herdr.ui.coordinator.ChatPlaces
+import com.makefunstuff.herdr.ui.coordinator.ChatReactions
+import com.makefunstuff.herdr.ui.coordinator.FindBar
+import com.makefunstuff.herdr.ui.coordinator.MessageSheet
+import com.makefunstuff.herdr.ui.coordinator.lit
+import com.makefunstuff.herdr.ui.coordinator.rememberChatFind
 import com.makefunstuff.herdr.core.shepherdr.V2ReplyQuote
 import com.makefunstuff.herdr.data.DraftStore
 import com.makefunstuff.herdr.ui.common.LocalContainer
 import com.makefunstuff.herdr.ui.common.MarkdownText
 import com.makefunstuff.herdr.ui.common.detail
 import com.makefunstuff.herdr.ui.common.label
-import com.makefunstuff.herdr.ui.common.openUrl
 import com.makefunstuff.herdr.ui.common.rememberDraft
 import com.makefunstuff.herdr.ui.common.toast
 import com.makefunstuff.herdr.ui.coordinator.ChatEmpty
@@ -113,10 +124,13 @@ private enum class TaskSheet { Menu, Said, Brief, Plan, Facts }
  * A Shepherdr 3 task as its agent's chat, as Shepherdr's own web UI has it: the task's chat live (its
  * agent's words, each turn's steps folded to a line, its question cards answered here), a strip under
  * the bar with where it stands, its pull request and the one thing it waits for (Merge), and a composer
- * to its agent. What it did, its brief, plan and facts, and Close, are in ⋯.
+ * to its agent. Under the strip, 3.1's task view tabs: Chat, then its folder's Files and Changes and its
+ * Pull request with its checks ([TaskView]), each in the chat's place. What it did, its brief, plan and
+ * facts, and Close, are in ⋯.
  */
 @Composable
 internal fun TaskChatScreen(
+    nav: NavController,
     session: HostSession,
     machineId: String,
     t: WorkTask,
@@ -138,6 +152,9 @@ internal fun TaskChatScreen(
     val scope = rememberCoroutineScope()
     val state by session.state.collectAsStateWithLifecycle()
     var sheet by remember(t.id) { mutableStateOf<TaskSheet?>(null) }
+    // Its chat, or the tab picked under its bar in its place (Files, Changes, Pull request), as 3.1's task view.
+    var picked by rememberSaveable(t.id) { mutableStateOf(TaskView.Chat) }
+    val view = picked.takeIf { it in taskViews(t) } ?: TaskView.Chat
     // The board its artifact cards read their pictures through.
     var board by remember { mutableStateOf<WorkBoard?>(null) }
     LaunchedEffect(state.online) {
@@ -146,7 +163,7 @@ internal fun TaskChatScreen(
             if (board == null) kotlinx.coroutines.delay(5_000)
         }
     }
-    BackHandler(enabled = backEnabled && sheet == null, onBack = onBack)
+    BackHandler(enabled = backEnabled && sheet == null, onBack = { if (view != TaskView.Chat) picked = TaskView.Chat else onBack() })
 
     // Its brief, plan and facts: read when it opens (again until that works), and when the board says it changed.
     var details by remember(t.id) { mutableStateOf<WorkTaskDetails?>(null) }
@@ -175,6 +192,8 @@ internal fun TaskChatScreen(
         upload = { file, name -> session.awaitWorkBoard().uploadFor(t, name, file.readBytes(), VoiceNotes.MIME) },
         deliver = { remote, id -> session.awaitWorkBoard().tellFiles(t, listOf(remote), cid = id) },
         fetch = { remote -> session.awaitWorkBoard().taskFile(t, remote) },
+        machine = machineId,
+        board = { session.awaitWorkBoard() },
     )
     var problem by remember(t.chat) { mutableStateOf<String?>(null) }
     LaunchedEffect(t.id, t.chat, state.online) {
@@ -205,13 +224,23 @@ internal fun TaskChatScreen(
     val stick = rememberStickToBottom(list)
     val foot = th?.working == true || problem != null || !th?.v2?.blocked.isNullOrBlank()
     stick.Follow(remember(items) { items.map { it.id } }, content = items to foot)
+    val notice = items.isNotEmpty() && th?.v2?.let(com.makefunstuff.herdr.core.shepherdr.ChatNotice::of) != null
+    // Where each message sits in the list, newest first under the foot and the notice: for find and a reply's line.
+    val where = rememberUpdatedState { id: String -> items.indexOfFirst { it.id == id }.takeIf { it >= 0 }?.let { i -> (if (foot) 1 else 0) + (if (notice) 1 else 0) + items.size - 1 - i } }
+    val places = remember(list) { ChatPlaces(list) { where.value(it) } }
+    val find = rememberChatFind(t.id, items, places)
+    val jump = remember(places) { ChatJump(scope, places) }
+    val reactions = remember(t.id, t.chat) {
+        ChatReactions(scope, { m, e -> session.awaitWorkBoard().react(t.space, t, m, e) }) { context.toast(it) }
+    }
+    LaunchedEffect(items) { reactions.settle(items) }
 
     var draft by rememberDraft(DraftStore.task(machineId, t.id))
     // Files and pictures, as in an agent's own chat: copied to its machine, named in the message by their path.
     val tray = rememberImageTray(DraftStore.task(machineId, t.id), machineId, session, state.online)
     val attach = rememberAttacher(session, onAttached = { path -> draft = Attachments.withMention(draft, path) }, onImage = tray::add)
     var attachMenu by remember { mutableStateOf(false) }
-    val kind = V2Board.agentKind(t.agent).ifEmpty { "its agent" }
+    val kind = V2Board.agentKind(t.agent).ifEmpty { "the agent" }
 
     /** The screen is still open: a send that fails after it closed puts its words back in the saved draft instead. */
     var open by remember { mutableStateOf(true) }
@@ -289,13 +318,27 @@ internal fun TaskChatScreen(
                             },
                             enabled = state.online, selected = callHere && call.on,
                         )
+                        if (view == TaskView.Chat && th != null && !find.open) BarIcon(HerdrIcons.Search, ChatFind.PLACEHOLDER, { find.open = true })
                         BarIcon(HerdrIcons.Ellipsis, "Details and more", { sheet = TaskSheet.Menu })
                     }
-                    TaskStrip(t, details, busy, onMerge, onPr = { context.openUrl(t.pr) })
+                    TaskStrip(t, details, busy, onMerge, onPr = { picked = TaskView.PullRequest })
+                    TaskViewTabs(t, view) { picked = it }
                 }
             },
         ) { padding ->
-            Column(Modifier.padding(top = padding.calculateTopPadding()).fillMaxSize().imePadding().navigationBarsPadding()) {
+            if (view != TaskView.Chat) Box(Modifier.padding(top = padding.calculateTopPadding()).fillMaxSize().navigationBarsPadding()) {
+                when (view) {
+                    TaskView.Files, TaskView.Changes -> TaskCode(nav, session, machineId, t, view)
+                    else -> TaskPullRequest(session, t)
+                }
+            } else Column(Modifier.padding(top = padding.calculateTopPadding()).fillMaxSize().imePadding().navigationBarsPadding()) {
+                if (find.open) FindBar(find, earlier = th?.v2?.earlier?.takeIf { it }?.let {
+                    {
+                        scope.launch {
+                            runCatching { session.awaitWorkBoard().earlier(t.space, t) }.onFailure { find.loading = false; context.toast(it.message ?: "Couldn't read earlier") }
+                        }
+                    }
+                })
                 val sizes by container.textSizes.state.collectAsStateWithLifecycle()
                 ChatSurface(
                     Modifier.weight(1f).fillMaxWidth(),
@@ -313,7 +356,7 @@ internal fun TaskChatScreen(
                             ChatComposer(
                                 draft = draft,
                                 onDraft = { draft = it },
-                                placeholder = if (t.status == WorkStatus.Ready) "Tell $kind what to change…" else "Tell $kind…",
+                                placeholder = "Message $kind",
                                 onSend = ::sendDraft,
                                 // Not waiting for its chat to be read: what you write goes to the agent all the same.
                                 enabled = state.online,
@@ -329,6 +372,7 @@ internal fun TaskChatScreen(
                                 floating = true,
                                 leading = { ComposerIconButton(HerdrIcons.Plus, "Attach files", enabled = state.online && !attach.uploading) { attachMenu = true } },
                                 voice = voice.recorder,
+                                dictation = voice.dictation,
                             )
                         }
                     },
@@ -372,13 +416,15 @@ internal fun TaskChatScreen(
                             items(items.asReversed(), key = { it.id }) { item ->
                                 Column(verticalArrangement = Arrangement.spacedBy(Space.m)) {
                                     if (item.id == stick.unread) NewLine()
-                                    ChatItem(
+                                    Box(Modifier.lit(item.id, find, jump)) { ChatItem(
                                         item, answering,
                                         onAnswer = ::answer,
                                         onReply = { q -> replyTo = q },
                                         onRetry = { w -> outgoing = outgoing.filterNot { "cid:${it.cid}" == w.id }; send(w.text, w.reply) },
                                         who = kind,
-                                    )
+                                        reactions = reactions,
+                                        onJump = jump::to,
+                                    ) }
                                 }
                             }
                         }
@@ -390,6 +436,7 @@ internal fun TaskChatScreen(
         }
 
         if (attachMenu) AttachMenu(attach, tray, online = state.online, onDismiss = { attachMenu = false })
+        MessageSheet(reactions) { replyTo = it }
         val d = details
         when (sheet) {
             TaskSheet.Menu -> BoardPanel("${t.name} · ${t.title}", onDismiss = { sheet = null }) {
@@ -399,8 +446,8 @@ internal fun TaskChatScreen(
                     if (!d?.plan.isNullOrEmpty()) MenuRow("Plan", HerdrIcons.ListChecks, { sheet = TaskSheet.Plan })
                     if (!d?.facts.isNullOrEmpty() || !d?.branch.isNullOrEmpty()) MenuRow("Facts", HerdrIcons.Info, { sheet = TaskSheet.Facts })
                     if (onArtifacts != null) MenuRow("Artifacts", HerdrIcons.LayoutDashboard, { sheet = null; onArtifacts() })
-                    if (t.pr.isNotEmpty()) MenuRow("Pull request" + (prNumberOf(t.pr)?.let { " #$it" } ?: ""), HerdrIcons.GitPullRequest, { sheet = null; context.openUrl(t.pr) })
                     if (d == null) LoadingState("Reading the task")
+                    ChangeScreenRow { sheet = null }
                     if (canClose) MenuRow("Close, nothing merged…", HerdrIcons.CircleStop, { sheet = null; onClose() }, enabled = busy == null, destructive = true)
                 }
             }
@@ -436,7 +483,8 @@ private fun TaskStrip(t: WorkTask, d: WorkTaskDetails?, busy: String?, onMerge: 
             Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(start = Space.screen, end = Space.screen, top = Space.xs, bottom = Space.xs),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            StatusBadge(t.status.label, t.status.color())
+            // At work, the chat's own working line says so: the status shows here only when it says something else.
+            if (t.status != WorkStatus.Work) StatusBadge(t.status.label, t.status.color())
             prNumberOf(t.pr)?.let { n ->
                 Spacer(Modifier.width(Space.s))
                 Row(

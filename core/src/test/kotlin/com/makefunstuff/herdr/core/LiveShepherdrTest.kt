@@ -111,7 +111,7 @@ class LiveShepherdrTest {
         assumeTrue(keyPath != null && target != null, "set HERDR_LIVE_KEY and HERDR_LIVE_SHEPHERDR to run")
         live { session ->
             val s = withTimeout(60_000) { session.state.first { it.online && it.boardChecked } }
-            println("shepherdr: ${s.shepherdrVersion} · v1 launcher: ${s.boardPath} · api: ${s.boardApi}")
+            println("shepherdr: ${s.shepherdrVersion} · api: ${s.boardApi}")
             assertTrue(s.boardApi is BoardApi.V2, "Shepherdr 3 answers there")
 
             val client = session.awaitShepherdr()

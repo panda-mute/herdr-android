@@ -30,6 +30,7 @@ object DemoArtifacts {
 
     /** Each recipe's `recipe.json` (its latest version's; the previews serve the same for every version). */
     val RECIPES = mapOf(
+        "pf31" to DemoChange.PROOF.trimIndent(),
         "rn09" to """
             {"recipe":1,"blocks":[
              {"type":"heading","text":"Herdr for Android 0.9","level":1},
@@ -57,7 +58,7 @@ object DemoArtifacts {
     )
 
     /** A picture beside [id]'s recipe ([name]), or null where there is none. */
-    fun picture(id: String, name: String): ByteArray? = if (id == "bl3x" && name in setOf("before.png", "after.png")) screen(name == "after.png") else null
+    fun picture(id: String, name: String): ByteArray? = if (id in setOf("bl3x", "pf31") && name in setOf("before.png", "after.png")) screen(name == "after.png") else null
 
     /** A phone's Board drawn as blocks: its cards, the first one moved down in [after]'s "before". */
     private fun screen(after: Boolean): ByteArray {

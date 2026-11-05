@@ -1,5 +1,7 @@
 package com.makefunstuff.herdr.ui.images
 
+import androidx.compose.ui.graphics.RectangleShape
+
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -21,7 +23,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -306,12 +307,12 @@ private fun ToolButton(icon: ImageVector, label: String, selected: Boolean, enab
 private fun Swatch(color: Color, name: String, selected: Boolean, onClick: () -> Unit) {
     val c = Herdr.colors
     Box(
-        Modifier.size(48.dp).clip(CircleShape).selectable(selected, role = Role.RadioButton, onClick = onClick).semantics { contentDescription = name },
+        Modifier.size(48.dp).clip(RectangleShape).selectable(selected, role = Role.RadioButton, onClick = onClick).semantics { contentDescription = name },
         contentAlignment = Alignment.Center,
     ) {
         Box(
-            Modifier.size(34.dp).border(2.dp, if (selected) c.strong else Color.Transparent, CircleShape).padding(4.dp)
-                .background(color, CircleShape).border(1.dp, c.lineStrong, CircleShape),
+            Modifier.size(34.dp).border(2.dp, if (selected) c.strong else Color.Transparent, RectangleShape).padding(4.dp)
+                .background(color, RectangleShape).border(1.dp, c.lineStrong, RectangleShape),
         )
     }
 }

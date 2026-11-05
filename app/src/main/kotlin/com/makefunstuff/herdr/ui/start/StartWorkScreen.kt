@@ -42,9 +42,7 @@ import com.makefunstuff.herdr.core.start.AgentLaunch
 import com.makefunstuff.herdr.core.start.Folder
 import com.makefunstuff.herdr.core.start.StartWork
 import com.makefunstuff.herdr.ui.board.BoardPanel
-import com.makefunstuff.herdr.ui.board.DefaultAgentLine
 import com.makefunstuff.herdr.ui.board.PanelCancel
-import com.makefunstuff.herdr.ui.board.rememberBoards
 import com.makefunstuff.herdr.ui.board.rememberWorkBoards
 import com.makefunstuff.herdr.ui.board.ADD_THROUGH_COORDINATOR
 import com.makefunstuff.herdr.core.board.WorkSpace
@@ -65,14 +63,13 @@ import com.makefunstuff.herdr.ui.design.QuietButton
 import com.makefunstuff.herdr.ui.design.QuietCard
 import com.makefunstuff.herdr.ui.design.RowDivider
 import com.makefunstuff.herdr.ui.design.SegmentedPills
-import com.makefunstuff.herdr.ui.design.SwitchRow
 import com.makefunstuff.herdr.ui.theme.Herdr
 import com.makefunstuff.herdr.ui.theme.Space
 import kotlinx.coroutines.launch
 
 /**
- * Start work from a sentence: what you want first, then how (a board task, which gets a worktree,
- * checks and a review, the board choosing its agent; or an agent now) and where (the machine, then a
+ * Start work from a sentence: what you want first, then how (a board task, which a space's Assistant
+ * makes on Shepherdr; or an agent now) and where (the machine, then a
  * recent folder or one found with the folder browser). [machineId] and [text] start it there. The
  * agent is started as herdr starts it: no mode that skips its permission prompts is offered here.
  */
@@ -85,10 +82,8 @@ fun StartWorkScreen(nav: NavController, machineId: String? = null, text: String 
     val scope = rememberCoroutineScope()
     val hosts by container.hosts.hosts.collectAsStateWithLifecycle()
     val starts by container.starts.state.collectAsStateWithLifecycle()
-    val boards = rememberBoards()
     var words by rememberSaveable { mutableStateOf(text) }
     var board by rememberSaveable { mutableStateOf(starts.board) }
-    var startNow by rememberSaveable { mutableStateOf(starts.startNow) }
     var chosen by rememberSaveable { mutableStateOf(machineId ?: starts.machine) }
     var folder by rememberSaveable { mutableStateOf<String?>(null) }
     var kind by rememberSaveable { mutableStateOf<String?>(null) }
@@ -97,7 +92,7 @@ fun StartWorkScreen(nav: NavController, machineId: String? = null, text: String 
 
     // Where each way can run: a board task on a machine with a board, an agent on any machine online.
     val online = hosts.filter { it.online && it.machine.enabled }
-    val able = online.filter { if (board) it.hasWorkBoard else it.classic } // an agent starts in classic herdr
+    val able = online.filter { if (board) it.onShepherdr else it.classic } // an agent starts in classic herdr
     val host = able.firstOrNull { it.machine.id == chosen } ?: able.firstOrNull()
     val session = host?.let { container.hosts.session(it.machine.id) }
     val mid = host?.machine?.id
@@ -110,11 +105,8 @@ fun StartWorkScreen(nav: NavController, machineId: String? = null, text: String 
     }
     var spaceId by rememberSaveable { mutableStateOf<String?>(null) }
     val space = spaces?.let { l -> l.firstOrNull { it.id == spaceId } ?: l.firstOrNull { !it.home } ?: l.firstOrNull() }
-    // The board's own repos first for a task (it knows them by name), then the folders used and the workspaces'.
-    val repos = remember(boards, mid) { boards.firstOrNull { it.machineId == mid }?.tasks.orEmpty().filter { it.machine.isEmpty() }.map { it.repo }.distinct().sorted() }
-    val recent = remember(host?.snapshot, starts, mid) { mid?.let { StartWork.recentFolders(host.snapshot, container.starts.folders(it)) }.orEmpty() }
-    // A folder named as one of the board's repos is that repo: shown once, by the name the board knows.
-    val places = if (board) repos + recent.filter { StartWork.folderName(it) !in repos } else recent
+    // The folders used and the workspaces'.
+    val places = remember(host?.snapshot, starts, mid) { mid?.let { StartWork.recentFolders(host.snapshot, container.starts.folders(it)) }.orEmpty() }
     val place = folder?.takeIf { it.isNotEmpty() } ?: places.firstOrNull()
     // The agents installed there, as herdr's integrations and the machine's programs say; the usual list when it can't say.
     val kinds by produceState<List<String>?>(null, mid, board) {
@@ -124,29 +116,13 @@ fun StartWorkScreen(nav: NavController, machineId: String? = null, text: String 
     }
     val agent = kind?.takeIf { kinds?.contains(it) == true } ?: mid?.let { starts.kinds[it] }?.takeIf { kinds?.contains(it) == true } ?: kinds?.firstOrNull()
 
-    fun addTask(s: HostSession, m: String, said: String) {
-        val (title, desc) = StartWork.task(said)
-        busy = true
-        scope.launch {
-            runCatching { s.awaitBoard().add(title, place.orEmpty(), desc, start = startNow) }
-                .onSuccess {
-                    container.starts.started(m, place?.takeIf { it.startsWith("/") || it.startsWith("~") }, board = true, startNow = startNow)
-                    context.toast(it.ifEmpty { "Added to ${s.machine.label}'s board" })
-                    nav.popBackStack()
-                    panes.openBoard(nav, m)
-                }
-                .onFailure { context.toast(it.message ?: "The board refused") }
-            busy = false
-        }
-    }
-
     fun askCoordinator(s: HostSession, m: String, said: String, to: WorkSpace) {
         val (title, desc) = StartWork.task(said)
         busy = true
         scope.launch {
             runCatching { s.awaitWorkBoard().addTask(to.id, title, desc) }
                 .onSuccess {
-                    container.starts.started(m, null, board = true, startNow = startNow)
+                    container.starts.started(m, null, board = true, startNow = starts.startNow)
                     context.toast(it)
                     nav.popBackStack()
                     panes.openBoard(nav, m)
@@ -165,7 +141,7 @@ fun StartWorkScreen(nav: NavController, machineId: String? = null, text: String 
                 AgentLaunch.inFolder(s.awaitApi(10_000), snapshot, dir, k, StartWork.agentName(said, k, taken), said).also { s.refresh() }
             }
                 .onSuccess { pane ->
-                    container.starts.started(m, dir, board = false, startNow = startNow, kind = k)
+                    container.starts.started(m, dir, board = false, startNow = starts.startNow, kind = k)
                     nav.popBackStack()
                     panes.open(nav, Routes.agent(m, pane))
                 }
@@ -178,7 +154,7 @@ fun StartWorkScreen(nav: NavController, machineId: String? = null, text: String 
         val s = session ?: return
         val m = mid ?: return
         if (v2) askCoordinator(s, m, words.trim(), space ?: return)
-        else if (board) addTask(s, m, words.trim()) else startAgent(s, m, words.trim(), agent ?: return, place ?: return)
+        else if (!board) startAgent(s, m, words.trim(), agent ?: return, place ?: return)
     }
 
     val focus = remember { FocusRequester() }
@@ -209,8 +185,7 @@ fun StartWorkScreen(nav: NavController, machineId: String? = null, text: String 
                 FieldLabel("How")
                 SegmentedPills(listOf("Board task", "Agent now"), if (board) 0 else 1, { board = it == 0; folder = null })
                 Text(
-                    if (v2) ADD_THROUGH_COORDINATOR
-                    else if (board) "A board task gets a worktree, checks and a review; the board picks its agent."
+                    if (board) ADD_THROUGH_COORDINATOR
                     else "Starts an agent in the folder now and gives it what you said. It asks before it acts, as it does at the desk.",
                     style = MaterialTheme.typography.bodySmall, color = c.muted,
                 )
@@ -232,8 +207,8 @@ fun StartWorkScreen(nav: NavController, machineId: String? = null, text: String 
                             )
                         }
                     }
-                } else if (host != null) {
-                    Text(if (board) "Repo" else "Recent folders", style = MaterialTheme.typography.bodyMedium, color = c.muted)
+                } else if (host != null && !board) {
+                    Text("Recent folders", style = MaterialTheme.typography.bodyMedium, color = c.muted)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
                         places.forEach { p ->
                             HerdrChip(
@@ -251,28 +226,22 @@ fun StartWorkScreen(nav: NavController, machineId: String? = null, text: String 
                     place?.takeIf { it.startsWith("/") || it.startsWith("~") }?.let {
                         Text(it, style = MaterialTheme.typography.bodySmall, color = c.muted, maxLines = 1)
                     }
-                    if (board) {
-                        SwitchRow("Start its agent at once", null, startNow) { startNow = it }
-                        if (startNow && session != null) DefaultAgentLine(session)
-                    } else {
-                        FieldLabel("Agent")
-                        val list = kinds
-                        if (list == null) LoadingState("Asking ${host.machine.label} which agents it has")
-                        else FlowRow(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-                            list.forEach { k -> HerdrChip(k, selected = k == agent, onClick = { kind = k }) }
-                        }
+                    FieldLabel("Agent")
+                    val list = kinds
+                    if (list == null) LoadingState("Asking ${host.machine.label} which agents it has")
+                    else FlowRow(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+                        list.forEach { k -> HerdrChip(k, selected = k == agent, onClick = { kind = k }) }
                     }
                 }
             }
             Box(Modifier.fillMaxWidth().padding(horizontal = Space.screen, vertical = Space.m).navigationBarsPadding()) {
-                // A board task without a repo goes to the board's own (or the board says which it needs).
-                val ready = !busy && words.isNotBlank() && host != null && (if (v2) space != null else board || place != null && agent != null)
+                val ready = !busy && words.isNotBlank() && host != null && (if (board) v2 && space != null else place != null && agent != null)
                 PrimaryButton(
                     when {
                         busy && v2 -> "Sending…"
-                        v2 -> "Send to the coordinator"
-                        busy -> if (board) "Adding…" else "Starting…"
-                        board -> if (startNow) "Add and start" else "Add task"
+                        v2 -> "Send to the Assistant"
+                        busy -> "Starting…"
+                        board -> "Send to the Assistant"
                         else -> "Start ${agent ?: "the agent"}"
                     },
                     modifier = Modifier.fillMaxWidth(), enabled = ready, onClick = ::go,

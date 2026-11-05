@@ -2,8 +2,6 @@ package com.makefunstuff.herdr.core
 
 import com.makefunstuff.herdr.core.api.HerdrJson
 import com.makefunstuff.herdr.core.api.SessionSnapshot
-import com.makefunstuff.herdr.core.board.BoardStatus
-import com.makefunstuff.herdr.core.board.BoardTasks
 import com.makefunstuff.herdr.core.health.Disk
 import com.makefunstuff.herdr.core.health.HealthClient
 import com.makefunstuff.herdr.core.health.HealthCommands
@@ -375,16 +373,7 @@ class HealthTest {
         )
     }
 
-    // ---- labels, owners and leftovers ---------------------------------------------------------------
-
-    private val tasks = BoardTasks.list(
-        """[
-          {"id":"shop/22","title":"Old thing","state":"done","stage":"done","msg":"Merged"},
-          {"id":"shop/23","title":"New thing","state":"working","stage":"working"},
-          {"id":"shop/24","title":"Archived one","state":"done","stage":"done","archivedAt":1790000000},
-          {"id":"vm:shop/22","title":"Another machine's","state":"done","stage":"done"}
-        ]""",
-    ).map { if (it.id == "shop/22") it.copy(key = "SHO-22") else it }
+    // ---- labels and owners ---------------------------------------------------------------------------
 
     private val snapshot = HerdrJson.decodeFromString(
         SessionSnapshot.serializer(),
@@ -397,7 +386,7 @@ class HealthTest {
     @Test
     fun namesWhatEachProcessIs() {
         val s = HealthReader.sample(linuxOut)
-        val names = ProcLabels.label(s, tasks, snapshot).associate { it.proc.pid to (it.kind to it.name) }
+        val names = ProcLabels.label(s, snapshot).associate { it.proc.pid to (it.kind to it.name) }
         assertEquals(ProcKind.Gradle to "Gradle daemon 8.11.1", names[4242])
         assertEquals(ProcKind.Emulator to "Android emulator · Pixel_8", names[5000])
         assertEquals(ProcKind.Vm to "QEMU VM · home-services-vm", names[6000])
@@ -408,59 +397,24 @@ class HealthTest {
     }
 
     @Test
-    fun ownersAndLeftovers() {
+    fun owners() {
         val s = HealthReader.sample(linuxOut)
-        val labeled = ProcLabels.label(s, tasks, snapshot)
-        val by = labeled.associateBy { it.proc.pid }
-        // The Gradle daemon's own folder is Gradle's, but it was started from the finished task's worktree.
-        assertEquals("shop/22", by[4242]!!.owner.taskId)
-        assertEquals("SHO-22 · done · Old thing", by[4242]!!.ownerLine)
-        assertTrue(by[4242]!!.leftover)
-        assertTrue(by[5000]!!.leftover, "the emulator runs in a subfolder of it")
-        assertTrue(by[7300]!!.leftover)
-        // Running work, other people's processes and processes outside worktrees are never leftovers.
-        assertFalse(by[7000]!!.leftover)
-        assertEquals("shop/23 · working · New thing", by[7000]!!.ownerLine)
+        val by = ProcLabels.label(s, snapshot).associateBy { it.proc.pid }
+        // The Gradle daemon's own folder is Gradle's, but it was started from a worktree.
+        assertEquals("/home/demo/.herdr/worktrees/shop/work-22-old-thing", by[4242]!!.owner.worktree)
+        assertEquals("worktree work-22-old-thing", by[4242]!!.ownerLine)
         assertEquals("New thing", by[7000]!!.owner.agent)
         assertEquals("shop 23 › agent", by[7000]!!.owner.where)
-        assertFalse(by[7400]!!.leftover)
-        assertFalse(by[6000]!!.leftover)
-        // What other work shares stays: adb, this machine's herdr server, a Gradle daemon while it builds. A test server goes.
-        assertFalse(by[7500]!!.leftover)
-        assertTrue(by[7600]!!.leftover)
-        assertFalse(by[7700]!!.leftover)
-        assertFalse(by[7800]!!.leftover)
         assertEquals("node server.js", by[7200]!!.ownerLine)
-
-        assertEquals(listOf("shop/work-22-", "shop/work-24-"), ProcLabels.keep(tasks))
-
-        val dirs = listOf(
-            WorktreeDir("/home/demo/.herdr/worktrees/shop/work-22-old-thing", 3_000_000, false),
-            WorktreeDir("/home/demo/.herdr/worktrees/shop/work-23-new-thing", 1_000_000, true),
-            WorktreeDir("/home/demo/.herdr/worktrees/shop/work-24-archived-one", 500_000, false),
-            WorktreeDir("/home/demo/.herdr/worktrees/shop/work-99-not-on-the-board", 500_000, false),
-        )
-        val left = ProcLabels.leftovers(labeled, tasks, dirs, snapshot)
-        assertEquals(listOf("shop/22", "shop/24"), left.map { it.taskId })
-        assertEquals(listOf(5000, 4242, 7300, 7600), left[0].procs.map { it.proc.pid })
-        assertEquals("w1C", left[0].workspace?.workspaceId)
-        assertEquals(BoardStatus.Archived, left[1].status)
-        assertTrue(left[1].procs.isEmpty())
-        assertEquals("work-24-archived-one", left[1].worktree?.name)
-        // Without the board there is nothing to call finished.
-        assertTrue(ProcLabels.leftovers(ProcLabels.label(s, null, snapshot), null, dirs, snapshot).isEmpty())
-        assertEquals(listOf(5000 to "qemu-system-x86", 4242 to "java"), ProcLabels.targets(left[0].procs.take(2)).map { it.pid to it.comm })
+        assertEquals(listOf(5000 to "qemu-system-x86", 4242 to "java"), ProcLabels.targets(listOf(by[5000]!!, by[4242]!!)).map { it.pid to it.comm })
     }
 
     @Test
-    fun worktreesAndTheirTasks() {
+    fun worktrees() {
         assertEquals("/h/.herdr/worktrees/shop/work-22-x", ProcLabels.worktreeOf("/h/.herdr/worktrees/shop/work-22-x/app/src"))
         assertEquals("/h/.herdr/worktrees/shop/work-22-x", ProcLabels.worktreeOf("/h/.herdr/worktrees/shop/work-22-x"))
         assertNull(ProcLabels.worktreeOf("/h/.herdr/worktrees/shop"))
         assertNull(ProcLabels.worktreeOf("/h/src/shop"))
-        assertEquals("shop/22", ProcLabels.taskIdOf("/h/.herdr/worktrees/shop/work-22-x"))
-        assertEquals("shop/7", ProcLabels.taskIdOf("/h/.herdr/worktrees/shop/work-7"))
-        assertNull(ProcLabels.taskIdOf("/h/.herdr/worktrees/shop/feature-x"))
     }
 
     // ---- low or fine --------------------------------------------------------------------------------
@@ -473,7 +427,7 @@ class HealthTest {
 
     @Test
     fun ramLowWithRoomToComeBack() {
-        val procs = { s: HealthSample -> ProcLabels.label(s, null, null) }
+        val procs = { s: HealthSample -> ProcLabels.label(s, null) }
         val low = sample(9.0)
         assertEquals(listOf("ram"), HealthRules.low(low))
         val report = assertNotNull(HealthReport.of(low, procs(low)))

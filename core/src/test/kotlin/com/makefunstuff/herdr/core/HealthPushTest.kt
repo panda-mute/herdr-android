@@ -101,7 +101,7 @@ class HealthPushTest {
             }
             assertEquals(0, sh(HerdrPush.installCommand(), HerdrPush.script))
             val key = PushSeal.newKey()
-            val sub = HerdrPush.subscription(HerdrPush.subscriberId("phone1", "m1"), "Pixel", "http://127.0.0.1:${server.address.port}/up", key, "default", herdr.path, board.path)
+            val sub = HerdrPush.subscription(HerdrPush.subscriberId("phone1", "m1"), "Pixel", "http://127.0.0.1:${server.address.port}/up", key, "default", herdr.path)
             assertEquals(0, sh(HerdrPush.command("subscribe"), sub))
 
             fun once() { Thread.sleep(30); assertEquals(0, sh(HerdrPush.command("once"))) }

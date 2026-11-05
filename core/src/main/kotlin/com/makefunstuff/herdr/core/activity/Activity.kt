@@ -5,7 +5,7 @@ import com.makefunstuff.herdr.core.code.FileDiff
 /**
  * What an agent did, step by step, so a person can follow a task without reading its whole chat or
  * terminal: built from what the agent's harness records (Claude Code's, codex's and pi's session
- * files, [ActivityLog]) and the board's history of the task ([BoardHistory]).
+ * files, [ActivityLog]).
  */
 enum class StepKind(val label: String) {
     Message("Message"),

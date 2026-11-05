@@ -1,5 +1,7 @@
 package com.makefunstuff.herdr.ui.design
 
+import androidx.compose.ui.graphics.RectangleShape
+
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -49,8 +51,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
-import com.makefunstuff.herdr.ui.theme.Pretendard
+import com.makefunstuff.herdr.ui.theme.Sans
 import com.makefunstuff.herdr.core.chat.Completions
+import com.makefunstuff.herdr.core.chat.Dictation
 import com.makefunstuff.herdr.core.chat.VoiceRecorder
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -58,8 +61,9 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.text.selection.TextSelectionColors
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.remember
-import androidx.compose.ui.draw.shadow
 import com.makefunstuff.herdr.ui.theme.CodeStyle
 import com.makefunstuff.herdr.ui.theme.Radius
 import androidx.compose.foundation.clickable
@@ -70,8 +74,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -92,9 +94,9 @@ import com.makefunstuff.herdr.ui.theme.Herdr
 import com.makefunstuff.herdr.ui.theme.Space
 
 /** Your chat turns (`.chat-turn-user`): `--radius-lg` on all four corners. */
-val BubbleShape = RoundedCornerShape(12.dp)
+val BubbleShape = RectangleShape
 /** The Coordinator's replies, in the same shape. */
-val ReplyBubbleShape = RoundedCornerShape(12.dp)
+val ReplyBubbleShape = RectangleShape
 
 /**
  * The message composer at the bottom of a chat, the web UI's input card (`.composer-surface`):
@@ -153,6 +155,7 @@ fun ChatComposer(
     focusRequester: FocusRequester? = null,
     completion: (@Composable (query: Completions.Query, accept: (String) -> Unit) -> Unit)? = null,
     voice: VoiceRecorder? = null,
+    dictation: Dictation? = null,
 ) {
     val c = Herdr.colors
     val view = LocalView.current
@@ -162,14 +165,18 @@ fun ChatComposer(
     val focusRequester = focusRequester ?: ownFocus
     val keyboard = LocalSoftwareKeyboardController.current
     val voiceState = voice?.let { it.state.collectAsState().value } ?: VoiceRecorder.State.Idle
-    val hearing = voiceState.hearing
+    val dictState = dictation?.let { it.state.collectAsState().value } ?: Dictation.State.Idle
+    // Talk to type: the box gives way to what you say until Done puts it in.
+    val dictating = dictState is Dictation.State.Listening || dictState is Dictation.State.Writing
+    val hearing = voiceState.hearing || dictating
     val canSend = enabled && !sending && !holdSend && !hearing && (draft.isNotBlank() || attached)
     val showStop = stop != null && draft.isBlank() && !attached && !sending && !hearing
-    val card = RoundedCornerShape(Radius.xxl)
+    val card = RectangleShape
     val fade = Space.xxl
 
     fun send() {
-        // While it records, Send sends the recording, as letting go of the mic does.
+        // While it records, Send sends the recording, as letting go of the mic does; while you talk to type, it is Done.
+        if (dictating) { view.confirmTap(); dictation?.done(); return }
         if (hearing) { view.confirmTap(); voice?.stop(); return }
         if (!canSend) return
         // A light confirmation under the thumb, as a keyboard's own send key gives.
@@ -188,11 +195,35 @@ fun ChatComposer(
         TextFieldValue(draft, TextRange(cursor.coerceIn(0, draft.length)))
     }
     SideEffect { if (value != field) field = value }
+    // A tap on the mic talks to type: the words go where the cursor was (in place of a selection), then the
+    // cursor stands after them in the box, to edit and send.
+    val latestValue by rememberUpdatedState(value)
+    val latestDraft by rememberUpdatedState(onDraft)
+    DisposableEffect(voice, dictation) {
+        if (voice != null && dictation != null) voice.tap = {
+            val at = latestValue.selection
+            keyboard?.hide()
+            dictation.start { said ->
+                val now = latestValue.text
+                val (text, cursor) = Dictation.insert(now, at.min, at.max, said)
+                field = TextFieldValue(text, TextRange(cursor))
+                latestDraft(text)
+                runCatching { focusRequester.requestFocus() }
+            }
+        }
+        onDispose { if (voice != null && voice.tap != null) voice.tap = null }
+    }
     // What went wrong while it recorded is said for a while, then goes by itself.
     LaunchedEffect(voiceState) {
         if (voiceState is VoiceRecorder.State.Failed) {
             delay(FAILED_SHOWN_MS)
             voice?.dismiss()
+        }
+    }
+    LaunchedEffect(dictState) {
+        if (dictState is Dictation.State.Failed) {
+            delay(FAILED_SHOWN_MS)
+            dictation?.dismiss()
         }
     }
 
@@ -234,9 +265,12 @@ fun ChatComposer(
             if (voice != null && (voiceState is VoiceRecorder.State.NoMic || voiceState is VoiceRecorder.State.Failed || voiceState == VoiceRecorder.State.Asking)) {
                 Box(Modifier.padding(bottom = Space.s)) { MicNotice(voice, voiceState) }
             }
+            if (dictation != null && dictState is Dictation.State.Failed) {
+                Box(Modifier.padding(bottom = Space.s)) { DictationNotice(dictState.message, dictation::dismiss) }
+            }
             Column(
                 Modifier.fillMaxWidth()
-                    .shadow(6.dp, card, ambientColor = c.shadow, spotColor = c.shadow)
+                    
                     .clip(card).background(c.card).border(1.dp, if (focused && enabled) c.accent else c.line, card)
                     // A tap anywhere on the card that is not a control puts the cursor in the box.
                     .pointerInput(enabled, hearing) {
@@ -246,7 +280,8 @@ fun ChatComposer(
                     },
             ) {
                 attachments?.invoke()
-                if (hearing) RecordingLevels(voiceState)
+                if (dictating) DictationLevels(dictState)
+                else if (hearing) RecordingLevels(voiceState)
                 if (!hearing) CompositionLocalProvider(LocalTextSelectionColors provides TextSelectionColors(c.accent, c.accent.copy(alpha = 0.32f))) {
                     BasicTextField(
                         value = value,
@@ -290,7 +325,8 @@ fun ChatComposer(
                     Modifier.fillMaxWidth().padding(start = Space.xs, end = Space.xxs, bottom = Space.xxs),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    if (voice != null && hearing) RecordingInfo(voice, voiceState)
+                    if (dictation != null && dictating) DictationInfo(dictation, dictState)
+                    else if (voice != null && hearing) RecordingInfo(voice, voiceState)
                     // The controls on the left take what the buttons on the right leave, and shrink to fit it.
                     else Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) { leading?.invoke(this) }
                     if (status != null && !hearing) {
@@ -309,8 +345,10 @@ fun ChatComposer(
                     // While it hears, the row is the recording's (its time and what letting go does).
                     if (!hearing) trailing?.invoke(this)
                     // Always in this place, so a finger holding it through every state keeps it.
-                    if (voice != null) ComposerMic(voice, voiceState, enabled = enabled)
+                    if (voice != null && !dictating) ComposerMic(voice, voiceState, enabled = enabled, talks = dictation != null)
                     when {
+                        dictState is Dictation.State.Writing -> ComposerAction(ComposerActionKind.Writing, "Writing it down…", enabled = false, onClick = {})
+                        dictating -> ComposerAction(ComposerActionKind.Done, "Done: put it in the box", enabled = true, onClick = ::send)
                         showStop -> ComposerAction(ComposerActionKind.Stop, "Stop", enabled = enabled, onClick = { stop?.invoke() })
                         hearing -> ComposerAction(ComposerActionKind.Send, "Send voice message", enabled = true, onClick = ::send)
                         sending -> ComposerAction(ComposerActionKind.Sending, "Sending…", enabled = false, onClick = {})
@@ -326,9 +364,9 @@ fun ChatComposer(
 private const val FAILED_SHOWN_MS = 8_000L
 
 /** The message's type: `--fs-input` (16sp, the web UI's touch size) on `--lh-base`. */
-private val ComposerTextStyle = TextStyle(fontFamily = Pretendard, fontSize = 16.sp, lineHeight = 24.sp)
+private val ComposerTextStyle = TextStyle(fontFamily = Sans, fontSize = 16.sp, lineHeight = 24.sp)
 
-private enum class ComposerActionKind { Send, Stop, Sending }
+private enum class ComposerActionKind { Send, Stop, Sending, Done, Writing }
 
 /**
  * The composer's one round button (`.composer-action`): a compact 32dp circle in a 48dp target, the
@@ -337,9 +375,10 @@ private enum class ComposerActionKind { Send, Stop, Sending }
 @Composable
 private fun ComposerAction(kind: ComposerActionKind, description: String, enabled: Boolean, onClick: () -> Unit) {
     val c = Herdr.colors
-    val fill = if (kind == ComposerActionKind.Stop) c.strong else c.primary
+    val strong = kind == ComposerActionKind.Stop || kind == ComposerActionKind.Done || kind == ComposerActionKind.Writing
+    val fill = if (strong) c.strong else c.primary
     Box(
-        Modifier.size(48.dp).clip(CircleShape).clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+        Modifier.size(48.dp).clip(RectangleShape).clickable(enabled = enabled, role = Role.Button, onClick = onClick)
             .semantics { contentDescription = description },
         contentAlignment = Alignment.Center,
     ) {
@@ -347,12 +386,16 @@ private fun ComposerAction(kind: ComposerActionKind, description: String, enable
             Modifier.size(32.dp)
                 // Send with nothing to send: the amber circle, faded (the web UI's disabled opacity).
                 .alpha(if (kind == ComposerActionKind.Send && !enabled) 0.4f else 1f)
-                .background(fill, CircleShape),
+                .background(fill, RectangleShape),
             contentAlignment = Alignment.Center,
         ) {
             when (kind) {
                 ComposerActionKind.Send -> Icon(HerdrIcons.ArrowUp, null, tint = c.onPrimary, modifier = Modifier.size(16.dp))
-                ComposerActionKind.Stop -> Box(Modifier.size(10.dp).background(c.ground, RoundedCornerShape(2.dp)))
+                ComposerActionKind.Stop -> Box(Modifier.size(10.dp).background(c.ground, RectangleShape))
+                ComposerActionKind.Done -> Icon(HerdrIcons.Check, null, tint = c.ground, modifier = Modifier.size(16.dp))
+                ComposerActionKind.Writing -> CircularProgressIndicator(
+                    Modifier.size(14.dp), color = c.ground, strokeWidth = 2.dp, trackColor = c.ground.copy(alpha = 0.25f),
+                )
                 ComposerActionKind.Sending -> CircularProgressIndicator(
                     Modifier.size(14.dp), color = c.onPrimary, strokeWidth = 2.dp, trackColor = c.onPrimary.copy(alpha = 0.25f),
                 )
@@ -370,7 +413,7 @@ private fun ComposerAction(kind: ComposerActionKind, description: String, enable
 fun ComposerIconButton(icon: ImageVector, description: String, enabled: Boolean = true, onClick: () -> Unit) {
     val c = Herdr.colors
     Box(
-        Modifier.size(48.dp).clip(CircleShape)
+        Modifier.size(48.dp).clip(RectangleShape)
             .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
             .semantics { contentDescription = description },
         contentAlignment = Alignment.Center,
@@ -387,7 +430,7 @@ fun ComposerIconButton(icon: ImageVector, description: String, enabled: Boolean 
 @Composable
 fun ComposerToggle(label: String, icon: ImageVector, checked: Boolean, onCheckedChange: (Boolean) -> Unit, enabled: Boolean = true) {
     val c = Herdr.colors
-    val pill = RoundedCornerShape(50)
+    val pill = RectangleShape
     val tone = when {
         !enabled -> c.off
         checked -> c.accent
@@ -461,18 +504,18 @@ fun RoundAction(icon: ImageVector, description: String, enabled: Boolean = true,
         else -> c.card to c.text
     }
     Box(
-        Modifier.size(48.dp).clip(CircleShape).clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+        Modifier.size(48.dp).clip(RectangleShape).clickable(enabled = enabled, role = Role.Button, onClick = onClick)
             .semantics { contentDescription = description },
         contentAlignment = Alignment.Center,
     ) {
         Box(
             Modifier.size(36.dp)
-                .then(if (!primary && !stop) Modifier.shadow(8.dp, CircleShape) else Modifier)
-                .background(fill, CircleShape)
-                .then(if (!enabled || (!primary && !stop)) Modifier.border(1.dp, c.line, CircleShape) else Modifier),
+                .then(if (!primary && !stop) Modifier else Modifier)
+                .background(fill, RectangleShape)
+                .then(if (!enabled || (!primary && !stop)) Modifier.border(1.dp, c.line, RectangleShape) else Modifier),
             contentAlignment = Alignment.Center,
         ) {
-            if (stop) Box(Modifier.size(12.dp).background(glyph, RoundedCornerShape(2.dp)))
+            if (stop) Box(Modifier.size(12.dp).background(glyph, RectangleShape))
             else Icon(icon, null, tint = glyph, modifier = Modifier.size(18.dp))
         }
     }
@@ -482,7 +525,7 @@ fun RoundAction(icon: ImageVector, description: String, enabled: Boolean = true,
 @Composable
 fun KeyChip(label: String, onClick: () -> Unit) {
     val c = Herdr.colors
-    val shape = RoundedCornerShape(Radius.m)
+    val shape = RectangleShape
     Box(
         Modifier.heightIn(min = 48.dp).clickable(role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center,

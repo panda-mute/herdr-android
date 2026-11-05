@@ -1,6 +1,6 @@
 // A herdr machine without SSH: the stand-in SshConnector hands the app's real code one of these.
 // It answers herdr's socket API, the shell commands the app runs (the herdr probe, session list,
-// the work board's CLI) and the streams it opens (an agent's transcript, a terminal), from the
+// Shepherdr's service) and the streams it opens (an agent's transcript, a terminal), from the
 // scene's fixed demo data, so every scene renders the same way each time.
 package preview
 
@@ -56,11 +56,6 @@ class FakeMachine(
     var transcripts: Map<String, String> = emptyMap(),
     /** Agent sessions as the activity timeline reads them (with their times), by the path or id asked for; else [transcripts]. */
     var activity: Map<String, String> = emptyMap(),
-    /** The board's record of a task (`task.json`) and what it typed to its agents (`said-by.jsonl`), by task id. */
-    var records: Map<String, String> = emptyMap(),
-    var said: Map<String, String> = emptyMap(),
-    /** The work board's data, or null when herdr-projects isn't installed there. */
-    var board: FakeBoard? = null,
     /** Shepherdr 3's service there (reached with curl), or null where it doesn't run. */
     var shepherdr: FakeShepherdr? = null,
     /** Integration metadata per workspace (`workspace.get`'s tokens). */
@@ -84,17 +79,15 @@ class FakeMachine(
     var logins: FakeLogins? = null,
     /** herdr-push's journal there (`herdr-push journal`, for the brief); null where herdr-push isn't installed. */
     var journal: JsonObject? = null,
+    /** herdr-app-build there (Settings › Change the app); null answers none of its commands. */
+    var appBuild: FakeAppBuild? = null,
     /** Its repositories, for the code browser; null answers no code command. */
     var code: FakeCode? = null,
-    /** Its quick commands and their runs; null answers no quick-command command. */
-    var quick: FakeQuick? = null,
     /** Pictures on it by their path there (the files they are), for a chat that reads one back (`Images.fetchCommand`). */
     var pictures: Map<String, java.io.File> = emptyMap(),
     /** What `herdr-agent-commands` prints there (AgentCommands.listCommand): the person's and the projects' own commands and skills. */
     var agentCommands: String = "",
-    /** What listens on its ports, as the dev servers' probe prints it (`DevServers.command`): `L` lines. */
-    var ports: String = "",
-    /** The agents whose programs are there, as `integration.list` reports them (Start work and the New sheet offer these). */
+    /** The agents whose programs are there, as `integration.list` reports them (Start work offers these). */
     var installed: List<String> = listOf("claude", "codex", "pi", "opencode"),
     /** Its folders for the folder browser (Folder.command), by path: `R name` for a Git repository, `D name` for a folder. */
     var folders: Map<String, List<String>> = mapOf(
@@ -115,6 +108,7 @@ class FakeMachine(
         // herdr-core's probe (HcDetection): its socket and core, or nothing where none runs.
         if ("core.lock" in command) return FakeCore.probe(core, coreSessions)
         shepherdr?.run(command, stdin)?.let { return it }
+        appBuild?.run(command)?.let { return it }
         Shell.words(command).let { w ->
             // Words in the chats (ChatSearch.command): the transcripts' lines that hold them, under each chat's mark.
             val chat = w.indexOf("herdr-chat-search")
@@ -139,26 +133,19 @@ class FakeMachine(
                 return ok("@@herdr-folder $path\n" + list.joinToString("") { "$it\n" })
             }
         }
+        appBuild?.run(command)?.let { return it }
         code?.run(command)?.let { return it }
-        quick?.run(command)?.let { return it }
         health.run(command)?.let { return it }
         usage?.run(command)?.let { return it }
         logins?.run(command)?.let { return it }
         val w = Shell.words(command)
         return when {
             "pgrep" in command -> ok("server\t/home/demo/.local/bin/herdr\therdr $version\n")
-            "herdr-ports" in w -> ok(com.makefunstuff.herdr.core.ports.DevServers.MARK + " 1\n" + ports)
             w.containsAll(listOf("session", "list", "--json")) && !classic -> CommandResult(127, "", "herdr: not found")
             w.containsAll(listOf("session", "list", "--json")) ->
                 ok("""{"sessions":[{"name":"default","default":true,"running":true,"socket_path":"/home/demo/.config/herdr/herdr.sock"}]}""")
             // herdr-push: only its journal is asked for in the previews; without one it isn't installed.
             "herdr-push" in command && "journal" in w -> journal?.let { ok(it.toString() + "\n") } ?: CommandResult(126, "", "")
-            "command -v herdr-projects" in command -> board?.let { ok(BOARD_PATH + "\n") } ?: CommandResult(127, "", "")
-            // The board's record of a task, for its timeline (ActivityCommands.record).
-            "herdr-activity-record" in command -> Shell.words(w.last()).last().let { task ->
-                ok("@@herdr-activity task\n" + records[task].orEmpty() + "\n@@herdr-activity said\n" + said[task].orEmpty() + "\n@@herdr-activity end\n")
-            }
-            BOARD_PATH in command -> board?.run(command) ?: CommandResult(127, "", "herdr-projects: not found")
             w.containsAll(listOf("machine", "list", "--json")) -> ok("""{"machines":[]}""")
             "--version" in w -> ok("herdr $version\n")
             w.containsAll(listOf("channel", "show")) -> ok("stable\n")
@@ -284,10 +271,6 @@ class FakeMachine(
                 obj("read" to obj("pane_id" to pane, "text" to screens[pane].orEmpty().let { if (ansi) it else Shell.plain(it) }, "revision" to 1))
             }
             "pane.get" -> obj("pane" to list("panes").first { it["pane_id"]?.jsonPrimitive?.content == pane })
-            "pane.layout" -> {
-                val tab = list("panes").first { it["pane_id"]?.jsonPrimitive?.content == pane }["tab_id"]
-                obj("layout" to list("layouts").first { it["tab_id"] == tab })
-            }
             "workspace.get" -> {
                 val ws = p["workspace_id"]?.jsonPrimitive?.content
                 val info = list("workspaces").first { it["workspace_id"]?.jsonPrimitive?.content == ws }
@@ -307,7 +290,6 @@ class FakeMachine(
     private fun list(key: String): List<JsonObject> = (snapshot[key] as? JsonArray).orEmpty().map { it.jsonObject }
 
     companion object {
-        const val BOARD_PATH = "/home/demo/.herdr-projects/data/bin/herdr-projects"
         const val HOME = "/home/demo"
     }
 }

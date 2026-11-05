@@ -1,10 +1,6 @@
 package com.makefunstuff.herdr.core.push
 
 import com.makefunstuff.herdr.core.api.AgentStatus
-import com.makefunstuff.herdr.core.board.Approvals
-import com.makefunstuff.herdr.core.board.BoardAction
-import com.makefunstuff.herdr.core.board.BoardStatus
-import com.makefunstuff.herdr.core.board.BoardTask
 import com.makefunstuff.herdr.core.chat.BlockedPrompt
 import com.makefunstuff.herdr.core.chat.OptionRole
 import com.makefunstuff.herdr.core.guard.Guarded
@@ -20,7 +16,7 @@ import kotlinx.serialization.Serializable
  */
 @Serializable
 data class Alert(
-    /** One notification per agent or task: a newer state replaces the older one under the same tag. */
+    /** One notification per agent: a newer state replaces the older one under the same tag. */
     val tag: String,
     /** The state it shows; the same signature again is not shown twice. Empty: always shown. */
     val sig: String,
@@ -30,30 +26,30 @@ data class Alert(
     val text: String,
     /** The longer text when the notification is opened up. */
     val detail: String = "",
-    /** What a tap opens: the agent's chat, or the task on the board. */
+    /** What a tap opens: the agent's chat. */
     val paneId: String = "",
-    val taskId: String = "",
-    /** The task's short key (`AND-7`), or its id where it has none. */
-    val taskName: String = "",
     val actions: List<AlertAction> = emptyList(),
     /** An agent's name, as its chat shows it: what its chat is called when it floats as a bubble. */
     val agentName: String = "",
     /** A tap opens the machine's health screen (a machine low on RAM or disk). */
     val health: Boolean = false,
-    /** A tap opens this quick command's run (an AI one that ended). */
-    val quickRun: String = "",
     /** A tap opens the machine's usage page (a provider near or at a limit). */
     val usage: Boolean = false,
-    /** A tap opens the review cards at the task: finished work that waits for a yes, a no or a choice ([Approvals.waits]). */
-    val review: Boolean = false,
+    /** The space an agent's news comes from (its workspace's name), whose [Notify] it follows; empty for the rest. */
+    val space: String = "",
+    /** A Shepherdr 3 task's id ([TaskAlerts]): a tap opens the task, its buttons act on it. */
+    val task: String = "",
+    /** A Shepherdr 3 Assistant's chat that waits on you, for its Answer. */
+    val chat: String = "",
+    /** A tap opens [task]'s Accept card: it is ready to accept. */
+    val accept: Boolean = false,
 ) {
     /**
      * What it is about, which the notification rules ([AlertRules]) switch on and off: something waits
-     * for you, something finished, something went wrong (a review or a check failed, a task errored),
-     * a test, a watch you set that fired ([Watch]), or an AI provider near or at a limit (and a task
-     * the board's fallback took over because of one).
+     * for you, something finished, something went wrong (a review or a check failed), a test, or an AI
+     * provider near or at a limit.
      */
-    enum class Kind { NeedsYou, Finished, WentWrong, Test, Watch, Limits }
+    enum class Kind { NeedsYou, Finished, WentWrong, Test, Limits }
 }
 
 /** A notification's button. */
@@ -67,8 +63,6 @@ data class AlertAction(
     val question: String = "",
     /** [Type.Choose]: what the question showed of what it would do (the command), which must still be the same. */
     val details: List<String> = emptyList(),
-    /** [Type.Board]: the board command, a [BoardAction] name. */
-    val board: String = "",
     /** The reply box's hint, for the reply types. */
     val hint: String = "",
     /** A [com.makefunstuff.herdr.core.guard.Guarded] key: the button asks for the fingerprint first, when that is on. */
@@ -79,16 +73,13 @@ data class AlertAction(
         Choose,
         /** Words to the agent: its answer when blocked, its next prompt when done. */
         ReplyAgent,
-        /** A board command about the task. */
-        Board,
-        /** Words to the task's agent (`tell`). */
-        TellTask,
-        /** Words to the board's Coordinator, about the task. */
-        AskCoordinator,
+        /** Accepts a Ready Shepherdr 3 task ([Alert.task]): it merges. */
+        Accept,
+        /** Words to what a Shepherdr 3 task (or Assistant) waits on you for: its question's answer. */
+        AnswerTask,
     }
 
-    val reply: Boolean get() = type == Type.ReplyAgent || type == Type.TellTask || type == Type.AskCoordinator
-    val boardAction: BoardAction? get() = BoardAction.entries.firstOrNull { it.name == board }
+    val reply: Boolean get() = type == Type.ReplyAgent || type == Type.AnswerTask
 }
 
 /** What an event does to the notifications: show (or replace) one, or take one away. */
@@ -104,25 +95,24 @@ sealed interface AlertChange {
 
 object Alerts {
     fun agentTag(machineId: String, paneId: String) = "agent:$machineId:$paneId"
-    fun taskTag(machineId: String, taskId: String) = "task:$machineId:$taskId"
     fun testTag(machineId: String) = "test:$machineId"
     fun healthTag(machineId: String) = "health:$machineId"
-    fun quickTag(machineId: String, runId: String) = "quick:$machineId:$runId"
     fun usageTag(machineId: String, provider: String, limit: String) = "usage:$machineId:$provider:$limit"
-    fun takeoverTag(machineId: String, taskId: String) = "takeover:$machineId:$taskId"
 
-    /** The notifications [events] call for; what runs ([PushEvent.Live]) is a Live Update instead (LiveItems). */
-    fun all(machineId: String, machineLabel: String, events: List<PushEvent>, host: String = ""): List<AlertChange> =
-        events.filter { it !is PushEvent.Live }.map { of(machineId, machineLabel, it, host) }
+    /**
+     * The notifications [events] call for; what runs ([PushEvent.Live]) is a Live Update instead (LiveItems).
+     * [taskAlerts]: Shepherdr 3 tells the phone of its tasks itself ([TaskAlerts]), so a task's agent alerts as its task, once.
+     */
+    fun all(machineId: String, machineLabel: String, events: List<PushEvent>, host: String = "", taskAlerts: Boolean = false): List<AlertChange> =
+        events.filter { it !is PushEvent.Live }.map { of(machineId, machineLabel, it, host, taskAlerts) }
 
-    fun of(machineId: String, machineLabel: String, event: PushEvent, host: String = ""): AlertChange = when (event) {
+    fun of(machineId: String, machineLabel: String, event: PushEvent, host: String = "", taskAlerts: Boolean = false): AlertChange = when (event) {
         is PushEvent.Live -> throw IllegalArgumentException("What runs is a Live Update, not an alert")
-        is PushEvent.Agent -> agent(machineId, machineLabel, event)
-        is PushEvent.Task -> task(machineId, machineLabel, event.task)
+        is PushEvent.Agent ->
+            if (taskAlerts && event.agent.shepherdrTask != null) AlertChange.Clear(agentTag(machineId, event.agent.paneId))
+            else agent(machineId, machineLabel, event)
         is PushEvent.Health -> health(machineId, machineLabel, event.report)
-        is PushEvent.Quick -> quick(machineId, machineLabel, event)
         is PushEvent.Usage -> usage(machineId, machineLabel, event)
-        is PushEvent.Takeover -> takeover(machineId, machineLabel, event)
         PushEvent.Test -> AlertChange.Show(
             Alert(
                 tag = testTag(machineId),
@@ -140,6 +130,7 @@ object Alerts {
         val tag = agentTag(machineId, a.paneId)
         val name = a.name?.takeIf { it.isNotBlank() } ?: a.displayName
         val where = listOf(machineLabel, e.where).filter { it.isNotBlank() }.joinToString(" · ")
+        val space = Notify.spaceOf(e.where)
         return when (a.agentStatus) {
             AgentStatus.Blocked -> {
                 val prompt = e.screen?.let { BlockedPrompt.parse(it) }
@@ -156,6 +147,7 @@ object Alerts {
                         paneId = a.paneId,
                         agentName = name,
                         actions = choices(prompt) + AlertAction(AlertAction.Type.ReplyAgent, "Reply", hint = "Answer $name"),
+                        space = space,
                     ),
                 )
             }
@@ -173,6 +165,7 @@ object Alerts {
                         paneId = a.paneId,
                         agentName = name,
                         actions = listOf(AlertAction(AlertAction.Type.ReplyAgent, "Reply", hint = "Next prompt for $name")),
+                        space = space,
                     ),
                 )
             }
@@ -197,45 +190,6 @@ object Alerts {
 
     private fun short(label: String) = if (label.length <= 24) label else label.take(23).trimEnd() + "…"
 
-    private fun task(machineId: String, machineLabel: String, t: BoardTask): AlertChange {
-        val tag = taskTag(machineId, t.id)
-        if (!t.needsYou) return AlertChange.Clear(tag)
-        val s = t.status
-        val coordinator = AlertAction(AlertAction.Type.AskCoordinator, "Ask Coordinator", hint = "About ${t.name}, to the Coordinator")
-        fun board(action: BoardAction, label: String) = AlertAction(AlertAction.Type.Board, label, board = action.name)
-        val actions = when (s) {
-            BoardStatus.Approval -> listOf(board(BoardAction.Approve, "Approve and merge").copy(guard = Guarded.Merge.key), coordinator)
-            BoardStatus.ReviewFailed -> listOf(board(BoardAction.Review, "Send findings back"), coordinator)
-            BoardStatus.PlanReady -> listOf(
-                board(BoardAction.ApprovePlan, "Approve plan"),
-                AlertAction(AlertAction.Type.TellTask, "Send back", hint = "What to change in the plan"),
-            )
-            BoardStatus.Asks, BoardStatus.AsksOk, BoardStatus.NeedsLogin ->
-                listOf(AlertAction(AlertAction.Type.TellTask, "Reply", hint = "Answer for ${t.name}'s agent"))
-            BoardStatus.Stopped -> listOf(board(BoardAction.Retry, "Continue"), coordinator)
-            BoardStatus.Error -> listOf(board(BoardAction.Retry, "Retry"), coordinator)
-            else -> listOf(coordinator)
-        }
-        return AlertChange.Show(
-            Alert(
-                tag = tag,
-                sig = listOf(t.state, t.stage, t.kind, t.reviewRound, t.reviewPassed, t.approvalBlocked).joinToString("|"),
-                kind = if (wentWrong(t)) Alert.Kind.WentWrong else Alert.Kind.NeedsYou,
-                machineId = machineId,
-                title = "${t.name} ${s.word}" + (s.detail?.let { " · $it" } ?: ""),
-                text = t.title,
-                detail = listOf(t.title, t.msg, machineLabel).filter { it.isNotBlank() }.joinToString("\n"),
-                taskId = t.id,
-                taskName = t.name,
-                actions = actions,
-                review = Approvals.waits(t),
-            ),
-        )
-    }
-
-    /** A task that waits for you because something failed: its review, or its run (a check, an error). */
-    fun wentWrong(t: BoardTask): Boolean = t.status == BoardStatus.ReviewFailed || t.status == BoardStatus.Error
-
     /**
      * A machine low on RAM or disk: what is low, and what uses the most memory. It needs you (a full
      * machine stops agents), so it comes through quiet hours; it comes down once there is room again.
@@ -256,47 +210,6 @@ object Alerts {
                 health = true,
             ),
         )
-    }
-
-    /**
-     * An AI quick command that ended: what it answered (its first line), or why it stopped. One that
-     * was stopped by hand says nothing; it is the same run's notification each time it is told.
-     */
-    fun quick(machineId: String, machineLabel: String, e: PushEvent.Quick): AlertChange {
-        val tag = quickTag(machineId, e.id)
-        val answer = com.makefunstuff.herdr.core.quick.QuickText.line(e.text)
-        val (title, text) = when (e.state) {
-            "done" -> "${e.name} is done" to answer.ifEmpty { "Its answer is ready" }
-            "failed" -> "${e.name} failed" to e.error.ifEmpty { "It stopped with an error" }
-            "limit" -> "${e.name} stopped at its limit" to e.error.ifEmpty { answer }
-            else -> return AlertChange.Clear(tag)
-        }
-        val folder = e.cwd.trimEnd('/').substringAfterLast('/')
-        return AlertChange.Show(
-            Alert(
-                tag = tag,
-                sig = "quick:${e.state}",
-                kind = if (e.state == "done") Alert.Kind.Finished else Alert.Kind.WentWrong,
-                machineId = machineId,
-                title = title,
-                text = text,
-                detail = listOf(e.text.trim().take(600).ifEmpty { text }, listOf(machineLabel, folder).filter { it.isNotEmpty() }.joinToString(" · "))
-                    .joinToString("\n"),
-                quickRun = e.id,
-            ),
-        )
-    }
-
-    /** [Alerts.quick] for a run the app read itself (its own look while closed, or a run it showed); null for a script's or one not ended. */
-    fun quickRun(machineId: String, machineLabel: String, run: com.makefunstuff.herdr.core.quick.QuickRun): AlertChange? {
-        if (run.kind != com.makefunstuff.herdr.core.quick.QuickKind.Prompt) return null
-        val state = when (run.state) {
-            com.makefunstuff.herdr.core.quick.RunState.Done -> "done"
-            com.makefunstuff.herdr.core.quick.RunState.Failed -> "failed"
-            com.makefunstuff.herdr.core.quick.RunState.Limit -> "limit"
-            else -> return null
-        }
-        return quick(machineId, machineLabel, PushEvent.Quick(run.id, run.name, state, run.preview, run.error, run.cwd))
     }
 
     /**
@@ -323,27 +236,6 @@ object Alerts {
         )
     }
 
-    /** The board's fallback took a task over because of a limit: "codex took over from claude: out of allowance until 17:00". */
-    fun takeover(machineId: String, machineLabel: String, e: PushEvent.Takeover): AlertChange {
-        val words = "${e.to} took over from ${e.from}"
-        val role = if (e.role == "reviewer") " (its review)" else ""
-        return AlertChange.Show(
-            Alert(
-                tag = takeoverTag(machineId, e.taskId),
-                sig = "takeover:${e.at}",
-                kind = Alert.Kind.Limits,
-                machineId = machineId,
-                title = "${e.name}: $words$role",
-                text = e.why.ifEmpty { e.title },
-                detail = listOf("$words: ${e.why}", e.title, machineLabel).filter { it.isNotBlank() }.joinToString("\n"),
-                taskId = e.taskId,
-                taskName = e.name,
-            ),
-        )
-    }
-
-    /** What the Coordinator is sent for a reply to a task's notification. */
-    fun aboutTask(taskName: String, title: String, text: String): String = "About $taskName (\"$title\"): $text"
 }
 
 /** How a machine running low is put in words, for the notification and the health screen's warning. */

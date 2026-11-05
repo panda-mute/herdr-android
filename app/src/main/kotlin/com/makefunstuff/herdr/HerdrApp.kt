@@ -86,13 +86,14 @@ class HerdrApp : Application() {
                 container.quietWork.check()
             }
         }, modes, ContextCompat.RECEIVER_NOT_EXPORTED)
-        // The widgets follow the counts (their time to the minute) and the Coordinator used last.
+        // The widgets follow the counts (their time to the minute), the Coordinator used last and what waits on you.
         container.scope.launch {
             combine(
                 container.tally.counts.map { it.copy(at = it.at / 60_000) }.distinctUntilChanged(),
                 container.shares.last,
                 container.usage.latest,
-            ) { _, _, _ -> }.collect { Widgets.update(this@HerdrApp) }
+                container.inbox.waiting,
+            ) { _, _, _, _ -> }.collect { Widgets.update(this@HerdrApp) }
         }
         // The launcher's shortcuts say how many things need you, and which Coordinator they open.
         container.scope.launch {
@@ -122,14 +123,13 @@ class AppContainer(app: Application) {
     val usage = com.makefunstuff.herdr.data.UsageStore(java.io.File(app.filesDir, "usage.json"))
     /** Each machine's agent logins, as last read there (only in memory). */
     val logins = com.makefunstuff.herdr.data.LoginsStore()
-    val quick = com.makefunstuff.herdr.data.QuickStore(java.io.File(app.filesDir, "quick.json"))
     val shares = Shares(java.io.File(app.filesDir, "shares.json"), java.io.File(app.cacheDir, "shared"))
     // Pictures waiting in a composer are the app's own files; pictures sent are a cache Android may clear.
     val images = com.makefunstuff.herdr.data.ImageStore(
         java.io.File(app.filesDir, "images.json"), java.io.File(app.filesDir, "images"), java.io.File(app.cacheDir, "sent-images"),
     )
     val push = PushStore(app)
-    /** The Agents list's pins, snoozes and mutes; a muted agent's notifications don't show. */
+    /** The Agents list's pins, and the mutes from before Notify until they are moved onto their spaces. */
     val triage = com.makefunstuff.herdr.data.TriageStore(java.io.File(app.filesDir, "triage.json"))
     /** Which actions ask for the fingerprint, and the app lock. */
     val guard = com.makefunstuff.herdr.data.GuardStore(java.io.File(app.filesDir, "guard.json"), com.makefunstuff.herdr.guard.AndroidUnlock(app))
@@ -138,13 +138,16 @@ class AppContainer(app: Application) {
     val phone = AndroidPhone(app, push)
     val pushHosts = PushHosts(scope, hosts, machines, push, phone)
     val quietWork = QuietWork(scope, push.state, phone, inbox, foreground = { hosts.isForeground })
-    val liveWork = LiveWork(scope, hosts, machines, push, AndroidLive(app), quietWork, muted = triage.state.map { it.muted })
+    val liveWork = LiveWork(scope, hosts, machines, push, AndroidLive(app), quietWork, muted = triage.muted(push.state, hosts.hosts))
     val tally = TallyStore(java.io.File(app.filesDir, "tally.json"), machines)
-    /** One-shot watches set from the long-press sheets. */
-    val watchWork = com.makefunstuff.herdr.push.WatchWork(push, inbox, quietWork)
-    val alertWork = AlertWork(hosts, machines, push, inbox, liveWork, quietWork, tally, quick, watchWork, usage)
-    /** Every board's list as last read, and which finished agents the phone has shown: the Agents screen's and the Board tab's. */
-    val boards = com.makefunstuff.herdr.data.BoardLists(hosts, onRead = { id, tasks -> tally.tasks(id, tasks) })
+    /** Each Shepherdr 3 task's space, from the boards read: a task alert follows its space's Notify. */
+    val taskSpaces = com.makefunstuff.herdr.push.TaskSpaces(java.io.File(app.filesDir, "task-spaces.json"))
+    val alertWork = AlertWork(hosts, machines, push, inbox, liveWork, quietWork, tally, usage, taskSpaces)
+    /**
+     * Every board as last read, and which finished agents the phone has shown: the Agents screen's and the Board tab's.
+     * The boards read while on screen are what the person saw: the widget counts them, and the brief compares with them.
+     */
+    val boards = com.makefunstuff.herdr.data.BoardLists(hosts, onRead = { id, tasks -> tally.tasks(id, tasks); briefWork.looked(id, tasks, null) }, onBoard = { id, o -> taskSpaces.put(id, o); inbox.looked(id, o) })
     val seen = com.makefunstuff.herdr.data.SeenStore(java.io.File(app.filesDir, "seen.json"))
     /** When each agent's chat was last on screen, for its "While you were away" card. */
     val looked = com.makefunstuff.herdr.data.LookedStore(java.io.File(app.filesDir, "looked.json"))
@@ -167,6 +170,8 @@ class AppContainer(app: Application) {
     val voiceCalls: com.makefunstuff.herdr.voice.VoiceCalls = com.makefunstuff.herdr.voice.AndroidVoiceCalls(scope, hosts)
     /** The clock the screens read (a turn's "Working for 3m", the away card). */
     val clock: () -> Long = System::currentTimeMillis
+    /** The time zone the screens tell times in (Autopilot's "Next 10:00"). */
+    val zone: () -> java.time.ZoneId = java.time.ZoneId::systemDefault
     val bubbles: Bubbles = AndroidBubbles(app)
     /** The launcher's shortcuts: Needs you, the Coordinator, Start work, the agents opened last. */
     val shortcuts: com.makefunstuff.herdr.share.Shortcuts = com.makefunstuff.herdr.share.AndroidShortcuts(app)
@@ -176,6 +181,11 @@ class AppContainer(app: Application) {
         scope, hosts, machines, BriefStore(java.io.File(app.filesDir, "brief.json")), AndroidBrief(app), AndroidVoice(app),
         quiet = { quietWork.check() },
     )
+    /** Changing the app from the phone: its builder, the tasks accepted here, and the update it built. */
+    val changes = com.makefunstuff.herdr.change.AppChanges(
+        scope, hosts, java.io.File(app.filesDir, "app-change.json"), java.io.File(app.cacheDir, "updates"),
+        com.makefunstuff.herdr.change.AndroidThisApp(app),
+    )
 
     init {
         // Read the key up front so the public key is ready to show. A missing key is never made
@@ -184,15 +194,19 @@ class AppContainer(app: Application) {
         pushHosts.start()
         liveWork.start()
         quietWork.start()
-        // The boards the app reads while on screen are what the person saw, for the brief.
-        tally.start(scope, hosts, onBoard = { id, tasks -> boards.put(id, tasks); briefWork.looked(id, tasks, null) })
+        tally.start(scope, hosts)
         briefWork.start()
-        watchWork.start(scope, hosts, boards)
         usage.start(scope, hosts, machines)
+        changes.start()
         // Shared files waiting for a machine taken out of the app go with it.
         scope.launch { machines.machines.collect { list -> shares.keep(list.map { it.id }.toSet()) } }
-        // Pins, snoozes and mutes of panes gone (or snoozes over) go as the machines are read.
-        scope.launch { hosts.hosts.collect { triage.keep(it, machines.machines.value.map { m -> m.id }.toSet()) } }
+        // Old mutes and watches move onto their spaces' Notify, and pins of panes gone go, as the machines are read.
+        scope.launch {
+            hosts.hosts.collect {
+                triage.move(it, push)
+                triage.keep(it, machines.machines.value.map { m -> m.id }.toSet())
+            }
+        }
         // The push app's address may have lapsed while the app was closed: ask again, it answers with the same or a new one.
         if (push.state.value.on) phone.register()
         // When network returns (e.g. WiFi connects, cellular signal restored), retry any sessions waiting in backoff.

@@ -17,7 +17,7 @@ import androidx.navigation.compose.rememberNavController
 import com.makefunstuff.herdr.AppContainer
 import com.makefunstuff.herdr.screens
 import com.makefunstuff.herdr.ui.agents.AgentScreen
-import com.makefunstuff.herdr.ui.agents.AgentsScreen
+import com.makefunstuff.herdr.ui.agents.TasksScreen
 import com.makefunstuff.herdr.ui.common.LocalContainer
 import com.makefunstuff.herdr.ui.coordinator.CoordinatorScreen
 import com.makefunstuff.herdr.ui.design.ToastHost
@@ -35,8 +35,7 @@ fun BubbleRoot(container: AppContainer, chat: BubbleChat, dark: Boolean = isSyst
     CompositionLocalProvider(LocalContainer provides container) {
         HerdrTheme(dark) {
             Box(Modifier.fillMaxSize().background(Herdr.colors.ground)) { com.makefunstuff.herdr.ui.common.GuardHost(container.guard) {
-                val agentsFilter = rememberSaveable { mutableStateOf<String?>(null) }
-                val agentsList = rememberLazyListState()
+                val tasksList = rememberLazyListState()
                 NavHost(nav, startDestination = CHAT, modifier = Modifier.fillMaxSize()) {
                     // The chat the bubble opened on: it has no screen to go back to, and opens in the app instead of floating.
                     composable(CHAT) {
@@ -47,7 +46,7 @@ fun BubbleRoot(container: AppContainer, chat: BubbleChat, dark: Boolean = isSyst
                             }
                         }
                     }
-                    screens(nav) { AgentsScreen(nav, agentsFilter, agentsList) }
+                    screens(nav) { TasksScreen(nav, tasksList) }
                 }
                 }
                 ToastHost()

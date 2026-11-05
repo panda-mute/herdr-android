@@ -1,5 +1,7 @@
 package com.makefunstuff.herdr.ui.agents
 
+import androidx.compose.ui.graphics.RectangleShape
+
 import androidx.compose.foundation.Canvas
 import com.makefunstuff.herdr.core.chat.VoiceNotes
 import com.makefunstuff.herdr.core.chat.VoiceRecorder
@@ -20,8 +22,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -35,7 +35,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.StrokeCap
@@ -86,12 +85,12 @@ fun HeldList(
 ) {
     val c = Herdr.colors
     val ready = Held.ready(status)
-    val shape = RoundedCornerShape(Radius.xl)
+    val shape = RectangleShape
     Surface(
         color = c.card,
         border = androidx.compose.foundation.BorderStroke(1.dp, if (ready) c.accent else c.line),
         shape = shape,
-        modifier = Modifier.fillMaxWidth().shadow(6.dp, shape, ambientColor = c.shadow, spotColor = c.shadow)
+        modifier = Modifier.fillMaxWidth()
             .semantics { contentDescription = "Held messages (${held.size})" },
     ) {
         Column {
@@ -133,7 +132,7 @@ fun HeldList(
                                 Text("Send now", color = if (!canSend) c.off else if (ready) c.accent else c.text)
                             }
                             Box(
-                                Modifier.size(48.dp).clip(CircleShape).clickable(role = Role.Button, onClick = { onDiscard(m) })
+                                Modifier.size(48.dp).clip(RectangleShape).clickable(role = Role.Button, onClick = { onDiscard(m) })
                                     .semantics { contentDescription = "Discard" },
                                 contentAlignment = Alignment.Center,
                             ) { Icon(HerdrIcons.X, null, tint = c.muted, modifier = Modifier.size(18.dp)) }
@@ -171,7 +170,7 @@ fun QuickReplyRow(replies: List<String>, onReply: (String) -> Unit, onEdit: (() 
             }
         }
         if (onEdit != null) Box(
-            Modifier.size(48.dp).clip(CircleShape).clickable(role = Role.Button, onClick = onEdit)
+            Modifier.size(48.dp).clip(RectangleShape).clickable(role = Role.Button, onClick = onEdit)
                 .semantics { contentDescription = "Edit quick replies" },
             contentAlignment = Alignment.Center,
         ) { Icon(HerdrIcons.Pencil, null, tint = c.muted, modifier = Modifier.size(16.dp)) }
@@ -189,12 +188,12 @@ data class CompletionRow(val insert: String, val label: String, val detail: Stri
 @Composable
 fun CompletionMenu(title: String, rows: List<CompletionRow>, note: String?, onPick: (CompletionRow) -> Unit) {
     val c = Herdr.colors
-    val shape = RoundedCornerShape(Radius.xl)
+    val shape = RectangleShape
     Surface(
         color = c.card,
         border = androidx.compose.foundation.BorderStroke(1.dp, c.line),
         shape = shape,
-        modifier = Modifier.fillMaxWidth().shadow(6.dp, shape, ambientColor = c.shadow, spotColor = c.shadow),
+        modifier = Modifier.fillMaxWidth(),
     ) {
         Column(Modifier.padding(vertical = Space.xs)) {
             Text(
@@ -259,7 +258,7 @@ fun fileRows(files: List<String>): List<CompletionRow> = files.map { path ->
 @Composable
 fun ModelPillButton(pill: ModelPill, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val c = Herdr.colors
-    val shape = RoundedCornerShape(50)
+    val shape = RectangleShape
     val percent = pill.percent
     val words = pill.title + (percent?.let { " · $it%" } ?: "")
     Box(
@@ -320,6 +319,8 @@ fun ModelSheet(
     /** For Codex: its catalog's models, null while they are read. */
     codexModels: List<com.makefunstuff.herdr.core.chat.CodexModels.Model>? = null,
     codex: Boolean = false,
+    /** Opens the model menu, to restart it on another model, level or mode. */
+    onChange: (() -> Unit)? = null,
 ) {
     val c = Herdr.colors
     val use = pill.use
@@ -368,8 +369,18 @@ fun ModelSheet(
                 )
             }
         }
-        if (onUsage != null) {
+        if (onChange != null) {
             Spacer(Modifier.height(Space.s))
+            ListRow(
+                title = "Change model",
+                subtitle = "Restart it on another model, reasoning or permissions",
+                leading = { Icon(HerdrIcons.Cpu, null, tint = c.muted, modifier = Modifier.size(20.dp)) },
+                trailing = { Icon(HerdrIcons.ChevronRight, null, tint = c.muted, modifier = Modifier.size(18.dp)) },
+                onClick = onChange,
+            )
+        }
+        if (onUsage != null) {
+            Spacer(Modifier.height(if (onChange != null) 0.dp else Space.s))
             ListRow(
                 title = "Usage and limits",
                 subtitle = limit ?: "What each provider allows, and what was used",

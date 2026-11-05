@@ -2,26 +2,25 @@
 
 A small watcher that runs on a machine with herdr and tells your phone when something there needs you, also while Herdr for Android is closed:
 
-- an agent becomes **blocked** (it asks something: a permission, a question) or **finishes**; also the Herdr desktop app's agents, in herdr-core, read on its socket where a core runs (never starting one);
-- a work board task starts **waiting for you**: ready to approve, review failed, plan ready, pick one, asks you, needs a login, stopped at a limit, went wrong.
+- an agent becomes **blocked** (it asks something: a permission, a question) or **finishes**; also the Herdr desktop app's agents, in herdr-core, read on its socket where a core runs (never starting one).
 
-When that is over (answered on the desktop, the agent back at work, the task moved on), it says so too, and the phone takes the notification down.
+When that is over (answered on the desktop, the agent back at work), it says so too, and the phone takes the notification down.
 
 It also looks at the machine itself every 30 seconds (`HERDR_PUSH_HEALTH_EVERY`, 0 for never): when RAM runs low (under 10% available) or a disk does (less than a tenth free, at most 20 GB), it tells the phone once, naming the three processes using the most memory, and again when there is room (15%, one and a half times the disk's mark). The readings of the last hour go to `health.json` for the app's chart.
 
-It also tells the phone when an **AI quick command** the app started there ends (done, failed, or at its time or token limit; not one stopped by hand), with the start of its answer: it looks at the runs in `~/.local/state/herdr-android/quick/` (`HERDR_PUSH_QUICK` for another folder; see [herdr-quick](../herdr-quick/README.md)), once each, and only at runs that ended in the last hour. A tap opens the run in the app.
+It also warns about the **AI providers' limits** every 5 minutes (`HERDR_PUSH_USAGE_EVERY`, 0 for never), where the app put [herdr-usage](../herdr-usage/README.md) (`~/.local/share/herdr-usage/herdr-usage`, `HERDR_PUSH_USAGE` for another): when Claude Code's, Codex's or an API key's limit passes 80% or 95%, or runs out, it tells the phone once per mark and window, and again when that window is over (the notification comes down): a new reset time, its reset time passed, or, for a rolling window without one, under 70%. A tap opens the machine's usage page. Quiet hours hold it.
 
-It also warns about the **AI providers' limits** every 5 minutes (`HERDR_PUSH_USAGE_EVERY`, 0 for never), where the app put [herdr-usage](../herdr-usage/README.md) (`~/.local/share/herdr-usage/herdr-usage`, `HERDR_PUSH_USAGE` for another): when Claude Code's, Codex's or an API key's limit passes 80% or 95%, or runs out, it tells the phone once per mark and window, and again when that window is over (the notification comes down): a new reset time, its reset time passed, or, for a rolling window without one, under 70%. And when the board's fallback hands a task to another agent because of a limit ("codex took over from claude: out of allowance until 17:00"), read from the board's record of the task (`<board data>/tasks/<repo>/<n>/task.json`, `handovers`). A tap opens the machine's usage page, or the task. Quiet hours hold both.
+It also keeps a **journal** of the last week for the app's brief: each time an agent finishes or asks something, with the time and the agent as it was then (`journal.json`, at most 600 entries per herdr session; `HERDR_PUSH_JOURNAL_DAYS` changes the 8 days). The first look only learns how things stand, as for the pushes. The app reads it with `herdr-push journal --session <name> --since <seconds>`, which answers `{"ok": true, "now", "from", "upto", "entries": [...]}`: `from` is when the journal began (null before any look), `upto` its last look, so the app can tell a journal that stopped keeping track.
 
-It also keeps a **journal** of the last week for the app's brief: each time a board task is done, starts waiting for you, goes wrong, starts work or is added, and each time an agent finishes or asks something, with the time and the task or agent as it was then (`journal.json`, at most 600 entries per herdr session; `HERDR_PUSH_JOURNAL_DAYS` changes the 8 days). The first look only learns how things stand, as for the pushes. The app reads it with `herdr-push journal --session <name> --since <seconds>`, which answers `{"ok": true, "now", "from", "upto", "entries": [...]}`: `from` is when the journal began (null before any look), `upto` its last look, so the app can tell a journal that stopped keeping track.
-
-It also follows what a phone **watches** (a one-shot watch set in the app: "tell me when AND-7's checks pass", "when this agent finishes"): each change of a watched task's state or stage, or of a watched agent's status, goes to that phone alone, so its watch can fire while the app is closed. The subscription lists them (`watch_tasks`, `watch_panes`); the app subscribes again when they change.
+It can also follow agents a phone **watches** (`watch_panes` in its subscription): each change of a watched agent's status goes to that phone alone. The app's one-shot watches used it; it now asks for none (a space's Notify: All covers it), and subscribes again without them.
 
 Every push also says whether someone is **at the machine** (`present`), so the phone can keep quiet then: how many seconds ago someone typed in a herdr client there (the last input of the terminal it runs in, as `w` reads it, or the last touch of `~/.local/state/herdr-push/present`, which anything may touch, a shell prompt say), and whether a desktop session of yours there is unlocked (logind's `LockedHint` and `IdleHint`, or a screen locker such as hyprlock or swaylock running; on macOS the console's lock), or null with no desktop. `herdr-push presence` answers the same, for the app's own looks.
 
-For a phone with **Live Updates** on, it also sends what runs: the working agents and the running board tasks (stage, progress, minutes left, the review round and the most reviews there are), which the phone shows as Live Updates with a Stop button. That push goes out at once when something starts, stops or moves on a stage, with progress and the "doing now" line at most every 90 seconds (`HERDR_PUSH_LIVE_MINOR`), and again every 30 minutes while anything runs (`HERDR_PUSH_LIVE_KEEP`), so the phone knows the machine still watches. A phone without Live Updates gets none of these.
+For a phone with **Live Updates** on, it also sends what runs: the working agents, which the phone shows as Live Updates with a Stop button. That push goes out at once when one starts or stops, with their names and titles at most every 90 seconds (`HERDR_PUSH_LIVE_MINOR`), and again every 30 minutes while anything runs (`HERDR_PUSH_LIVE_KEEP`), so the phone knows the machine still watches. A phone without Live Updates gets none of these.
 
-The phone shows each one as a notification with buttons: **Approve** and **Deny** for an agent's yes-or-no question, **Reply** (to the agent, to the task's agent, or to the Coordinator about the task), **Approve and merge**, **Approve plan**, **Continue** or **Retry**. A tap opens the agent's chat or the task on the board. The buttons work over the app's own SSH connection, never through the push.
+**Shepherdr 3's tasks** ("HERD-4 · Needs you", "HERD-4 · Finished") don't come from here: the app subscribes to the Shepherdr service's own push alerts, as its web pages do, with the same push address. herdr-push marks a task's agent with its task (`shepherdr_task` in the agent), so the phone then shows the task's alert alone, not the agent's too.
+
+The phone shows each one as a notification with buttons: **Approve** and **Deny** for an agent's yes-or-no question, and **Reply** to the agent. A tap opens the agent's chat. The buttons work over the app's own SSH connection, never through the push.
 
 It is one Python 3 file (`herdr-push`), standard library only, and needs nothing installed besides `python3` (3.6 or newer).
 
@@ -43,7 +42,7 @@ The app also **looks at its machines itself** while it is closed (every 15 minut
 | --- | --- |
 | `~/.local/share/herdr-push/herdr-push` | the watcher (the app replaces it when the app carries a newer version) |
 | `~/.config/herdr-push/subscribers.json` | the subscriptions, one per phone and machine in the app (two machines in the app on this host, say two herdr sessions, are two): each one's push address, key and herdr session (mode 600) |
-| `~/.local/state/herdr-push/` | `state.json` (what it saw last, so a restart doesn't repeat itself), `journal.json` (the last week of what tasks and agents did, for the brief), `health.json` (the last hour of RAM, swap and CPU readings), `herdr-push.log`, `run.lock` |
+| `~/.local/state/herdr-push/` | `state.json` (what it saw last, so a restart doesn't repeat itself), `journal.json` (the last week of what agents did, for the brief), `health.json` (the last hour of RAM, swap and CPU readings), `herdr-push.log`, `run.lock` |
 | `~/.config/systemd/user/herdr-push.service` | Linux with systemd: a user service, `Restart=always` |
 | `~/Library/LaunchAgents/dev.herdr.push.plist` | macOS: a launchd agent |
 | an `@reboot` line in your crontab | elsewhere, when there is `crontab` |
@@ -68,7 +67,7 @@ journalctl --user -u herdr-push -f   # its log, under systemd (else ~/.local/sta
 
 To install it without the app's help, copy `herdr-push` from this folder to `~/.local/share/herdr-push/` and run `python3 herdr-push install`. A phone still has to subscribe from the app (Settings → Notifications), because only the app has the phone's push address and makes the key.
 
-What it watches comes from each phone's subscription: the herdr session (`default` unless the machine is set to another in the app), and the `herdr` and `herdr-projects` the app found there. It reads them with `herdr api snapshot`, `herdr pane read <pane> --source visible` (for a blocked agent's question), `herdr-projects list --json` and, for a task in review on a phone with Live Updates, `herdr-projects show <id>` once an hour (its `review.rounds`), every 4 seconds and every 12 seconds for the board. `HERDR_PUSH_INTERVAL` (seconds) and `HERDR_PUSH_BOARD_EVERY` (looks between board reads) change that; under systemd, set them with `systemctl --user edit herdr-push` (`[Service]` / `Environment=HERDR_PUSH_INTERVAL=10`).
+What it watches comes from each phone's subscription: the herdr session (`default` unless the machine is set to another in the app), and the `herdr` the app found there. It reads it with `herdr api snapshot` and `herdr pane read <pane> --source visible` (for a blocked agent's question), every 4 seconds. `HERDR_PUSH_INTERVAL` (seconds) changes that; under systemd, set them with `systemctl --user edit herdr-push` (`[Service]` / `Environment=HERDR_PUSH_INTERVAL=10`).
 
 Removing a machine from the app doesn't reach the machine. Turn it off in Settings → Notifications first, or run `herdr-push uninstall --purge` there.
 
@@ -128,15 +127,12 @@ Inside, the message is:
 {"v": 1, "host": "devbox", "at": 1760000000, "present": {"typed": 35, "unlocked": true}, "events": [
   {"type": "agent", "agent": {"pane_id": "w1:p2", "agent_status": "blocked", "…": "…as session.snapshot gives it"},
    "where": "api › agents", "screen": "…the bottom of its screen…"},
-  {"type": "task", "key": "AND-7", "task": {"id": "herdr-android/7", "state": "blocked", "stage": "approval", "…": "…as list --json gives it"}},
   {"type": "test"},
   {"type": "health", "low": ["ram", "disk:/"], "memory": {"total": 65536000, "available": 3276800, "swap_total": 0, "swap_free": 0},
    "disks": [{"mount": "/", "device": "/dev/nvme0n1p2", "total": 500000000, "used": 495000000, "avail": 5000000}],
    "top": [["Android emulator · Pixel_8", 5872000], ["Gradle daemon", 3250000]]},
-  {"type": "quick", "id": "q1792222540000-0a1f", "name": "Find TODOs", "state": "done", "text": "…the start of its answer…", "error": "", "cwd": "/home/demo/src/app"},
-  {"type": "live", "agents": [{"agent": {"pane_id": "w1:p3", "agent_status": "working", "…": "…"}, "where": "api › agents", "workspace": "api", "since": 1759999000}],
-   "tasks": [{"key": "AND-7", "task": {"id": "herdr-android/7", "stage": "reviewing", "reviewRound": 2, "…": "…"}, "reviews": 4, "since": 1759999900}]}
+  {"type": "live", "agents": [{"agent": {"pane_id": "w1:p3", "agent_status": "working", "…": "…"}, "where": "api › agents", "workspace": "api", "since": 1759999000}]}
 ]}
 ```
 
-A message stays under 4 KB sealed (what ntfy and most push servers take): several events go in separate pushes, a long screen is shortened, and a live event leaves out what doesn't fit (at most 10 agents and 10 tasks). `since` is when the agent started working, or the task's current part of its run began (working, checking, review, merging), on the machine's clock; the phone counts from the push's `at`. A live event without `tasks` (no board there) leaves the tasks as they were.
+A message stays under 4 KB sealed (what ntfy and most push servers take): several events go in separate pushes, a long screen is shortened, and a live event leaves out what doesn't fit (at most 10 agents). `since` is when the agent started working, on the machine's clock; the phone counts from the push's `at`.

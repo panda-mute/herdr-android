@@ -1,7 +1,8 @@
 package com.makefunstuff.herdr.ui.manage
 
+import com.makefunstuff.herdr.ui.design.LocalScreenChange
 import com.makefunstuff.herdr.core.hc.HcMapping
-import com.makefunstuff.herdr.core.board.BoardTask
+import com.makefunstuff.herdr.core.board.WorkTask
 import androidx.compose.material3.RadioButtonDefaults
 import com.makefunstuff.herdr.ui.design.SheetTitle
 import com.makefunstuff.herdr.ui.design.MenuSection
@@ -69,8 +70,6 @@ import com.makefunstuff.herdr.core.api.TabInfo
 import com.makefunstuff.herdr.core.api.WorkspaceInfo
 import com.makefunstuff.herdr.core.api.moveIndex
 import com.makefunstuff.herdr.core.host.HostSession
-import com.makefunstuff.herdr.core.push.Watch
-import com.makefunstuff.herdr.core.push.Watches
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.makefunstuff.herdr.ui.common.copyToClipboard
 import com.makefunstuff.herdr.ui.common.toast
@@ -204,12 +203,8 @@ fun WorkspaceActionsSheet(
     meta: Map<String, String>,
     /** Opens the code of the workspace's folder. */
     onCode: (() -> Unit)? = null,
-    /** Opens the quick commands of the workspace's folder. */
-    onQuick: (() -> Unit)? = null,
     /** Opens its only tab's actions: the machine screen shows no row for a workspace's one tab. */
     onTab: ((TabInfo) -> Unit)? = null,
-    /** Opens its dev servers in the in-app browser. */
-    onDevServers: (() -> Unit)? = null,
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -230,8 +225,6 @@ fun WorkspaceActionsSheet(
             }
         }
         if (onCode != null) ManageRow("Browse the code", icon = HerdrIcons.Code, chevron = true) { onDismiss(); onCode() }
-        if (onQuick != null) ManageRow("Quick commands", detail = "Its project's scripts and AI commands", icon = HerdrIcons.Zap, chevron = true) { onDismiss(); onQuick() }
-        if (onDevServers != null) ManageRow("Dev servers", detail = "What it serves on a port, open here through SSH", icon = HerdrIcons.Globe, chevron = true) { onDismiss(); onDevServers() }
         ManageRow("Rename", icon = HerdrIcons.Pencil, chevron = true) { rename = true }
         val onlyTab = snap.tabs.filter { it.workspaceId == ws.workspaceId }.singleOrNull()
         if (onTab != null && onlyTab != null) {
@@ -548,14 +541,16 @@ fun AgentActionsSheet(
     onOpenApp: (() -> Unit)? = null,
     /** Opens the code of the agent's folder: its worktree, its changes. */
     onCode: (() -> Unit)? = null,
-    /** Opens the quick commands of the agent's folder. */
-    onQuick: (() -> Unit)? = null,
     /** Opens the timeline of what the agent did (its task's, when it works on one). */
     onActivity: (() -> Unit)? = null,
-    /** The Agents list's triage of it: mark seen, pin, snooze, mute. */
+    /** The Agents list's triage of it: mark seen, pin, its space's Notify. */
     triage: (@Composable () -> Unit)? = null,
     /** The board task it works on, which names it in the title. */
-    task: BoardTask? = null,
+    task: WorkTask? = null,
+    /** Its tab's menu (Shepherdr 3's: Rename, Switch agent, Restart, Model, Close), first. */
+    tabRows: (@Composable () -> Unit)? = null,
+    /** It is a chat's ⋯ menu: "Change this screen" is in it. */
+    screenMenu: Boolean = false,
     /** Quits the agent and opens the same conversation again ([com.makefunstuff.herdr.core.chat.AgentRestart]), asked first. */
     onRestart: (() -> Unit)? = null,
     /** The same in one tap, then tells it to continue. */
@@ -567,10 +562,13 @@ fun AgentActionsSheet(
     var rename by remember { mutableStateOf(false) }
     var details by remember { mutableStateOf(false) }
     var explain by remember { mutableStateOf(false) }
-    val label = agent?.let { it.name?.takeIf { n -> n.isNotBlank() } ?: it.displayName } ?: paneLabel
 
     val (title, subtitle) = agentTitle(agent, paneLabel, task)
     ManageSheet(title, subtitle, onDismiss) {
+        if (tabRows != null) {
+            tabRows()
+            ManageHeading("Agent")
+        }
         // herdr-core's agents have none of classic herdr's names, focus or explanations: their details only.
         if (target != null && HcMapping.address(target) == null) {
             ManageRow("Rename agent", icon = HerdrIcons.Pencil, chevron = true) { rename = true }
@@ -580,16 +578,16 @@ fun AgentActionsSheet(
             ManageRow("Why this state?", icon = HerdrIcons.Info, chevron = true) { explain = true }
         }
         if (target != null) ManageRow("Details", icon = HerdrIcons.FileText, chevron = true) { details = true }
-        if (agent != null) WatchRows(session.machine.id, agent, label)
         triage?.invoke()
         if (onTerminal != null) ManageRow("Open terminal", icon = HerdrIcons.SquareTerminal, chevron = true) { onTerminal() }
         if (onActivity != null) ManageRow("Activity timeline", detail = "What it did, step by step: commands, edits, tests, reviews", icon = HerdrIcons.Activity, chevron = true) { onActivity() }
         if (onCode != null) ManageRow("Browse the code", detail = "Its files and changes, to read and comment on", icon = HerdrIcons.Code, chevron = true) { onCode() }
-        if (onQuick != null) ManageRow("Quick commands", detail = "Run a script or an AI command where it works", icon = HerdrIcons.Zap, chevron = true) { onQuick() }
         if (onRestart != null) ManageRow("Restart", detail = "Quit it and open the same conversation again", icon = HerdrIcons.RotateCcw, chevron = true) { onRestart() }
         if (onRestartContinue != null) ManageRow("Restart and continue", detail = "The same, then tell it “${com.makefunstuff.herdr.core.chat.AgentRestart.CONTINUE}”", icon = HerdrIcons.RefreshCw) { onRestartContinue() }
         if (onFloat != null) ManageRow("Float over other apps", icon = HerdrIcons.PictureInPicture2) { onFloat() }
         if (onOpenApp != null) ManageRow("Open in the app", icon = HerdrIcons.Maximize2) { onOpenApp() }
+        // The chat's own ⋯ (not a row's long press): the screen behind it can be changed.
+        if (screenMenu) LocalScreenChange.current?.let { change -> ManageRow("Change this screen", icon = HerdrIcons.WandSparkles) { onDismiss(); change.open() } }
         if (onToggleKeys != null) {
             ManageRow(if (showKeys) "Hide keys" else "Show keys", icon = HerdrIcons.Keyboard) { onToggleKeys() }
         }
@@ -624,15 +622,13 @@ fun AgentActionsSheet(
 /**
  * An agent's sheet named as the Agents list names it: the title is its task's (or what herdr says
  * it does, or its name), the line under it the task's key, the agent (its own name, then its kind
- * when it has one of its own, not the board's) and its state: "Speed up /jobs" over "AND-12 · claude · blocked".
+ * when it has one of its own) and its state: "Speed up /jobs" over "AND-12 · claude · blocked".
  */
-fun agentTitle(agent: AgentInfo?, paneLabel: String, task: BoardTask?): Pair<String, String> {
+fun agentTitle(agent: AgentInfo?, paneLabel: String, task: WorkTask?): Pair<String, String> {
     if (agent == null) return paneLabel to "No agent in this pane"
     val kind = agent.agent?.takeIf { it.isNotBlank() }
-    // Its own name, unless that is its kind or the one the board gave it after the task (sw-api-server-3).
-    val named = agent.name?.takeIf { n ->
-        n.isNotBlank() && n != kind && (task == null || !com.makefunstuff.herdr.core.push.LiveItems.belongs(n, "", task.id, task.name))
-    }
+    // Its own name, unless that is its kind or its task's id.
+    val named = agent.name?.takeIf { n -> n.isNotBlank() && n != kind && n != task?.id }
     val who = when {
         named != null && kind != null -> "$named ($kind)"
         else -> named ?: agent.displayName
@@ -640,33 +636,6 @@ fun agentTitle(agent: AgentInfo?, paneLabel: String, task: BoardTask?): Pair<Str
     val title = task?.title?.takeIf { it.isNotBlank() } ?: agent.subtitle?.takeIf { it != who && it != named } ?: who
     val subtitle = listOfNotNull(task?.name?.takeIf { it.isNotBlank() }, who.takeIf { it != title }, agent.statusWord().takeIf { it.isNotBlank() })
     return title to subtitle.distinct().joinToString(" · ")
-}
-
-/**
- * "Notify me when it finishes": a one-shot watch on a working (or asking) agent, set and taken back
- * here; it fires once, as a notification, and removes itself.
- */
-@Composable
-private fun WatchRows(machineId: String, agent: AgentInfo, label: String) {
-    val container = com.makefunstuff.herdr.ui.common.LocalContainer.current
-    val context = LocalContext.current
-    val st by container.push.state.collectAsStateWithLifecycle()
-    val set = st.watches.firstOrNull { it.machineId == machineId && it.paneId == agent.paneId && it.what == Watch.What.AgentDone }
-    val offer = set ?: Watches.offers(machineId, agent, System.currentTimeMillis()).firstOrNull() ?: return
-    ManageRow(
-        "Notify me when it finishes",
-        icon = HerdrIcons.BellRing,
-        detail = if (set != null) "Once, then it removes itself. Tap to take it back." else null,
-        selected = set != null,
-    ) {
-        if (set != null) {
-            container.watchWork.remove(set.id)
-            context.toast("Watch removed")
-        } else {
-            container.watchWork.add(offer)
-            context.toast("You'll hear once $label finishes")
-        }
-    }
 }
 
 @Composable
@@ -731,44 +700,6 @@ fun ExplainSheet(session: HostSession, target: String, onDismiss: () -> Unit) {
 @Composable
 private fun DetailSheet(title: String, onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
     ManageSheet(title, null, onDismiss) { content() }
-}
-
-// Notifications
-
-@Composable
-fun NotifySheet(session: HostSession, machineLabel: String, onDismiss: () -> Unit) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var title by remember { mutableStateOf("") }
-    var body by remember { mutableStateOf("") }
-    var sound by remember { mutableStateOf("none") }
-
-    ManageSheet("Notify herdr on $machineLabel", "Pops up on the desktop running herdr", onDismiss) {
-        Column(Modifier.padding(horizontal = Space.l), verticalArrangement = Arrangement.spacedBy(Space.m)) {
-            HerdrTextField(value = title, onValueChange = { title = it }, label = "Title")
-            HerdrTextField(value = body, onValueChange = { body = it }, label = "Body", singleLine = false)
-        }
-        ManageHeading("Sound")
-        listOf("none" to "None", "done" to "Done", "request" to "Request").forEach { (value, name) ->
-            ManageRow(
-                name,
-                trailing = { RadioButton(selected = sound == value, onClick = null, colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colorScheme.primary)) },
-                modifier = Modifier.semantics { selected = sound == value; role = Role.RadioButton },
-            ) { sound = value }
-        }
-        Spacer(Modifier.height(Space.xl))
-        PrimaryButton(
-            "Send notification",
-            onClick = {
-                manage(context, scope, session, onDismiss) {
-                    val result: NotificationResult = it.showNotification(title, body, sound)
-                    result.message
-                }
-            },
-            modifier = Modifier.fillMaxWidth().padding(horizontal = Space.l),
-            enabled = title.isNotBlank(),
-        )
-    }
 }
 
 private fun arrowFor(direction: String): ImageVector = when (direction) {

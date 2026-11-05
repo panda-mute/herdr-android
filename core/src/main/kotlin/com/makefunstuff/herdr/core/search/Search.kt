@@ -2,12 +2,12 @@ package com.makefunstuff.herdr.core.search
 
 import com.makefunstuff.herdr.core.api.AgentStatus
 import com.makefunstuff.herdr.core.api.WorkspaceInfo
-import com.makefunstuff.herdr.core.board.BoardStatus
-import com.makefunstuff.herdr.core.board.BoardTask
+import com.makefunstuff.herdr.core.board.WorkStatus
+import com.makefunstuff.herdr.core.board.WorkTask
+import com.makefunstuff.herdr.core.home.Home
 import com.makefunstuff.herdr.core.home.HomeAgent
 import com.makefunstuff.herdr.core.home.HomeBoard
 import com.makefunstuff.herdr.core.host.HostState
-import com.makefunstuff.herdr.core.push.LiveItems
 
 /** The search box's chips: everything, or the agents and tasks in one state. */
 enum class SearchFilter(val label: String) {
@@ -21,23 +21,23 @@ enum class SearchFilter(val label: String) {
             else -> null
         }
 
-        fun of(task: BoardTask): SearchFilter? = when {
-            task.needsYou -> NeedsYou
-            task.status == BoardStatus.Working || task.status == BoardStatus.Reviewing -> Working
-            task.status == BoardStatus.Done -> Done
+        fun of(task: WorkTask): SearchFilter? = when {
+            task.status.needsYou -> NeedsYou
+            task.status == WorkStatus.Work || task.status == WorkStatus.Merging -> Working
+            task.status == WorkStatus.Done -> Done
             else -> null
         }
     }
 }
 
-/** An agent found, with the board task it works on, when it works on one. */
-data class AgentHit(val agent: HomeAgent, val task: BoardTask?) {
+/** An agent found, with the task it works on, when it works on one. */
+data class AgentHit(val agent: HomeAgent, val task: WorkTask?) {
     val state: SearchFilter? get() = SearchFilter.of(agent.agent.agentStatus)
     /** What the list calls it: its task's title, else what herdr says it does, else its name. */
     val title: String get() = task?.title ?: agent.agent.subtitle ?: agent.agent.displayName
 }
 
-data class TaskHit(val machineId: String, val machineLabel: String, val task: BoardTask) {
+data class TaskHit(val machineId: String, val machineLabel: String, val task: WorkTask) {
     val state: SearchFilter? get() = SearchFilter.of(task)
 }
 
@@ -90,21 +90,16 @@ object Search {
         val words = words(query)
         val inScope = hosts.filter { machineId == null || it.machine.id == machineId }
         val ownBoards = boards.filter { machineId == null || it.machineId == machineId }
-        val tasksOn = ownBoards.associate { b -> b.machineId to b.tasks.filter { !it.archived } }
-        val agents = HomeAgent.of(inScope).map { a ->
-            val task = tasksOn[a.machineId].orEmpty().firstOrNull { t ->
-                t.machine.isEmpty() && LiveItems.belongs(a.agent.name.orEmpty(), a.workspace, t.id, t.name)
-            }
-            AgentHit(a, task)
-        }
+        val tasksOn = ownBoards.associate { b -> b.machineId to b.tasks }
+        val agents = HomeAgent.of(inScope).map { a -> AgentHit(a, Home.taskOf(a, tasksOn[a.machineId].orEmpty())) }
         val tasks = ownBoards.flatMap { b -> tasksOn[b.machineId].orEmpty().map { TaskHit(b.machineId, b.machineLabel, it) } }
 
         val agentScores = agents.score(words) { h ->
             listOf(h.title, h.agent.agent.name.orEmpty(), h.agent.agent.displayName, h.task?.name.orEmpty(), h.agent.workspace, h.agent.machineLabel)
         }
         // With nothing typed, only the tasks that wait for you: the rest of the board is a tap away.
-        val taskScores = tasks.score(words) { h -> listOf(h.task.title, h.task.name, h.task.repo, h.machineLabel) }
-            .filter { words.isNotEmpty() || it.first.task.needsYou }
+        val taskScores = tasks.score(words) { h -> listOf(h.task.title, h.task.name, h.task.listName, h.machineLabel) }
+            .filter { words.isNotEmpty() || it.first.task.status.needsYou }
         val machineScores = if (words.isEmpty()) emptyList() else inScope.map(::MachineHit).score(words) { h -> listOf(h.host.machine.label, h.host.machine.target) }
         val workspaces = if (words.isEmpty()) emptyList() else inScope.flatMap { s ->
             val snap = s.snapshot ?: return@flatMap emptyList()

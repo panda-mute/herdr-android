@@ -5,6 +5,7 @@ import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProvider
 import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
 import android.os.Bundle
 import android.text.format.DateFormat
 import android.text.format.DateUtils
@@ -14,6 +15,9 @@ import com.makefunstuff.herdr.HerdrApp
 import com.makefunstuff.herdr.MainActivity
 import com.makefunstuff.herdr.R
 import com.makefunstuff.herdr.core.push.Counts
+import com.makefunstuff.herdr.core.push.Waiting
+import com.makefunstuff.herdr.core.push.WaitingRows
+import com.makefunstuff.herdr.push.AndroidAlerts
 import com.makefunstuff.herdr.core.usage.UsageRules
 import com.makefunstuff.herdr.ui.share.Ask
 import java.util.Date
@@ -34,7 +38,17 @@ class StatusWidget : AppWidgetProvider() {
     override fun onAppWidgetOptionsChanged(context: Context, manager: AppWidgetManager, id: Int, options: Bundle) = Widgets.update(context)
 }
 
-/** Draws the widgets from what the app knows: on a change of the counts or of the Coordinator used last. */
+/**
+ * The Needs you widget: what waits on you, newest first, each with its notification's buttons (Accept, Approve, Deny),
+ * as many rows as its height has room for. A tap on a row opens it, as its notification does.
+ */
+class NeedsWidget : AppWidgetProvider() {
+    override fun onUpdate(context: Context, manager: AppWidgetManager, ids: IntArray) = Widgets.update(context)
+
+    override fun onAppWidgetOptionsChanged(context: Context, manager: AppWidgetManager, id: Int, options: Bundle) = Widgets.update(context)
+}
+
+/** Draws the widgets from what the app knows: on a change of the counts, of the Coordinator used last or of what waits on you. */
 object Widgets {
     fun update(context: Context) {
         val manager = AppWidgetManager.getInstance(context)
@@ -50,11 +64,78 @@ object Widgets {
             val usage = UsageRules.tightest(container.usage.reports().filterKeys { container.machines.get(it) != null }, container.usage.nowSeconds())
             manager.updateAppWidget(statuses, status(context, container.tally.counts.value, usage, container.usage.nowSeconds()))
         }
+        val needs = manager.getAppWidgetIds(ComponentName(context, NeedsWidget::class.java))
+        if (needs.isNotEmpty()) {
+            // Of the machines still in the app: a removed one's buttons have nowhere to go.
+            val waiting = container.inbox.waiting.value.filter { container.machines.get(it.alert.machineId) != null }
+            // Each its own: one widget may be taller than another.
+            for (id in needs) manager.updateAppWidget(id, needs(context, waiting, rows(context, manager.getAppWidgetOptions(id))))
+        }
     }
+
+    /**
+     * How many rows a Needs you widget of the size [options] gives has room for: under its heading, 49dp each (a
+     * row and its hairline). Its height upright is the larger the launcher names, on its side the smaller.
+     */
+    private fun rows(context: Context, options: Bundle): Int {
+        val upright = context.resources.configuration.orientation != android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        val key = if (upright) AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT else AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT
+        val height = options.getInt(key).takeIf { it > 0 } ?: return 2
+        return ((height - 16 - 28) / 49).coerceIn(1, 6)
+    }
+
+    /** The Needs you widget with [waiting], [fit] rows of it at most. */
+    fun needs(context: Context, waiting: List<Waiting>, fit: Int) = RemoteViews(context.packageName, R.layout.widget_needs).apply {
+        val shown = waiting.take(fit)
+        setTextViewText(R.id.widget_count, if (waiting.isEmpty()) "" else waiting.size.toString())
+        val more = waiting.size - shown.size
+        setTextViewText(R.id.widget_more, if (more > 0) "$more more" else "")
+        setViewVisibility(R.id.widget_empty, if (waiting.isEmpty()) View.VISIBLE else View.GONE)
+        removeAllViews(R.id.widget_rows)
+        shown.forEach { addView(R.id.widget_rows, row(context, it)) }
+        setContentDescription(R.id.widget_head, if (waiting.isEmpty()) "Nothing waits on you. Opens Needs you." else "${waiting.size} need you. Opens Needs you.")
+        // The heading (and the empty widget) opens Needs you, where the rest are.
+        setOnClickPendingIntent(R.id.widget_head, needsYou(context))
+        setOnClickPendingIntent(R.id.widget_root, needsYou(context))
+    }
+
+    private fun row(context: Context, w: Waiting) = RemoteViews(context.packageName, R.layout.widget_needs_row).apply {
+        val a = w.alert
+        setTextViewText(R.id.row_title, a.title)
+        setTextViewText(R.id.row_text, w.busy.ifEmpty { a.text })
+        // How the last button went, in red, in place of why it waits.
+        setTextViewText(R.id.row_note, w.note)
+        setViewVisibility(R.id.row_note, if (w.note.isNotEmpty() && w.busy.isEmpty()) View.VISIBLE else View.GONE)
+        setViewVisibility(R.id.row_text, if (w.note.isNotEmpty() && w.busy.isEmpty()) View.GONE else View.VISIBLE)
+        setOnClickPendingIntent(R.id.row_words, AndroidAlerts.openIntent(context, a))
+        setContentDescription(R.id.row_words, "${a.title}: ${w.note.ifEmpty { w.busy.ifEmpty { a.text } }}. Opens it.")
+        // While one of its buttons is carried out, none: it is pressed once.
+        val buttons = if (w.busy.isEmpty()) WaitingRows.buttons(a) else emptyList()
+        val opens = if (w.busy.isEmpty()) WaitingRows.opens(a) else null
+        listOf(R.id.row_first, R.id.row_second).forEachIndexed { slot, view ->
+            val index = buttons.getOrNull(slot)
+            val label = index?.let { a.actions[it].label } ?: opens.takeIf { slot == 0 }
+            setViewVisibility(view, if (label != null) View.VISIBLE else View.GONE)
+            if (label == null) return@forEachIndexed
+            setTextViewText(view, label)
+            setContentDescription(view, "$label: ${a.title}")
+            // Answered in words: the widget has no box for them, so it opens where they are typed.
+            setOnClickPendingIntent(view, if (index != null) AndroidAlerts.actionIntent(context, a, index) else AndroidAlerts.openIntent(context, a))
+        }
+    }
+
+    private fun needsYou(context: Context): PendingIntent = PendingIntent.getActivity(
+        context, "needs".hashCode(),
+        Intent(context, MainActivity::class.java)
+            .setAction("com.makefunstuff.herdr.NEEDS")
+            .putExtra(MainActivity.OPEN_NEEDS, true)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+    )
 
     private fun ask(context: Context, machine: String?) = RemoteViews(context.packageName, R.layout.widget_ask).apply {
         setTextViewText(R.id.widget_machine, machine ?: "Herdr")
-        setContentDescription(R.id.widget_root, listOfNotNull("Ask the Coordinator", machine?.let { "on $it" }).joinToString(" "))
+        setContentDescription(R.id.widget_root, listOfNotNull("Ask the Assistant", machine?.let { "on $it" }).joinToString(" "))
         setOnClickPendingIntent(R.id.widget_root, open(context, Ask.COORDINATOR))
     }
 

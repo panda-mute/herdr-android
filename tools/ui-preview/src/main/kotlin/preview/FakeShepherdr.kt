@@ -21,6 +21,10 @@ class FakeShepherdr(
     /** Each chat as its live link sends it (`Chat`), by its key. */
     var chats: Map<String, JsonObject> = DemoV2.chats(),
 ) {
+    init {
+        snapshot = DemoV2.withAutopilot(snapshot)
+    }
+
     /** When set, reading any chat fails with these words (Shepherdr down, or the chat's file unreadable). */
     var chatRefused: String? = null
 
@@ -76,6 +80,7 @@ class FakeShepherdr(
             path == "/api/health" -> 200 to """{"ok":true,"version":"$version","core":true,"jobs":true,"serving":true}"""
             path == "/api/action" && method == "POST" -> act(Json.parseToJsonElement(stdin).jsonObject)
             path.startsWith("/api/artifacts/") && "/recipe" in path -> recipe(path.removePrefix("/api/artifacts/").substringBefore('/'))
+            path.startsWith("/api/worktree?") -> worktree(path.substringAfter('?'))
             else -> 404 to """{"error":"not found"}"""
         }
         return CommandResult(0, "$body\n@@shepherdr-status@@$status", "")
@@ -90,10 +95,42 @@ class FakeShepherdr(
         return 200 to (DemoArtifacts.RECIPES[id] ?: return 404 to """{"error":"No recipe here."}""")
     }
 
+    /**
+     * `/api/worktree?task=…&what=…`, the task view's Files, Changes and Pull request: a task with a branch works in
+     * the fake machine's task worktree ([FakeCode.TASK], on its branch); one without has no folder left. Its pull
+     * request has passed its checks but one, skipped.
+     */
+    private fun worktree(query: String): Pair<Int, String> {
+        val q = query.split('&').associate { it.substringBefore('=') to java.net.URLDecoder.decode(it.substringAfter('='), "UTF-8") }
+        val t = task(q["task"].orEmpty()) ?: return 404 to """{"error":"No such task."}"""
+        return when (q["what"]) {
+            "dir" -> if (t["branch"] == null) 200 to """{"error":"This task's folder can't be read. It may have been removed after the task finished."}"""
+            else 200 to """{"root":"${FakeCode.TASK}","entries":[]}"""
+            "pr" -> {
+                val pr = t["pr"]?.jsonObject ?: return 200 to """{"why":"This task has no pull request."}"""
+                200 to """
+                    {"pr":{"number":${pr["number"]},"title":${t["name"]},"state":"open","url":${pr["url"]},"head":"work/9-last-answered","base":"main",
+                      "add":86,"del":21,"files":4,"checks":[
+                        {"name":"build","state":"pass","url":"${pr["url"]?.jsonPrimitive?.content}/checks","workflow":"Check"},
+                        {"name":"unit tests","state":"pass","url":"${pr["url"]?.jsonPrimitive?.content}/checks","workflow":"Check"},
+                        {"name":"screens","state":"pass","url":"${pr["url"]?.jsonPrimitive?.content}/checks","workflow":"Android"},
+                        {"name":"release notes","state":"skip","workflow":"Release"}]}}
+                """.trimIndent()
+            }
+            else -> 400 to """{"error":"Ask for dir, marks, files, file, diff, patch or pr."}"""
+        }
+    }
+
     private fun act(a: JsonObject): Pair<Int, String> {
-        actions += a
+        // A secret's value is never kept, here neither: only that one was sent.
+        actions += if (a["type"]?.jsonPrimitive?.content == "secret") JsonObject(a - "value") else a
         val chat = a["chat"]?.jsonPrimitive?.content.orEmpty()
         when (a["type"]?.jsonPrimitive?.content) {
+            // Kept in the vault: the agent no longer waits for it.
+            "secret" -> {
+                val id = a["card"]?.jsonObject?.get("id")?.jsonPrimitive?.content
+                snapshot = JsonObject(snapshot + ("needs" to JsonArray((snapshot["needs"] as? JsonArray).orEmpty().filter { it.jsonObject["id"]?.jsonPrimitive?.content != id })))
+            }
             // In at once, the agent at work on it.
             "send" -> change(chat) { c ->
                 val words = a.getValue("text").jsonPrimitive.content
@@ -114,11 +151,46 @@ class FakeShepherdr(
                 chats.keys.forEach { key -> change(key) { c -> JsonObject(c + ("messages" to JsonArray(messages(c).map { answered(it.jsonObject, q, choice) }))) } }
                 snapshot = JsonObject(snapshot + ("needs" to JsonArray((snapshot["needs"] as? JsonArray).orEmpty().filter { it.jsonObject["id"]?.jsonPrimitive?.content != q })))
             }
+            // Yours added, or taken back when it is yours already; the agent's stays.
+            "react" -> change(chat) { c ->
+                val id = a.getValue("message").jsonPrimitive.content
+                val emoji = a.getValue("emoji").jsonPrimitive.content
+                JsonObject(c + ("messages" to JsonArray(messages(c).map { m -> if (m.jsonObject["id"]?.jsonPrimitive?.content == id) reacted(m.jsonObject, emoji) else m })))
+            }
             // What its Accept card shows.
             "evidence" -> {
                 val id = a.getValue("task").jsonPrimitive.content
                 return DemoV2.evidence(task(id) ?: return 400 to "That task isn't here any more.")
             }
+            // A space's Autopilot switch: herdr-task's on or off, the next wake an hour on.
+            "mode" -> {
+                val place = a.getValue("place").jsonPrimitive.content
+                val on = a.getValue("mode").jsonPrimitive.content == "autopilot"
+                setPlace(place) { p ->
+                    val pilot = p["pilot"]?.jsonObject ?: return 400 to "Autopilot is set on that space's own machine."
+                    JsonObject(p + mapOf("mode" to JsonPrimitive(if (on) "autopilot" else "regular"),
+                        "pilot" to JsonObject(pilot + mapOf("on" to JsonPrimitive(on), "next_run" to if (on) JsonPrimitive(Demo.NOW + 60 * 60_000) else kotlinx.serialization.json.JsonNull))))
+                }
+            }
+            // Settings › Autopilot: its row takes the value; a schedule herdr-task can't read is refused in its words.
+            "setting" -> {
+                val key = a.getValue("key").jsonPrimitive.content
+                val value = a["value"]?.jsonPrimitive?.content.orEmpty()
+                if (key == "autopilot.every" && value.isNotEmpty() && !Regex("""^(every \d+ (minutes|hours?)|weekdays \d{1,2}:\d{2}|hourly|daily \d{1,2}:\d{2})( on weekdays)?""").containsMatchIn(value)) {
+                    return 200 to """{"ok":false,"error":${JsonPrimitive("Unknown time '$value'. " + DemoV2.HOW)}}"""
+                }
+                snapshot = JsonObject(snapshot + ("settings" to JsonArray((snapshot["settings"] as? JsonArray).orEmpty().map { sec ->
+                    val o = sec.jsonObject
+                    JsonObject(o + ("rows" to JsonArray(o["rows"]?.jsonArray.orEmpty().map { r ->
+                        if (r.jsonObject["key"]?.jsonPrimitive?.content == key) JsonObject(r.jsonObject + ("value" to JsonPrimitive(value))) else r
+                    })))
+                })))
+                return 200 to """{"ok":true}"""
+            }
+            // The tab menu: Switch agent's list, the model menu, the Assistant's workers before it closes.
+            "tab-agents" -> return 200 to DemoV2.TAB_AGENTS
+            "model-menu" -> return 200 to """{"ok":true,"menu":${DemoV2.MODEL_MENU}}"""
+            "assistant-close" -> if (a["mode"]?.jsonPrimitive?.content == "count") return 200 to """{"ok":true,"workers":4}"""
             // Accepted: it merges.
             "accept" -> {
                 val id = a.getValue("task").jsonPrimitive.content
@@ -130,7 +202,21 @@ class FakeShepherdr(
         return 200 to """{"ok":true}"""
     }
 
+    /** Gives space [place] its Assistant's tab ([assistant], `assistantTab`) and its other [tabs] (`tabs`, a JSON list). */
+    fun tabs(place: String, assistant: String, tabs: String) {
+        val places = (snapshot["places"] as? JsonArray).orEmpty().map { p ->
+            val o = p.jsonObject
+            if (o["id"]?.jsonPrimitive?.content != place) o
+            else JsonObject(o + mapOf("assistantTab" to Json.parseToJsonElement(assistant), "tabs" to Json.parseToJsonElement(tabs)))
+        }
+        snapshot = JsonObject(snapshot + ("places" to JsonArray(places)))
+    }
+
     private fun tasks() = (snapshot["tasks"] as? JsonArray).orEmpty().map { it.jsonObject }
+
+    private inline fun setPlace(id: String, f: (JsonObject) -> JsonObject) {
+        snapshot = JsonObject(snapshot + ("places" to JsonArray((snapshot["places"] as? JsonArray).orEmpty().map { val p = it.jsonObject; if (p["id"]?.jsonPrimitive?.content == id) f(p) else p })))
+    }
 
     private fun task(id: String) = tasks().firstOrNull { it["id"]?.jsonPrimitive?.content == id }
 
@@ -149,6 +235,20 @@ class FakeShepherdr(
         return obj("id" to id, "who" to "agent", "text" to (m?.get("text") ?: JsonPrimitive("")))
     }
 
+    /** [m] with yours [emoji] toggled: "me" added or gone, "both" when the agent gave it too. */
+    private fun reacted(m: JsonObject, emoji: String): JsonObject {
+        val list = (m["reactions"] as? JsonArray).orEmpty().map { it.jsonObject }
+        val was = list.firstOrNull { it["emoji"]?.jsonPrimitive?.content == emoji }
+        val by = was?.get("by")?.jsonPrimitive?.content
+        val now = when (by) {
+            null -> list + obj("emoji" to emoji, "by" to "me")
+            "me" -> list - was
+            "both" -> list.map { if (it === was) obj("emoji" to emoji, "by" to "them") else it }
+            else -> list.map { if (it === was) obj("emoji" to emoji, "by" to "both") else it }
+        }
+        return JsonObject(m + ("reactions" to JsonArray(now)))
+    }
+
     private fun answered(m: JsonObject, q: String, choice: JsonElement): JsonObject {
         val question = m["question"]?.jsonObject
         if (question != null && question["id"]?.jsonPrimitive?.content == q) return JsonObject(m + ("question" to JsonObject(question + ("sent" to choice))))
@@ -163,8 +263,72 @@ object DemoV2 {
     const val APP = "sp-herdr-android"
     const val API = "sp-api-server"
 
+    /** herdr-android's Assistant's tab, as `Place.assistantTab` names it once it has a tab. */
+    const val TAB_ASSISTANT = """{"id":"tb-herdr-android","name":"Assistant","named":true,"state":"blocked","live":true,"cli":"claude","agent":"claude"}"""
+
+    /** What `tab-agents` answers on devbox: Claude Code and Codex installed, Pi not. */
+    const val TAB_AGENTS = """{"ok":true,"agents":[{"kind":"claude","name":"Claude Code","installed":true},{"kind":"codex","name":"Codex","installed":true},{"kind":"pi","name":"Pi","installed":false}]}"""
+
+    /** The model menu of a Claude Code on devbox (`service/agents.ts` `menu()`): Opus 5.5 at High, Auto. */
+    val MODEL_MENU = """
+        {"current":{"agent":"claude","model":"opus","effort":"high","fast":false,"perm":"auto"},
+         "menus":{
+           "claude":{"name":"Claude Code","fastLocked":false,
+             "perms":[{"id":"manual","label":"Ask"},{"id":"auto","label":"Auto"},{"id":"acceptEdits","label":"Accept edits"},{"id":"plan","label":"Plan"},{"id":"bypassPermissions","label":"Full access"}],
+             "models":[{"id":"opus","name":"Opus 5.5","efforts":["low","medium","high","xhigh","max"],"defaultEffort":"high","fast":true},
+                       {"id":"opus[1m]","name":"Opus 5.5 · 1M","efforts":["low","medium","high","xhigh","max"],"defaultEffort":"high","fast":true},
+                       {"id":"claude-fable-5-1","name":"Fable 5.1","efforts":["low","medium","high","xhigh","max"],"defaultEffort":"high","fast":false},
+                       {"id":"sonnet","name":"Sonnet 5.5","efforts":["low","medium","high","xhigh","max"],"defaultEffort":"medium","fast":false}]},
+           "codex":{"name":"Codex","fastLocked":false,
+             "perms":[{"id":"read-only","label":"Read only"},{"id":"auto","label":"Auto"},{"id":"full","label":"Full access"}],
+             "models":[{"id":"gpt-5.5","name":"GPT-5.5","efforts":["low","medium","high","xhigh"],"defaultEffort":"medium","fast":true}]}},
+         "permDefault":{"claude":"manual","codex":"auto"},"remote":null}
+    """.trimIndent()
+
     /** A space's Assistant chat key (`Place.chat`). */
     fun chat(space: String) = "p:$space"
+
+    /** herdr-task's words on how to write a schedule (`automations.py` HOW). */
+    const val HOW = "Write times like \"weekdays 9:00\", \"daily 9:00,17:30\", \"mon,thu 8:15\", \"every 30 minutes\", " +
+        "\"every 2 hours on weekdays from 8:00 to 18:00\", \"hourly\" or \"once 2026-11-05 9:00\" (this machine's time zone)."
+
+    /** The heartbeat devbox's Autopilot works from. */
+    const val HEARTBEAT = "Direction: keep herdr-android's main green and its board short.\n\nPriorities:\n- Failing checks first\n- Then the oldest Ready task\n\n" +
+        "Constraints: never merge; ask before anything that touches the release.\n\nReporting: one line after a wake, an alert only when a check fails.\n"
+
+    /**
+     * [s] with Autopilot as 3.1's service sends it: every space of this machine its switch (off), and Settings ›
+     * Autopilot, Everywhere's page (`service/compat.ts` headerPilot and pilotRows). A snapshot that has them is kept.
+     */
+    fun withAutopilot(s: JsonObject): JsonObject {
+        val places = (s["places"] as? JsonArray).orEmpty().map { p ->
+            val o = p.jsonObject
+            if ("pilot" in o || "/" in o["id"]?.jsonPrimitive?.content.orEmpty()) o
+            else JsonObject(o + mapOf("mode" to JsonPrimitive("regular"), "pilot" to pilot(on = false)))
+        }
+        val settings = (s["settings"] as? JsonArray).orEmpty()
+        val page = Json.parseToJsonElement(
+            """{"name":"Autopilot","level":"all","about":${JsonPrimitive(com.makefunstuff.herdr.core.shepherdr.Autopilot.ABOUT)},"rows":[
+              {"label":"Heartbeat","key":"autopilot.heartbeat","value":${JsonPrimitive(HEARTBEAT)},"doc":true,"hint":"What it works from: direction, priorities, limits and when to stop.","file":"~/.config/herdr-core/autopilot/everywhere.md"},
+              {"label":"Schedule","key":"autopilot.every","value":"every 60 minutes","text":true,"hint":"When it wakes by itself."},
+              {"label":"Events","key":"autopilot.events","value":"ready,failed","hint":"These wake a space's Assistant at once when they happen to its tasks."}]}""",
+        )
+        val withPage: JsonElement = if (settings.any { it.jsonObject["name"]?.jsonPrimitive?.content == "Autopilot" }) JsonArray(settings) else JsonArray(settings + page)
+        return JsonObject(s + mapOf<String, JsonElement>("places" to JsonArray(places), "settings" to withPage))
+    }
+
+    /** A space's `pilot`: [on], its next wake 40 minutes on, woken by Ready and Failed; [blank]: the heartbeat unwritten. */
+    fun pilot(on: Boolean, blank: Boolean = false, pending: Boolean = false) = Json.parseToJsonElement(
+        """{"on":$on,"next_run":${if (on) Demo.NOW + 40 * 60_000 else null},"pending":$pending,"inflight":false,"events":["ready","failed"],"blank":$blank}""",
+    )
+
+    /** [space]'s Autopilot switched on in [f]'s snapshot, its heartbeat still the starter where [blank]. */
+    fun autopilotOn(f: FakeShepherdr, space: String, blank: Boolean = false, pending: Boolean = false) {
+        f.snapshot = JsonObject(f.snapshot + ("places" to JsonArray((f.snapshot["places"] as? JsonArray).orEmpty().map { p ->
+            val o = p.jsonObject
+            if (o["id"]?.jsonPrimitive?.content == space) JsonObject(o + mapOf("mode" to JsonPrimitive("autopilot"), "pilot" to pilot(true, blank, pending))) else o
+        })))
+    }
 
     private fun place(id: String, name: String, status: String, folder: String) = """
         {"id":"$id","name":"$name","machine":"devbox","level":0,"status":"$status","mode":"regular","chat":"p:$id",
@@ -243,6 +407,16 @@ object DemoV2 {
      * website, a task in every status, two tasks whose cards ask (one choice or your own words; several), and
      * website's Assistant waiting on a reply; the Assistants' chats above too.
      */
+    /**
+     * The home space's Assistant asking for a secret by name, as the service lists it under needs (`secretAsk` in its
+     * compat.ts): where it can be kept, narrowest first. No value anywhere: the box starts empty.
+     */
+    const val SECRET_NEED = """
+        {"id":"secret:t3:VERCEL_TOKEN","chat":"p:sp-home","place":"sp-home","at":1793228000000,
+         "secret":{"id":"secret:t3:VERCEL_TOKEN","name":"VERCEL_TOKEN","why":"To deploy the preview of the new pricing page",
+          "levels":[{"id":"p::sp-home","label":"This space"},{"id":"m:","label":"This computer"},{"id":"all","label":"Everywhere"}]}}
+    """
+
     fun board() = FakeShepherdr(
         snapshot = Json.parseToJsonElement(Demo.resource("shepherdr/snapshot.json")).jsonObject,
         chats = chats() + Json.parseToJsonElement(Demo.resource("shepherdr/chats.json")).jsonObject.mapValues { it.value.jsonObject },

@@ -1,5 +1,8 @@
 package com.makefunstuff.herdr.ui.terminal
 
+import com.makefunstuff.herdr.ui.change.ChangeScreenRow
+import androidx.compose.ui.graphics.RectangleShape
+
 import com.makefunstuff.herdr.core.terminal.LiveTerminal
 import com.makefunstuff.herdr.core.hc.HcTerminalStream
 import com.makefunstuff.herdr.core.hc.HcMapping
@@ -26,9 +29,8 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -46,6 +48,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -69,7 +72,6 @@ import com.makefunstuff.herdr.Routes
 import com.makefunstuff.herdr.core.api.CopySearchResult
 import com.makefunstuff.herdr.core.api.HerdrApiException
 import com.makefunstuff.herdr.core.api.PaneScroll
-import com.makefunstuff.herdr.core.api.ResizeDirection
 import com.makefunstuff.herdr.core.api.ScrollbackSearch
 import com.makefunstuff.herdr.core.api.TextPoint
 import com.makefunstuff.herdr.core.api.urlAt
@@ -96,6 +98,7 @@ import com.makefunstuff.herdr.ui.design.HerdrMenu
 import com.makefunstuff.herdr.ui.design.HerdrShapes
 import com.makefunstuff.herdr.ui.design.HerdrSheet
 import com.makefunstuff.herdr.ui.design.HerdrTopBar
+import com.makefunstuff.herdr.ui.design.hairline
 import com.makefunstuff.herdr.ui.design.MenuRow
 import com.makefunstuff.herdr.ui.design.QuietButton
 import com.makefunstuff.herdr.ui.design.SheetTitle
@@ -145,7 +148,7 @@ fun TerminalScreen(nav: NavController, machineId: String, paneId: String) {
     val core = HcMapping.address(paneId)
     // The size the program draws at on the machine: its pane's in herdr's layout, or what herdr-core reports.
     val hostSize = if (core != null) state.herdrCore?.sizes?.get(paneId)
-    else snapshot?.paneRect(paneId)?.let { it.width to it.height }
+    else snapshot?.layouts?.firstNotNullOfOrNull { l -> l.panes.firstOrNull { it.paneId == paneId }?.rect }?.let { it.width to it.height }
 
     // Its text size, its own (Settings → Text size), which pinching the terminal changes too.
     val sizes by container.textSizes.state.collectAsStateWithLifecycle()
@@ -179,7 +182,6 @@ fun TerminalScreen(nav: NavController, machineId: String, paneId: String) {
     var selecting by remember(paneId) { mutableStateOf(false) }
     // Selected text on its way to an agent's chat, while the sheet asks which one.
     var quoting by remember(paneId) { mutableStateOf<String?>(null) }
-    var resizeOpen by remember { mutableStateOf(false) }
     var autoReconnecting by remember { mutableStateOf(false) }
     val searchFocus = remember { FocusRequester() }
 
@@ -191,11 +193,7 @@ fun TerminalScreen(nav: NavController, machineId: String, paneId: String) {
         while (true) {
             val opened = runCatching {
                 val conn = session.awaitConnection(timeoutMs = 30_000)
-                val (cols, rows) = if (keep && hostSize != null && hostSize.first > 0 && hostSize.second > 0) {
-                    hostSize
-                } else {
-                    grid ?: (80 to 24)
-                }
+                val (cols, rows) = grid ?: (80 to 24)
                 val live: LiveTerminal = if (core != null) HcTerminalStream(session.awaitHerdrCore(30_000, paneId), core, cols, rows, container.scope)
                 else TerminalStream(
                     conn, session.state.value.herdrMachine, paneId, cols, rows, container.scope,
@@ -236,8 +234,8 @@ fun TerminalScreen(nav: NavController, machineId: String, paneId: String) {
         }
     }
 
-    // In fit mode, follow the view's grid; switching back to host size restores the host's.
-    LaunchedEffect(stream, grid, keepHost) {
+    // The pane follows the view's grid: it is resized to fit the phone.
+    LaunchedEffect(stream, grid) {
         val s = stream ?: return@LaunchedEffect
         // Let the grid settle (the keyboard sliding in, a pinch): each resize makes the program on
         // the computer redraw, and an inline agent reprints its whole conversation.
@@ -267,11 +265,13 @@ fun TerminalScreen(nav: NavController, machineId: String, paneId: String) {
         if (s.status.value == TerminalStream.Status.Opening) silent = true
     }
     LaunchedEffect(revision, view) { view?.invalidate() }
+    // herdr-core's history the phone keeps: how far back the view is scrolled (0 on the screen).
+    val scrolledBack = remember(revision, stream) { stream?.emulator?.let { e -> synchronized(e.lock) { e.scrolledBack } } ?: 0 }
     // The line the cursor stands on asks for a password: a masked field over the keys for it, until
     // it is answered or put away (then not again until the pane asks anew).
     val asks = remember(revision, stream) {
         stream?.emulator?.let { e ->
-            val line = e.lineText(e.cursorY)
+            val line = e.cursorLineText()
             if (line.drop(e.cursorX).isBlank()) PasswordPrompt.ask(line.take(e.cursorX)) else null
         }
     }
@@ -283,17 +283,26 @@ fun TerminalScreen(nav: NavController, machineId: String, paneId: String) {
         view?.ctrlSticky = sticky.ctrl.on
         view?.altSticky = sticky.alt.on
     }
-    LaunchedEffect(finding) { if (finding) searchFocus.requestFocus() }
+    LaunchedEffect(finding) {
+        if (!finding) return@LaunchedEffect
+        // Once the field is laid out: asked in the frame that adds it, its requester isn't attached yet.
+        withFrameNanos { }
+        runCatching { searchFocus.requestFocus() }
+    }
     DisposableEffect(Unit) { onDispose { stream?.close() } }
     BackHandler(enabled = history != null) { history = null }
+    fun resetFind() {
+        search?.reset()
+        (stream as? HcTerminalStream)?.endFind()
+        found = null
+    }
     BackHandler(enabled = selecting || finding) {
         if (selecting) {
             view?.clearSelection()
             selecting = false
         } else {
             finding = false
-            search?.reset()
-            found = null
+            resetFind()
         }
     }
 
@@ -324,6 +333,12 @@ fun TerminalScreen(nav: NavController, machineId: String, paneId: String) {
     fun find(backward: Boolean) {
         val q = query.trim()
         if (q.isEmpty()) return
+        // herdr-core's: found in the history the phone keeps.
+        if (core != null) {
+            val result = (stream as? HcTerminalStream)?.find(q, backward) ?: return
+            found = CopySearchResult(total = result.total.toLong(), currentGlobal = result.place?.toLong())
+            return
+        }
         searching = true
         scope.launch {
             try {
@@ -448,17 +463,6 @@ fun TerminalScreen(nav: NavController, machineId: String, paneId: String) {
         }
     }
 
-    fun resize(direction: ResizeDirection) {
-        scope.launch {
-            try {
-                val result = session.awaitApi().resizePane(paneId, direction)
-                if (!result.changed) context.toast(result.reason ?: "The pane can't resize that way")
-            } catch (e: Throwable) {
-                context.toast(plain(e))
-            }
-        }
-    }
-
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         containerColor = Herdr.colors.ground,
@@ -472,11 +476,14 @@ fun TerminalScreen(nav: NavController, machineId: String, paneId: String) {
                 },
                 onBack = { nav.popBackStack() },
             ) {
-                BarIcon(HerdrIcons.Sun, "Keep screen on", { container.keyBar.setKeepScreenOn(!bar.keepScreenOn) }, selected = bar.keepScreenOn)
-                if (!finding && core == null) BarIcon(HerdrIcons.Search, "Find", { finding = true })
+                if (!finding) BarIcon(HerdrIcons.Search, "Find", { finding = true })
                 BarIcon(HerdrIcons.Ellipsis, "More", { menu = true })
                 HerdrMenu(expanded = menu, onDismissRequest = { menu = false }, title = pane?.displayName ?: paneId, subtitle = session.machine.label) {
-                    if (core == null) MenuRow(if (finding) "Hide find" else "Find in scrollback", HerdrIcons.Search, { menu = false; finding = !finding })
+                    MenuRow(if (finding) "Hide find" else "Find in scrollback", HerdrIcons.Search, {
+                        menu = false
+                        if (finding) resetFind()
+                        finding = !finding
+                    })
                     MenuRow("Select text", HerdrIcons.TextSelect, {
                         menu = false
                         view?.startSelection(CellPoint(0, 0))
@@ -484,14 +491,6 @@ fun TerminalScreen(nav: NavController, machineId: String, paneId: String) {
                         context.toast("Drag to select, then Copy or Quote")
                     })
                     MenuRow("Copy screen", HerdrIcons.Copy, { menu = false; view?.let { context.copyToClipboard("terminal", it.screenText(), "Screen copied") } })
-                    // herdr-core has no splits, and the desktop app keeps its layout to itself.
-                    if (core == null) {
-                        MenuRow("Resize pane…", HerdrIcons.Maximize2, { menu = false; resizeOpen = true })
-                        MenuRow("Layout…", HerdrIcons.LayoutDashboard, { menu = false; nav.navigate(Routes.layout(machineId, paneId)) })
-                    }
-                    pane?.workspaceId?.takeIf { core == null }?.let { ws ->
-                        MenuRow("Dev servers", HerdrIcons.Globe, { menu = false; nav.navigate(Routes.preview(machineId, ws)) })
-                    }
                     MenuRow("Edit key bar…", HerdrIcons.Keyboard, { menu = false; editKeys = true })
                     MenuRow(if (bar.keepScreenOn) "Let the screen sleep" else "Keep screen on", HerdrIcons.Sun, { menu = false; container.keyBar.setKeepScreenOn(!bar.keepScreenOn) })
                     // herdr-core's size is the last active viewer's, the phone's own once it attached: no desktop size to keep.
@@ -502,6 +501,7 @@ fun TerminalScreen(nav: NavController, machineId: String, paneId: String) {
                         { menu = false; scrollHost = !scrollHost },
                     )
                     MenuRow("Reconnect", HerdrIcons.RefreshCcw, { menu = false; generation++ })
+                    ChangeScreenRow { menu = false }
                 }
             }
         },
@@ -514,8 +514,7 @@ fun TerminalScreen(nav: NavController, machineId: String, paneId: String) {
                             value = query,
                             onValueChange = {
                                 query = it
-                                search?.reset()
-                                found = null
+                                resetFind()
                             },
                             placeholder = { Text("Find in scrollback") },
                             leadingIcon = { Icon(HerdrIcons.Search, null, Modifier.size(20.dp)) },
@@ -541,8 +540,7 @@ fun TerminalScreen(nav: NavController, machineId: String, paneId: String) {
                             BarIcon(HerdrIcons.ChevronDown, "Newer", { find(false) })
                             BarIcon(HerdrIcons.X, "Close", {
                                 finding = false
-                                search?.reset()
-                                found = null
+                                resetFind()
                             })
                         }
                     }
@@ -554,7 +552,7 @@ fun TerminalScreen(nav: NavController, machineId: String, paneId: String) {
                 AndroidView(
                     factory = { ctx ->
                         TerminalView(ctx).also { v ->
-                            androidx.core.content.res.ResourcesCompat.getFont(ctx, com.makefunstuff.herdr.R.font.jetbrains_mono_regular)?.let(v::setTypeface)
+                            androidx.core.content.res.ResourcesCompat.getFont(ctx, com.makefunstuff.herdr.R.font.geist_mono_regular)?.let(v::setTypeface)
                             v.onGridSize = { c, r -> grid = c to r }
                             v.onCellTap = { cell -> v.showKeyboard(); tapCell(cell) }
                             v.onCellLongPress = { cell -> v.startSelection(cell); selecting = true }
@@ -630,6 +628,9 @@ fun TerminalScreen(nav: NavController, machineId: String, paneId: String) {
                         }
                     }
                 }
+                if (scrolledBack > 0 && message == null) {
+                    BackToScreen(Modifier.align(Alignment.BottomCenter).padding(bottom = Space.s)) { stream?.scroll(false, scrolledBack) }
+                }
                 if (message == null && herdr?.mismatch == true) {
                     Text(
                         "herdr ${herdr.describe} differs from the server (${herdr.serverVersion})",
@@ -670,7 +671,7 @@ fun TerminalScreen(nav: NavController, machineId: String, paneId: String) {
                 SelectionBar(
                     onCopy = ::copySelection,
                     onQuote = ::quoteSelection,
-                    onCoordinator = if (state.hasBoard) ::sendToCoordinator else null,
+                    onCoordinator = if (state.onShepherdr) ::sendToCoordinator else null,
                     onCancel = {
                         view?.clearSelection()
                         selecting = false
@@ -704,15 +705,23 @@ fun TerminalScreen(nav: NavController, machineId: String, paneId: String) {
             onDismiss = { quoting = null },
         )
     }
+}
 
-    if (resizeOpen) {
-        HerdrSheet(onDismissRequest = { resizeOpen = false }) {
-            ResizeSheet(
-                onPick = {
-                    resize(it)
-                    resizeOpen = false
-                },
-            )
+/** Scrolled back into the history: back to the live screen (typing goes back too). */
+@Composable
+private fun BackToScreen(modifier: Modifier, onClick: () -> Unit) {
+    val c = Herdr.colors
+    Row(
+        modifier.heightIn(min = 48.dp).clip(HerdrShapes.Pill).clickable(role = Role.Button, onClick = onClick).padding(vertical = Space.xs),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Row(
+            Modifier.clip(HerdrShapes.Pill).background(c.card).hairline(HerdrShapes.Pill, c.lineStrong).padding(horizontal = Space.l, vertical = Space.s),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(HerdrIcons.ArrowDown, null, tint = c.muted, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(Space.s))
+            Text("Back to the screen", style = MaterialTheme.typography.labelLarge, color = c.strong)
         }
     }
 }
@@ -740,36 +749,9 @@ private fun SelectionBar(onCopy: () -> Unit, onQuote: () -> Unit, onCoordinator:
         ) {
             PrimaryButton(onClick = onCopy) { Text("Copy") }
             SecondaryButton(onClick = onQuote) { Text("Quote in chat") }
-            if (onCoordinator != null) SecondaryButton(onClick = onCoordinator) { Text("Send to Coordinator") }
+            if (onCoordinator != null) SecondaryButton(onClick = onCoordinator) { Text("Send to the Assistant") }
         }
     }
-}
-
-/** Direction pad for `pane.resize`, which moves the pane's edge into a neighbouring split. */
-@Composable
-private fun ResizeSheet(onPick: (ResizeDirection) -> Unit) {
-    SheetTitle("Resize the pane", "Moves the pane's edge, so it only works when the tab is split. The pane grows toward the arrow.")
-    Column(
-        Modifier.fillMaxWidth().padding(horizontal = Space.xl).padding(bottom = Space.xl).navigationBarsPadding(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(Space.s),
-    ) {
-        PadKey(HerdrIcons.ChevronUp, "Grow up") { onPick(ResizeDirection.Up) }
-        Row(horizontalArrangement = Arrangement.spacedBy(72.dp)) {
-            PadKey(HerdrIcons.ChevronLeft, "Grow left") { onPick(ResizeDirection.Left) }
-            PadKey(HerdrIcons.ChevronRight, "Grow right") { onPick(ResizeDirection.Right) }
-        }
-        PadKey(HerdrIcons.ChevronDown, "Grow down") { onPick(ResizeDirection.Down) }
-    }
-}
-
-@Composable
-private fun PadKey(icon: androidx.compose.ui.graphics.vector.ImageVector, description: String, onClick: () -> Unit) {
-    Box(
-        Modifier.size(56.dp).clip(CircleShape).background(Herdr.colors.field).clickable(role = Role.Button, onClick = onClick)
-            .semantics { contentDescription = description },
-        contentAlignment = Alignment.Center,
-    ) { Icon(icon, null, tint = Herdr.colors.text, modifier = Modifier.size(28.dp)) }
 }
 
 /** The text of the cells from [a] to [b] (either order) on [e]'s screen, each line's end trimmed. */
@@ -833,7 +815,7 @@ private fun HistoryOverlay(
         AndroidView(
             factory = { ctx ->
                 TerminalView(ctx).also { v ->
-                    androidx.core.content.res.ResourcesCompat.getFont(ctx, com.makefunstuff.herdr.R.font.jetbrains_mono_regular)?.let(v::setTypeface)
+                    androidx.core.content.res.ResourcesCompat.getFont(ctx, com.makefunstuff.herdr.R.font.geist_mono_regular)?.let(v::setTypeface)
                     v.isFocusable = false
                     v.isFocusableInTouchMode = false
                     v.fitToView = false

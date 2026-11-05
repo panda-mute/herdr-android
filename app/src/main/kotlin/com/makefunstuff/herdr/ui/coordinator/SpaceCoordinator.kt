@@ -66,6 +66,8 @@ import com.makefunstuff.herdr.core.host.Images
 import com.makefunstuff.herdr.core.shepherdr.OutgoingLine
 import com.makefunstuff.herdr.core.shepherdr.SpaceChat
 import com.makefunstuff.herdr.core.shepherdr.ChatNotice
+import com.makefunstuff.herdr.core.shepherdr.ChatFind
+import androidx.compose.runtime.rememberUpdatedState
 import com.makefunstuff.herdr.core.shepherdr.SpaceChatItem
 import com.makefunstuff.herdr.core.shepherdr.V2ReplyQuote
 import com.makefunstuff.herdr.data.DraftStore
@@ -74,6 +76,7 @@ import com.makefunstuff.herdr.ui.artifacts.ArtifactPost
 import com.makefunstuff.herdr.ui.artifacts.ChatArtifacts
 import com.makefunstuff.herdr.ui.artifacts.LocalChatArtifacts
 import com.makefunstuff.herdr.ui.board.AgentChip
+import com.makefunstuff.herdr.ui.common.EmptyState
 import com.makefunstuff.herdr.ui.common.LocalContainer
 import com.makefunstuff.herdr.ui.common.MarkdownText
 import com.makefunstuff.herdr.ui.common.StatusDot
@@ -130,6 +133,17 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.UUID
+
+/** A space's Assistant on one machine: [space], else the home space ([SpaceCoordinator]). */
+@Composable
+fun CoordinatorScreen(nav: NavController, machineId: String, space: String? = null) {
+    val session = LocalContainer.current.hosts.session(machineId)
+    if (session == null) {
+        EmptyState("Machine not found", "It may have been removed.")
+        return
+    }
+    SpaceCoordinator(nav, machineId, session, space)
+}
 
 /**
  * A space's coordinator on Shepherdr 3, as a chat: the spaces to pick from under the bar (the one you
@@ -202,6 +216,8 @@ internal fun SpaceCoordinator(nav: NavController, machineId: String, session: Ho
             val b = board ?: throw java.io.IOException("Shepherdr isn't reachable")
             b.file(space?.id ?: throw java.io.IOException("No space"), remote)
         },
+        machine = machineId,
+        board = { board ?: session.awaitWorkBoard() },
     )
     val tray = rememberImageTray(draftKey, machineId, session, state.online)
     val attach = rememberAttacher(session, onAttached = { path -> draft = Attachments.withMention(draft, path) }, onImage = tray::add)
@@ -280,11 +296,21 @@ internal fun SpaceCoordinator(nav: NavController, machineId: String, session: Ho
 
 
     val waits = t?.cards.orEmpty()
+    val notice = items.isNotEmpty() && t?.v2?.let(ChatNotice::of) != null
     // Under the newest message: only when it says something, else it would be the newest item, and a reader just over it "up the chat".
     val foot = t?.working == true || (chatProblem ?: problem) != null || shared.waitNote != null
     // At the newest message, and brought down to every new one: the rules every chat shares.
     stick.Follow(remember(items) { items.map { it.id } }, content = items to foot)
     stick.SentWith(voice.notes.map { it.id })
+    // Where each message sits in the list, newest first under the foot and the notice: for find and a reply's line.
+    val where = rememberUpdatedState { id: String -> items.indexOfFirst { it.id == id }.takeIf { it >= 0 }?.let { i -> (if (foot) 1 else 0) + (if (notice) 1 else 0) + items.size - 1 - i } }
+    val places = remember(list) { ChatPlaces(list) { where.value(it) } }
+    val find = rememberChatFind(space?.id, items, places)
+    val jump = remember(places) { ChatJump(scope, places) }
+    val reactions = remember(space?.id, board) {
+        ChatReactions(scope, { m, e -> (board ?: throw java.io.IOException("Shepherdr isn't reachable")).react(space?.id.orEmpty(), null, m, e) }) { context.toast(it) }
+    }
+    LaunchedEffect(items) { reactions.settle(items) }
     val typing = typingInShortWindow()
     val c = Herdr.colors
     // The coordinator's voice: on for one chat at a time, this one's bar shown over its composer.
@@ -296,6 +322,8 @@ internal fun SpaceCoordinator(nav: NavController, machineId: String, session: Ho
     val calls = container.voiceCalls
     val call by calls.state.collectAsStateWithLifecycle()
     val callHere = call.machineId == machineId && call.space == space?.id && call.task == null && (call.on || call.problem != null)
+    // The space's Autopilot, switched here as in 3.1's Assistant header.
+    val pilot = rememberAutopilotFlip(board, space)
     Scaffold(
         containerColor = c.ground,
         topBar = {
@@ -304,6 +332,8 @@ internal fun SpaceCoordinator(nav: NavController, machineId: String, session: Ho
                 subtitle = listOfNotNull(space?.let(::spaceName), state.machine.label, stateWords(t, state.online, state.status.label())).joinToString(" · "),
                 onBack = { nav.popBackStack() },
                 actions = {
+                    pilot.shown?.let { p -> AutopilotBarSwitch(p.on, enabled = state.online && board != null, onFlip = pilot.flip) }
+                    if (t != null && !find.open) BarIcon(HerdrIcons.Search, ChatFind.PLACEHOLDER, { find.open = true })
                     // The space's artifacts, where Shepherdr keeps them.
                     if (overview?.artifacts != null && space != null) {
                         BarIcon(HerdrIcons.LayoutDashboard, "Artifacts", { nav.navigate(Routes.artifacts(machineId, space.id)) })
@@ -331,7 +361,16 @@ internal fun SpaceCoordinator(nav: NavController, machineId: String, session: Ho
         },
     ) { padding ->
         Column(Modifier.padding(top = padding.calculateTopPadding()).fillMaxSize().imePadding().navigationBarsPadding()) {
-            if (!typing && spaces.size > 1) SpacePicker(spaces, space?.id) { picked = it }
+            pilot.shown?.takeIf { it.on && !typing }?.let { p -> AutopilotLine(p, onWrite = { nav.navigate(Routes.autopilot(machineId)) }) }
+            if (find.open) FindBar(find, earlier = t?.v2?.earlier?.takeIf { it }?.let {
+                {
+                    scope.launch {
+                        runCatching { board?.earlier(space?.id.orEmpty(), null) }.onFailure { find.loading = false; context.toast(it.message ?: "Couldn't read earlier") }
+                    }
+                }
+            })
+            // In the Chat tab the drawer picks the space.
+            if (!typing && spaces.size > 1 && !com.makefunstuff.herdr.ui.design.LocalInTab.current) SpacePicker(spaces, space?.id) { picked = it }
             val sizes by container.textSizes.state.collectAsStateWithLifecycle()
             ChatSurface(
                 Modifier.weight(1f).fillMaxWidth(),
@@ -339,6 +378,10 @@ internal fun SpaceCoordinator(nav: NavController, machineId: String, session: Ho
                 composer = {
                     Column {
                         if (callHere && !typing) CallBar(call, Modifier.padding(horizontal = Space.screen).padding(bottom = Space.xs), calls::stop)
+                        // The herdr-android space on the machine that builds the app: where its update is, or Undo.
+                        if (!typing && space != null) com.makefunstuff.herdr.ui.change.ChangeBar(
+                            machineId, space, spaces, overview?.tasks.orEmpty(), Modifier.padding(horizontal = Space.screen).padding(bottom = Space.xs),
+                        )
                         if (waits.isNotEmpty() && draft.isEmpty()) {
                             WaitsForYou(waits, Modifier.padding(horizontal = Space.screen).padding(bottom = Space.xs)) { card ->
                                 val at = items.indexOfFirst { it.holds(card) }
@@ -361,7 +404,7 @@ internal fun SpaceCoordinator(nav: NavController, machineId: String, session: Ho
                         ChatComposer(
                             draft = draft,
                             onDraft = { draft = it },
-                            placeholder = space?.let { "Tell ${it.name}'s Assistant…" } ?: "Tell the Assistant…",
+                            placeholder = "Message the Assistant",
                             onSend = ::sendDraft,
                             enabled = state.online && board != null && space != null,
                             status = when {
@@ -376,6 +419,7 @@ internal fun SpaceCoordinator(nav: NavController, machineId: String, session: Ho
                             floating = true,
                             leading = { ComposerIconButton(HerdrIcons.Plus, "Attach files", enabled = state.online && !uploading) { attachMenu = true } },
                             voice = voice.recorder,
+                            dictation = voice.dictation,
                         )
                     }
                 },
@@ -428,7 +472,7 @@ internal fun SpaceCoordinator(nav: NavController, machineId: String, session: Ho
                             items(items.asReversed(), key = { it.id }) { item ->
                                 Column(verticalArrangement = Arrangement.spacedBy(Space.m)) {
                                     if (item.id == stick.unread) NewLine()
-                                    ChatItem(
+                                    Box(Modifier.lit(item.id, find, jump)) { ChatItem(
                                         item, answering,
                                         onAnswer = ::answer,
                                         onReply = { q -> replyTo = q },
@@ -438,7 +482,9 @@ internal fun SpaceCoordinator(nav: NavController, machineId: String, session: Ho
                                         agentOf = { id -> overview?.tasks?.firstOrNull { it.id == id && it.chat.isNotEmpty() }?.agent?.ifEmpty { "agent" } },
                                         // A task opens as its agent's chat, on the board.
                                         onAgent = { id -> panes.openBoard(nav, machineId, id, alone = true) },
-                                    )
+                                        reactions = reactions,
+                                        onJump = jump::to,
+                                    ) }
                                 }
                             }
                         }
@@ -449,6 +495,7 @@ internal fun SpaceCoordinator(nav: NavController, machineId: String, session: Ho
         }
     }
     if (attachMenu) AttachMenu(attach, tray, online = state.online, onDismiss = { attachMenu = false })
+    MessageSheet(reactions) { replyTo = it }
     accepting?.let { id ->
         // Its task as the board has it; where the board isn't read yet, enough of it for the card, which reads the rest.
         val task = overview?.tasks?.firstOrNull { it.id == id || it.name == id }
@@ -456,7 +503,7 @@ internal fun SpaceCoordinator(nav: NavController, machineId: String, session: Ho
         com.makefunstuff.herdr.ui.board.AcceptSheet(
             board, task, onDismiss = { accepting = null },
             onProof = { proof -> nav.navigate(Routes.artifact(machineId, proof, null)) },
-            onAccepted = { context.toast(it) },
+            onAccepted = { context.toast(it); container.changes.accepted(machineId, task) },
         )
     }
 }
@@ -556,11 +603,16 @@ internal fun ChatItem(
     agentOf: (String) -> String? = { null },
     onAgent: (String) -> Unit = {},
     onAccept: ((String) -> Unit)? = null,
+    reactions: ChatReactions? = null,
+    onJump: (String) -> Unit = {},
 ) {
     val c = Herdr.colors
     when (item) {
-        is SpaceChatItem.Words -> Words(item, onReply, onRetry, who)
-        is SpaceChatItem.Update -> Column(verticalArrangement = Arrangement.spacedBy(Space.s)) {
+        is SpaceChatItem.Words -> Words(item, onReply, onRetry, who, reactions, onJump)
+        is SpaceChatItem.Update -> if (item.news) Column(verticalArrangement = Arrangement.spacedBy(Space.s)) {
+            NewsLine(item, onOpen = { onAgent(item.task) }, onAccept = onAccept?.let { a -> { a(item.task) } })
+            item.asks.forEach { card -> QuestionCard(card, null, card.question.id in answering, onAnswer) }
+        } else Column(verticalArrangement = Arrangement.spacedBy(Space.s)) {
             UpdateRow(item, agentOf(item.task)?.let { a -> a to { onAgent(item.task) } })
             if (item.accept && onAccept != null) Row(Modifier.fillMaxWidth().padding(start = 20.dp)) {
                 PrimaryButton(com.makefunstuff.herdr.core.shepherdr.Accept.ACCEPT) { onAccept(item.task) }
@@ -573,7 +625,10 @@ internal fun ChatItem(
             QuestionCard(item.card, item.answer, item.card.question.id in answering, onAnswer)
         }
         is SpaceChatItem.Voice -> VoiceMessage(item.path, item.millis, item.you, item.note)
-        is SpaceChatItem.File -> Row(
+        // A picture shared there (a task's before and after shots) shows as itself, read from the machine as yours are.
+        is SpaceChatItem.File -> if (Images.isImage(item.name) && item.path.startsWith("/")) Row(
+            Modifier.fillMaxWidth(), horizontalArrangement = if (item.you) Arrangement.End else Arrangement.Start,
+        ) { MessageImages(listOf(item.path)) } else Row(
             Modifier.fillMaxWidth(), horizontalArrangement = if (item.you) Arrangement.End else Arrangement.Start,
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -626,10 +681,20 @@ private fun StepsLine(s: SpaceChatItem.Steps) {
     }
 }
 
-/** Yours on the right on a card, the coordinator's as prose on the left; a long press replies to it. */
-@OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
+/**
+ * Yours on the right on a card, the coordinator's as prose on the left; a long press opens its bar ([reactions]: react,
+ * reply, copy), or replies where there is none. Its reply line goes to what it answers ([onJump]).
+ */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun Words(w: SpaceChatItem.Words, onReply: (V2ReplyQuote) -> Unit, onRetry: (SpaceChatItem.Words) -> Unit, who: String) {
+private fun Words(
+    w: SpaceChatItem.Words,
+    onReply: (V2ReplyQuote) -> Unit,
+    onRetry: (SpaceChatItem.Words) -> Unit,
+    who: String,
+    reactions: ChatReactions?,
+    onJump: (String) -> Unit,
+) {
     val c = Herdr.colors
     val mine = w.you
     val split = remember(w.text, mine) { if (mine) Images.split(w.text) else Images.Split(emptyList(), w.text) }
@@ -640,7 +705,12 @@ private fun Words(w: SpaceChatItem.Words, onReply: (V2ReplyQuote) -> Unit, onRet
     ) {
         Column(horizontalAlignment = if (mine) Alignment.End else Alignment.Start) {
             w.reply?.let { r ->
-                Row(Modifier.padding(bottom = Space.xs, start = Space.xs, end = Space.xs), verticalAlignment = Alignment.CenterVertically) {
+                val to = r.id?.takeIf { it.isNotEmpty() }
+                Row(
+                    Modifier.then(if (to != null) Modifier.clickable(onClickLabel = "Go to the message it answers") { onJump(to) } else Modifier)
+                        .padding(bottom = Space.xs, start = Space.xs, end = Space.xs),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     Icon(HerdrIcons.Reply, null, Modifier.size(14.dp), tint = c.muted)
                     Spacer(Modifier.width(Space.xs))
                     Text(r.text, style = MaterialTheme.typography.labelMedium, color = c.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -652,7 +722,12 @@ private fun Words(w: SpaceChatItem.Words, onReply: (V2ReplyQuote) -> Unit, onRet
                 shape = BubbleShape,
                 border = if (mine && c.bubbleBorder.alpha > 0f) androidx.compose.foundation.BorderStroke(1.dp, c.bubbleBorder) else null,
                 modifier = Modifier.alpha(if (w.waiting) 0.72f else 1f).combinedClickable(
-                    onClick = {}, onLongClick = if (w.id.startsWith("cid:")) null else ({ onReply(quote) }), onLongClickLabel = "reply",
+                    onClick = {}, onLongClick = when {
+                        w.id.startsWith("cid:") -> null
+                        reactions != null -> ({ reactions.holding = w })
+                        else -> ({ onReply(quote) })
+                    },
+                    onLongClickLabel = if (reactions != null) "react or reply" else "reply",
                 ),
             ) {
                 Column(Modifier.padding(horizontal = if (mine) Space.l else Space.xs, vertical = if (mine) Space.m else Space.xs)) {
@@ -660,13 +735,7 @@ private fun Words(w: SpaceChatItem.Words, onReply: (V2ReplyQuote) -> Unit, onRet
                     if (split.text.isNotEmpty()) MarkdownText(split.text, style = MaterialTheme.typography.bodyLarge)
                 }
             }
-            if (w.reactions.isNotEmpty()) {
-                FlowRow(Modifier.padding(top = Space.xs, start = Space.xs), horizontalArrangement = Arrangement.spacedBy(Space.xs)) {
-                    w.reactions.groupBy { it.emoji }.forEach { (emoji, by) ->
-                        Text(if (by.size > 1) "$emoji ${by.size}" else emoji, style = MaterialTheme.typography.labelMedium, color = c.muted)
-                    }
-                }
-            }
+            ReactionPills(w, reactions, Modifier.padding(top = Space.xs, start = Space.xs, end = Space.xs))
             when {
                 w.failed != null -> Row(Modifier.padding(top = Space.xs), verticalAlignment = Alignment.CenterVertically) {
                     Text("Not sent: ${w.failed}", style = MaterialTheme.typography.labelMedium, color = c.red, modifier = Modifier.weight(1f, fill = false))

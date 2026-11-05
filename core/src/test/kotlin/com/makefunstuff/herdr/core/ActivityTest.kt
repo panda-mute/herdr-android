@@ -1,7 +1,6 @@
 package com.makefunstuff.herdr.core
 
 import com.makefunstuff.herdr.core.activity.ActivityCommands
-import com.makefunstuff.herdr.core.activity.BoardHistory
 import com.makefunstuff.herdr.core.activity.ClaudeActivity
 import com.makefunstuff.herdr.core.activity.CodexActivity
 import com.makefunstuff.herdr.core.activity.Diffs
@@ -10,7 +9,6 @@ import com.makefunstuff.herdr.core.activity.Entry
 import com.makefunstuff.herdr.core.activity.Origin
 import com.makefunstuff.herdr.core.activity.PiActivity
 import com.makefunstuff.herdr.core.activity.Prompts
-import com.makefunstuff.herdr.core.activity.RecordReader
 import com.makefunstuff.herdr.core.activity.Role
 import com.makefunstuff.herdr.core.activity.SessionSource
 import com.makefunstuff.herdr.core.activity.SessionsReader
@@ -228,69 +226,14 @@ class ActivityTest {
         assertEquals("Overloaded", error.title)
     }
 
-    // ---- the board's record ----
-
-    private val taskJson = """
-        {"id":"app/3","title":"Do the thing","app":"claude","agent":"claude","model":"claude-opus-5-5","stage":"done",
-         "created":${ms(-600)},"queuedAt":${ms(-590)},"startedAgentAt":${ms(-5)},
-         "handovers":[{"at":${ms(100)},"role":"reviewer","from":"claude","to":"codex/gpt","why":"out of allowance"}],
-         "reviews":[{"round":1,"at":${ms(150)},"by":"codex/gpt","meets":false,"pass":false,"text":"Missing a test.","findings":[{"id":"F1","severity":"minor","subject":"No test","where":"A.kt"},{"id":"F2","severity":"major","subject":"Crash","where":"B.kt"}]},
-                    {"round":2,"at":${ms(300)},"by":"codex/gpt","meets":true,"pass":true,"findings":[]}],
-         "report":{"link":"https://x/report","at":${ms(120)}},
-         "pr":"https://github.com/o/r/pull/9","mergedAt":${ms(400)},"archivedAt":null,
-         "session":"sess-1","reviewSession":"rev-2","transcript":"/h/.claude/projects/p/sess-1.jsonl",
-         "spent":{"owed":[{"kind":"claude","session":"sess-1","file":"/h/.claude/projects/p/sess-1.jsonl"},{"kind":"codex","session":"rev-1","file":""},{"kind":"pi","session":"rev-2","file":""}]}}
-    """.trimIndent()
-
-    private val saidBy = """
-        {"by":"board","head":"Work board task app/3, role: agent. Do the thing","at":${ms(-4)},"typed":true}
-        {"by":"board","head":"Work board task app/3, role: reviewer, round 1. You are an adversarial reviewer.","at":${ms(101)},"typed":true}
-        {"by":"you","head":"ok","at":${ms(350)}}
-    """.trimIndent()
-
     @Test
-    fun boardRecordGivesEventsAndSessions() {
-        val r = assertNotNull(BoardHistory.read(taskJson, saidBy))
-        assertFalse(r.open)
-        val titles = r.events.map { it.title }
-        assertEquals(
-            listOf(
-                "Added to the board", "Started the agent", "Started the agent", "Handed the review over to codex/gpt", "Started the review, round 1",
-                "Wrote the report", "Review round 1 did not pass", "Review round 2 passed", "You told the agent: ok", "Merged",
-            ),
-            titles,
-        )
-        val failed = r.events.first { it.title == "Review round 1 did not pass" }
-        assertEquals(StepState.Failed, failed.state)
-        assertEquals("2 findings", failed.note)
-        // The most severe finding first.
-        assertTrue(failed.detail!!.indexOf("Crash") < failed.detail!!.indexOf("No test"), failed.detail)
-        assertEquals("#9", r.events.last().note)
-        assertEquals(
-            listOf(SessionSource("claude", "path", "/h/.claude/projects/p/sess-1.jsonl"), SessionSource("codex", "id", "rev-1"), SessionSource("pi", "id", "rev-2", Role("reviewer"))),
-            r.sessions,
-        )
-    }
-
-    @Test
-    fun timelineMergesTurnsAndEventsAndDropsRepeatedStarts() {
-        val record = assertNotNull(BoardHistory.read(taskJson, saidBy))
+    fun timelineCountsWhatTheTurnsDid() {
         val log = ClaudeActivity("s0:")
         claude.forEach(log::feed)
-        val timeline = Timeline.of(listOf(log.turns()), record.events)
-        val shape = timeline.entries.map { e -> if (e is Entry.TurnEntry) "turn:" + e.turn.prompt else "event:" + (e as Entry.Event).step.title }
-        // The board's copy of "Work board task app/3, role: agent" is the first turn itself, so it goes.
-        assertEquals(
-            listOf(
-                "event:Added to the board", "turn:Started the agent", "event:Handed the review over to codex/gpt",
-                "event:Started the review, round 1", "event:Wrote the report", "event:Review round 1 did not pass", "turn:Looks good, also update the README",
-                "event:Review round 2 passed", "event:You told the agent: ok", "event:Merged",
-            ),
-            shape,
-        )
-        assertEquals(2, timeline.failures)
-        val failures = timeline.filtered(StepFilter.Failures)
-        assertEquals(listOf("Run core tests", "Review round 1 did not pass"), failures.flatMap { e -> if (e is Entry.TurnEntry) e.turn.steps.map { it.title } else listOf((e as Entry.Event).step.title) }.take(2))
+        val timeline = Timeline.of(listOf(log.turns()), emptyList())
+        assertEquals(listOf("Started the agent", "Looks good, also update the README"), timeline.turns.map { it.prompt })
+        assertEquals(1, timeline.failures)
+        assertEquals(listOf("Run core tests"), timeline.filtered(StepFilter.Failures).flatMap { e -> (e as Entry.TurnEntry).turn.steps.map { it.title } })
         assertEquals(2, timeline.count(StepFilter.Tests))
         assertEquals(2, timeline.count(StepFilter.Edits))
         val edits = timeline.filtered(StepFilter.Edits)
@@ -299,18 +242,13 @@ class ActivityTest {
     }
 
     @Test
-    fun aCutSessionKeepsOneStartAndNamesItsHarness() {
-        // The agent's session was cut: its first turn, and the board's message that started it, aren't read.
-        val record = assertNotNull(BoardHistory.read(taskJson, saidBy))
+    fun aCutSessionNamesWhereItStarted() {
+        // The agent's session was cut: its first turn isn't read.
         val log = ClaudeActivity()
         claude.drop(1).take(2).forEach(log::feed)
         val reader = log.turns()
         assertEquals("Earlier in this session", reader.single().prompt)
         assertEquals(Origin.Agent, reader.single().from)
-        val starts = Timeline.of(listOf(reader), record.events).entries.filterIsInstance<Entry.Event>().filter { it.step.title == "Started the agent" }
-        // The record's start (with its agent and model) and the board's typed one are one start.
-        assertEquals(1, starts.size)
-        assertEquals("claude · claude-opus-5-5", starts.single().step.note)
     }
 
     @Test
@@ -504,33 +442,6 @@ class ActivityTest {
             assertEquals("", left)
         } finally {
             dir.deleteRecursively()
-        }
-    }
-
-    @Test
-    fun recordCommandReadsTheBoardsFiles() {
-        val home = Files.createTempDirectory("activity-home").toFile()
-        try {
-            val task = File(home, ".herdr-projects/data/tasks/app/3").also { it.mkdirs() }
-            File(task, "task.json").writeText(taskJson)
-            File(task, "said-by.jsonl").writeText(saidBy)
-            val launcher = File(home, ".herdr-projects/data/bin/herdr-projects").also { it.parentFile.mkdirs(); it.writeText("#!/bin/sh\n"); it.setExecutable(true) }
-            val pb = ProcessBuilder("sh", "-c", ActivityCommands.record(Machine(id = "m", label = "m", host = "h", user = "u"), launcher.path, "app/3"))
-            pb.environment()["HOME"] = home.path
-            pb.environment()["SHELL"] = "/bin/sh"
-            pb.environment().remove("HERDR_PROJECTS_DATA_DIR")
-            pb.environment().remove("HERDR_PROJECTS_HOME")
-            val out = pb.start().inputStream.readBytes().toString(Charsets.UTF_8)
-            val record = assertNotNull(RecordReader.parse(out))
-            assertEquals("Do the thing", record.title)
-            assertEquals(3, record.sessions.size)
-            assertTrue(record.events.any { it.title == "You told the agent: ok" })
-            // No record: nothing to show, not an error.
-            val none = ProcessBuilder("sh", "-c", ActivityCommands.record(Machine(id = "m", label = "m", host = "h", user = "u"), launcher.path, "app/4"))
-                .also { it.environment()["HOME"] = home.path; it.environment()["SHELL"] = "/bin/sh" }.start().inputStream.readBytes().toString(Charsets.UTF_8)
-            assertNull(RecordReader.parse(none))
-        } finally {
-            home.deleteRecursively()
         }
     }
 }

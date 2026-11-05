@@ -57,9 +57,6 @@ object Demo {
         "running" to true, "entries" to entries.toList(),
     )
 
-    private fun taskEntry(hour: Int, minute: Int, key: String, was: String, vararg task: Pair<String, Any?>) =
-        obj("at" to at(hour, minute), "type" to "task", "key" to key, "task" to obj(*task), "was" to was)
-
     private fun agentEntry(hour: Int, minute: Int, pane: String, kind: String, status: String, title: String, where: String) = obj(
         "at" to at(hour, minute), "type" to "agent", "where" to where, "workspace" to where.substringBefore(" › "),
         "agent" to obj(
@@ -68,96 +65,15 @@ object Demo {
         ),
     )
 
-    /** What devbox's tasks did that night: two merged, a research report, a review that failed, two that wait for you, one that started. */
+    /** What devbox's agents did that night: the website agent finished. */
     fun devboxJournal() = journal(
-        taskEntry(0, 52, "AND-8", "needs", "id" to "herdr-android/8", "title" to "Swipe triage: seen, pin, snooze, mute", "state" to "done", "stage" to "done",
-            "pr" to "https://github.com/demo/herdr-android/pull/8", "msg" to "Merged", "archivedAt" to null),
-        taskEntry(1, 20, "AND-2", "needs", "id" to "herdr-android/2", "title" to "Replace agent terminals with native chat views", "state" to "done",
-            "stage" to "done", "pr" to "https://github.com/demo/herdr-android/pull/3", "msg" to "Merged"),
         agentEntry(2, 10, SITE_AGENT, "codex", "done", "Rewrite the install page", "website › main"),
-        taskEntry(2, 14, "WEB-4", "working", "id" to "website/4", "title" to "Rewrite the install page", "state" to "blocked", "stage" to "approval",
-            "kind" to "permission", "msg" to "Review found 2 problems", "review" to obj("pass" to false)),
-        taskEntry(4, 30, "EVAL-1", "working", "id" to "llm-eval/1", "title" to "Compare long-context benchmarks", "state" to "done", "stage" to "done",
-            "research" to true, "msg" to "The report is ready"),
-        taskEntry(5, 40, "API-3", "working", "id" to "api-server/3", "title" to "Speed up /jobs on large tables", "state" to "blocked", "stage" to "working",
-            "kind" to "question", "msg" to "Asks whether the migration may lock the jobs table for a few seconds"),
-        taskEntry(6, 30, "AND-6", "queued", "id" to "herdr-android/6", "title" to "Add app screenshots to the README", "state" to "working", "stage" to "working"),
-        taskEntry(6, 58, "AND-9", "working", "id" to "herdr-android/9", "title" to "Show when each machine last answered", "state" to "blocked",
-            "stage" to "approval", "kind" to "permission", "msg" to "Review passed. Ready to merge.", "review" to obj("pass" to true)),
     )
 
     /** gpu-box has no board: one of your agents finished there in the night. */
     fun gpuJournal() = journal(
         agentEntry(3, 40, "w3:p1", "codex", "done", "Profile the data loader", "notebooks › main"),
     )
-
-    /** A board on gpu-box with one task, whose two attempts wait for a pick (the review cards across machines). */
-    fun gpuBoard() = FakeBoard(
-        tasks = kotlinx.serialization.json.Json.parseToJsonElement(resource("board/gpu-list.json")) as kotlinx.serialization.json.JsonArray,
-        plain = resource("board/gpu-list.txt"),
-    )
-
-    /**
-     * devbox's routines (the board's automations), as `automations --json` prints them at [NOW]
-     * (Saturday 17 October, 07:42): one on a Monday schedule whose last task is ready to approve, one
-     * every two hours whose last task asks you, a research one at work, one on a board event that
-     * never ran, and a paused one.
-     */
-    fun routines(): kotlinx.serialization.json.JsonArray = kotlinx.serialization.json.Json.parseToJsonElement(
-        """
-        [
-          {"id": "a7f3c2e1", "name": "Bump dependencies", "on": true, "trigger": "mon 07:00", "repo": "herdr-android", "folder": "/home/demo/src/herdr-android",
-           "research": false, "prompt": "Update the outdated dependencies, run the tests and open a pull request with what changed.",
-           "settings": {"worker.agent": "claude/claude-opus-5-5"},
-           "last": {"at": ${NOW - 5 * DAY - 42 * MIN}, "cause": "schedule", "what": "mon 07:00", "task": "herdr-android/9"}, "next": ${NOW + 2 * DAY - 42 * MIN}},
-          {"id": "c1a2b3d4", "name": "Check CI on open PRs", "on": true, "trigger": "every 2h", "repo": "api-server", "folder": "/home/demo/src/api-server",
-           "research": false, "prompt": "Look at the CI runs of the open pull requests. Fix what broke, or say why it can't be fixed here.",
-           "settings": {},
-           "last": {"at": ${NOW - 42 * MIN}, "cause": "schedule", "what": "every 2h", "task": "api-server/3"}, "next": ${NOW + 78 * MIN}},
-          {"id": "e5f60718", "name": "Hunt flaky tests", "on": true, "trigger": "daily 02:00", "repo": "llm-eval", "folder": "/home/demo/src/llm-eval",
-           "research": true, "prompt": "Find the tests that fail now and then, and say why each one does. Change nothing.",
-           "settings": {"research.only": true},
-           "last": {"at": ${NOW - 5 * HOUR - 42 * MIN}, "cause": "schedule", "what": "daily 02:00", "task": "llm-eval/2"}, "next": ${NOW + 18 * HOUR + 18 * MIN}},
-          {"id": "0b9c8d7e", "name": "Look into failed reviews", "on": true, "trigger": "when a task failed its review, in every repo", "repo": "herdr-android",
-           "folder": "/home/demo/src/herdr-android", "research": true, "prompt": "Read the review that failed and say which findings are real.",
-           "settings": {"research.only": true}, "last": null, "next": null},
-          {"id": "9e8d7c6b", "name": "Weekly changelog draft", "on": false, "trigger": "fri 16:00", "repo": "website", "folder": "/home/demo/src/website",
-           "research": false, "prompt": "Draft the week's changelog from the merged pull requests.", "settings": {},
-           "last": {"at": ${NOW - 8 * DAY - 15 * HOUR - 42 * MIN}, "cause": "schedule", "what": "fri 16:00", "task": "website/2"}, "next": null}
-        ]
-        """,
-    ) as kotlinx.serialization.json.JsonArray
-
-    /** "Check CI on open PRs"' firings, newest first: the tasks it made, skips while one was at work, one without an agent. */
-    fun ciFirings(): kotlinx.serialization.json.JsonArray = kotlinx.serialization.json.Json.parseToJsonElement(
-        """
-        [
-          {"at": ${NOW - 42 * MIN}, "cause": "schedule", "what": "every 2h", "task": "api-server/3"},
-          {"at": ${NOW - 2 * HOUR - 42 * MIN}, "cause": "schedule", "what": "every 2h", "task": "api-server/5"},
-          {"at": ${NOW - 4 * HOUR - 42 * MIN}, "cause": "schedule", "what": "every 2h", "skipped": "its last task, api-server/1, is still being worked on", "n": 3},
-          {"at": ${NOW - 20 * HOUR}, "cause": "run", "what": "run now", "task": "api-server/2", "note": "added, but no agent could be put on it: claude is at its limit"},
-          {"at": ${NOW - DAY - 2 * HOUR}, "cause": "schedule", "what": "every 2h", "task": "api-server/1"}
-        ]
-        """,
-    ) as kotlinx.serialization.json.JsonArray
-
-    private const val MIN = 60_000L
-    private const val HOUR = 60 * MIN
-    private const val DAY = 24 * HOUR
-
-    /** devbox's board with nothing waiting for a yes: its approvals already merged. */
-    fun nothingToReview() = FakeBoard().apply {
-        val keep = tasks.indices.filter { i -> (tasks[i] as kotlinx.serialization.json.JsonObject)["stage"]?.toString()?.trim('"') != "approval" }
-        plain = plain.lines().filter { it.isNotBlank() }.filterIndexed { i, _ -> i in keep }.joinToString("") { it + "\n" }
-        tasks = kotlinx.serialization.json.JsonArray(keep.map { tasks[it] })
-    }
-
-    /** devbox's board on a calm morning: nothing waits for you, the rest at work or to do. */
-    fun calmBoard() = FakeBoard().apply {
-        val keep = tasks.indices.filter { i -> (tasks[i] as kotlinx.serialization.json.JsonObject)["state"]?.toString()?.trim('"') != "blocked" }
-        plain = plain.lines().filter { it.isNotBlank() }.filterIndexed { i, _ -> i in keep }.joinToString("") { it + "\n" }
-        tasks = kotlinx.serialization.json.JsonArray(keep.map { tasks[it] })
-    }
 
     fun resource(path: String): String =
         Demo::class.java.classLoader.getResourceAsStream("demo/$path")?.readBytes()?.toString(Charsets.UTF_8)
@@ -185,12 +101,14 @@ object Demo {
     private fun machine(id: String, label: String, host: String = label, port: Int = 22, user: String = "demo", via: String? = null) =
         Machine(id = id, label = label, host = host, port = port, user = user, viaMachineId = via, hostKey = FakeMachine(id).fingerprint)
 
-    /** The Agents list triaged: gpu-box's eval pinned and muted, AND-6's agent snoozed for three hours. */
-    fun triage() = com.makefunstuff.herdr.core.home.Triage(
-        pins = listOf("$GPU/w1:p1"),
-        snoozes = mapOf("$DEVBOX/w4:p1" to com.makefunstuff.herdr.core.home.Snooze(until = NOW + 3 * 3_600_000L)),
-        muted = setOf("$GPU/w1:p1"),
-        used = true,
+    /** The Agents list triaged: gpu-box's eval pinned. */
+    fun triage() = com.makefunstuff.herdr.core.home.Triage(pins = listOf("$GPU/w1:p1"), used = true)
+
+    /** Each space's Notify as someone might pick it: gpu-box's llm-eval Off, devbox's herdr-android All (Finished off everywhere). */
+    fun notify(): PushState = push().copy(
+        rules = com.makefunstuff.herdr.core.push.AlertRules()
+            .withSpace(com.makefunstuff.herdr.core.push.Notify.key(GPU, "llm-eval"), com.makefunstuff.herdr.core.push.Notify.Off)
+            .withSpace(com.makefunstuff.herdr.core.push.Notify.key(DEVBOX, "herdr-android"), com.makefunstuff.herdr.core.push.Notify.All),
     )
 
     /** Notifications on: devbox and gpu-box send, ci-runner is left out, mac-mini has no python3. */
@@ -206,20 +124,6 @@ object Demo {
             ),
         )
     }
-
-    /** Watches set from the long-press sheets: AND-6's checks, the eval on gpu-box finishing. */
-    fun watches() = listOf(
-        com.makefunstuff.herdr.core.push.Watch(DEVBOX, com.makefunstuff.herdr.core.push.Watch.What.ChecksPass, taskId = "herdr-android/6", name = "AND-6"),
-        com.makefunstuff.herdr.core.push.Watch(GPU, com.makefunstuff.herdr.core.push.Watch.What.AgentDone, paneId = "w1:p1", name = "the eval"),
-    )
-
-    /** AND-6 past its checks, in review: what fires its watch. */
-    fun and6Reviewing() = com.makefunstuff.herdr.core.board.BoardTasks.task(
-        kotlinx.serialization.json.Json.parseToJsonElement(
-            """{"id":"herdr-android/6","title":"Add app screenshots to the README","state":"working","stage":"reviewing"}""",
-        ) as JsonObject,
-        "AND-6",
-    )!!
 
     /** Quiet hours as someone might set them: with the phone's modes, and weeknights from 22:00 to 07:00. */
     fun quiet() = QuietHours(followPhone = true, schedule = true, start = 22 * 60, end = 7 * 60, days = (1..5).toSet())
@@ -411,24 +315,16 @@ object Demo {
                 API_SESSION to resource("claude-api.jsonl"),
                 SITE_SESSION to resource("codex-site.jsonl"),
             ),
-            board = FakeBoard(automations = routines(), firings = mapOf("c1a2b3d4" to ciFirings())),
-            // AND-9's timeline: its agent's session (Claude Code) and its reviewer's (codex), with their times, and the board's record of it.
-            // The app agent's own timeline (from its chat) is that session while it still works.
+            // The app agent's own timeline (from its chat): its session while it still works.
             activity = mapOf(
-                "/home/demo/.claude/projects/-home-demo-src-herdr-android-9/$APP_SESSION.jsonl" to resource("activity/claude-and9.jsonl"),
                 APP_SESSION to resource("activity/claude-and9-live.jsonl"),
-                "0199a3d0-9e8f-7a10-b2c3-d4e5f6a7b8c9" to resource("activity/codex-and9-review.jsonl"),
             ),
-            records = mapOf("herdr-android/9" to resource("activity/task-herdr-android-9.json")),
-            said = mapOf("herdr-android/9" to resource("activity/said-herdr-android-9.jsonl")),
             workspaceTokens = mapOf("w1" to mapOf("branch" to "work/9-last-answered", "pr" to "#9")),
             journal = devboxJournal(),
             code = FakeCode(),
-            quick = FakeQuick(),
             usage = FakeUsage(),
             logins = FakeLogins(),
             agentCommands = AGENT_COMMANDS,
-            ports = DEVBOX_PORTS,
         ),
         GPU to FakeMachine(
             GPU,
@@ -448,18 +344,6 @@ object Demo {
         MINI to FakeMachine(MINI, refuse = ConnectError.Auth(null)),
     )
 
-    /**
-     * What listens on devbox: the website's vite and storybook, the API's uvicorn (started outside
-     * herdr, in its folder), the herdr-android workspace's Gradle daemon, and sshd (not the account's).
-     */
-    val DEVBOX_PORTS = listOf(
-        "L\t22\t0.0.0.0\t\t\t\t\t\t\t",
-        "L\t5173\t127.0.0.1\t4101\tnode\tw3\tw3:p1\t/home/demo/src/website\t1\tnode /home/demo/src/website/node_modules/.bin/vite --port 5173",
-        "L\t6006\t127.0.0.1\t4133\tnode\tw3\tw3:p1\t/home/demo/src/website\t1\tnode /home/demo/src/website/node_modules/.bin/storybook dev -p 6006",
-        "L\t8000\t0.0.0.0\t4120\tpython3\t\t\t/home/demo/src/api-server\t1\t/usr/bin/python3 -m uvicorn app:api --reload",
-        "L\t41234\t127.0.0.1\t4200\tjava\tw1\t\t/home/demo/src/herdr-android\t0\tjava -cp gradle-launcher.jar org.gradle.launcher.daemon.bootstrap.GradleDaemon 8.10",
-    ).joinToString("\n") + "\n"
-
     /** The own commands and skills on devbox, as `herdr-agent-commands` prints them: herdr-android's `/ship`, and a skill of the person's. */
     private val AGENT_COMMANDS = listOf(
         "@@herdr-command\tproject\tcommand\tship\n---\ndescription: Run the checks, commit and open a pull request\n---\nRun ./gradlew check, then commit and open a PR.\n",
@@ -472,9 +356,8 @@ object Demo {
     private const val EVAL_SESSION = "0199a3c4-1d2e-7f30-8a4b-5c6d7e8f9a0b"
 
     /**
-     * devbox's session. [appKind]: the agent at work in herdr-android (pi, for `chat-pi-thinking`). [home]: as herdr-projects runs its agents, each named for its task (`sw-<repo>-<n>`),
-     * so the Agents screen ties them to the board's tasks; and one more, at work on AND-6 in the
-     * workspace the board opened for it.
+     * devbox's session. [appKind]: the agent at work in herdr-android (pi, for `chat-pi-thinking`). [home]: its agents
+     * named for their work, and one more, at work on AND-6 in a workspace named after it.
      */
     fun devbox(appStatus: String = "working", home: Boolean = false, apiStatus: String = "blocked", reviewer: Boolean = false, appKind: String = "claude"): JsonObject = snapshot(
         *listOfNotNull(
@@ -494,30 +377,6 @@ object Demo {
             ) else null,
         ).toTypedArray(),
     )
-
-    /**
-     * The Coordinator asked what needs you: it answers with a list of tasks, each with its own words,
-     * which stay under the task's row.
-     */
-    fun whatNeedsMe(): JsonObject {
-        val r = FakeBoard().remote
-        val c = r.getValue("coordinator") as JsonObject
-        val talk = (c.getValue("talk") as kotlinx.serialization.json.JsonArray) + listOf(
-            obj("you" to true, "text" to "What needs me?"),
-            obj(
-                "you" to false,
-                "text" to "Three tasks wait for you:\n\n" +
-                    "- **API-3** Speed up /jobs on large tables\n" +
-                    "  Asks whether the migration may lock the jobs table for a few seconds.\n" +
-                    "- **AND-9:** ready to merge, review passed\n" +
-                    "- **WEB-4**: the review found 2 problems\n" +
-                    "  - the Homebrew step names the old tap\n" +
-                    "  - no step for Linux arm64\n\n" +
-                    "AND-6 and EVAL-2 are still working.",
-            ),
-        )
-        return JsonObject(r + ("coordinator" to JsonObject(c + mapOf("talk" to json(talk), "said" to json(talk.last().let { (it as JsonObject).getValue("text") })))))
-    }
 
     /**
      * devbox with a second tab in herdr-android, "tests", where a shell runs the tests: a workspace
@@ -564,7 +423,7 @@ object Demo {
 
     class Agent(
         val kind: String, val status: String, val session: String, val title: String,
-        /** herdr's agent name: the kind, unless herdr-projects named it for its task. */
+        /** herdr's agent name: the kind, unless it was given one. */
         val name: String? = null,
         val seq: Long = 1,
         /** The finish herdr last saw ([com.makefunstuff.herdr.core.api.AgentInfo.completionSeq]). */

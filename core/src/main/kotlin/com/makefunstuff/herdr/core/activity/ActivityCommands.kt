@@ -1,9 +1,7 @@
 package com.makefunstuff.herdr.core.activity
 
 import com.makefunstuff.herdr.core.chat.TranscriptFollower
-import com.makefunstuff.herdr.core.board.BoardCommands
 import com.makefunstuff.herdr.core.ssh.HerdrCommands.quote
-import com.makefunstuff.herdr.core.ssh.Machine
 
 /**
  * The shell commands the timeline reads with, over the machine's SSH connection. Both only read.
@@ -15,25 +13,8 @@ object ActivityCommands {
     /** What one session sends at most, after it is pruned: its newest lines. */
     const val SESSION_BYTES = 1_500_000
 
-    /** All of a task's sessions together, at most. */
+    /** All of an agent's sessions together, at most. */
     const val TOTAL_BYTES = 6_000_000
-
-    private const val TASK_LIMIT = 2 * 1024 * 1024
-    private const val SAID_LIMIT = 256 * 1024
-
-    /**
-     * The board's record of [taskId]: `task.json` and `said-by.jsonl`, from the board's data folder
-     * (found as [com.makefunstuff.herdr.core.board.ApprovalCommands.facts] finds it).
-     */
-    fun record(machine: Machine, path: String, taskId: String): String {
-        val script = "d=\${HERDR_PROJECTS_DATA_DIR:-}; " +
-            "if [ -z \"\$d\" ]; then case \"\$1\" in */bin/herdr-projects) l=\${1%/bin/herdr-projects}; [ -d \"\$l/tasks\" ] && d=\$l;; esac; fi; " +
-            "[ -n \"\$d\" ] || d=\${HERDR_PROJECTS_HOME:-\$HOME/.herdr-projects}/data; t=\"\$d/tasks/\$2\"; " +
-            "echo '$MARK task'; head -c $TASK_LIMIT \"\$t/task.json\" 2>/dev/null; echo; " +
-            "echo '$MARK said'; tail -c $SAID_LIMIT \"\$t/said-by.jsonl\" 2>/dev/null; echo; " +
-            "echo '$MARK end'"
-        return BoardCommands.login(machine, "sh -c ${quote(script)} herdr-activity-record ${quote(path)} ${quote(taskId)}")
-    }
 
     /**
      * Drops what the timeline never shows (API request copies, attachments, reasoning, whole files

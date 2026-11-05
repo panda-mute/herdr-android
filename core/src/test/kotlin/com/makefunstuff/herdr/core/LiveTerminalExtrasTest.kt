@@ -4,8 +4,6 @@ import com.makefunstuff.herdr.core.api.ApiClient
 import com.makefunstuff.herdr.core.api.CopyMotion
 import com.makefunstuff.herdr.core.api.HerdrApi
 import com.makefunstuff.herdr.core.api.HerdrApiException
-import com.makefunstuff.herdr.core.api.LayoutNode
-import com.makefunstuff.herdr.core.api.ResizeDirection
 import com.makefunstuff.herdr.core.api.ScrollbackSearch
 import com.makefunstuff.herdr.core.api.TextPoint
 import com.makefunstuff.herdr.core.ssh.Duplex
@@ -46,7 +44,7 @@ class LiveTerminalExtrasTest {
     }
 
     @Test
-    fun scrollbackSearchSelectionLinksAndLayouts() {
+    fun scrollbackSearchSelectionAndLinks() {
         if (socket == null) return
         runBlocking {
             val client = ApiClient { open() }
@@ -96,26 +94,7 @@ class LiveTerminalExtrasTest {
                 val link = api.activateLink(paneId, urlRow, col)
                 assertEquals("https://example.com/x", link.url)
 
-                // Split, change the ratio, resize, export, and apply as a new tab.
-                api.splitPane(paneId, "right")
-                assertEquals(0.5f, (api.exportLayout(tabId).root as LayoutNode.Split).ratio)
-                val set = api.setSplitRatio(tabId, emptyList(), 0.3f)
-                assertEquals(0.3f, (set.root as LayoutNode.Split).ratio, 0.01f)
-                val resized = api.resizePane(paneId, ResizeDirection.Right, 0.1f)
-                assertTrue(resized.changed)
-                assertEquals(0.4f, resized.layout!!.splits.single().ratio, 0.01f)
-                val exported = api.exportLayout(tabId)
-                val applied = api.applyLayout(exported.root.template(), workspaceId = workspaceId, label = "copy")
-                assertTrue(applied.tabId != tabId)
-                val tree = assertIs<LayoutNode.Split>(applied.root)
-                assertEquals(0.4f, tree.ratio, 0.01f)
-                assertTrue(tree.panes().all { it.paneId != null })
-                assertNotNull(api.paneLayout(tree.panes().first().paneId!!).splits.singleOrNull())
-
-                // herdr's own errors come back as HerdrApiException with its message.
-                val e = assertFailsWith<HerdrApiException> { api.setSplitRatio(tabId, listOf(false), 0.5f) }
-                assertEquals("split_not_found", e.code)
-                println("live extras ok: $first / ${e.message}")
+                println("live extras ok: $first")
             } finally {
                 client.call("workspace.close", buildJsonObject { put("workspace_id", JsonPrimitive(workspaceId)) })
             }

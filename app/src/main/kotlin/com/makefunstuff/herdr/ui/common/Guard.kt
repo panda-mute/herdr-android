@@ -1,5 +1,7 @@
 package com.makefunstuff.herdr.ui.common
 
+import androidx.compose.ui.graphics.RectangleShape
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -8,7 +10,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -118,7 +119,7 @@ private fun LockScreen(onUnlock: () -> Unit) {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(Space.m),
         ) {
-            Box(Modifier.size(72.dp).clip(CircleShape).background(c.accentTint), contentAlignment = Alignment.Center) {
+            Box(Modifier.size(72.dp).clip(RectangleShape).background(c.accentTint), contentAlignment = Alignment.Center) {
                 Icon(HerdrIcons.Lock, null, tint = c.accent, modifier = Modifier.size(32.dp))
             }
             Text("Herdr is locked", style = MaterialTheme.typography.titleLarge, color = c.strong)

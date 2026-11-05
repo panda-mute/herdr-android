@@ -97,62 +97,6 @@ class HerdrApi(private val connection: ApiCaller) {
         )
     }
 
-    /**
-     * Lists the checkouts of the repository that a workspace ([workspaceId]) or a folder ([cwd]) is in.
-     * [trustRepository] grants Git trust for this one request; only after the user has vouched for the repository.
-     */
-    suspend fun worktrees(workspaceId: String? = null, cwd: String? = null, trustRepository: Boolean = false): WorktreeList =
-        decode(connection.call("worktree.list", repoParams(workspaceId, cwd, trustRepository)))
-
-    /**
-     * Creates a worktree of the repository a workspace or folder is in and opens it as a new workspace.
-     * Leaving [branch] out lets herdr pick a name; [base] is the ref the new branch starts from.
-     */
-    suspend fun createWorktree(
-        workspaceId: String? = null,
-        cwd: String? = null,
-        branch: String? = null,
-        base: String? = null,
-        path: String? = null,
-        label: String? = null,
-        trustRepository: Boolean = false,
-    ): WorktreeOpened = decode(
-        connection.call(
-            "worktree.create",
-            repoParams(workspaceId, cwd, trustRepository, "branch" to branch, "base" to base, "path" to path, "label" to label, "focus" to false),
-            timeoutMs = 60_000,
-        ),
-    )
-
-    /** Opens an existing worktree, by [path] or [branch], as a workspace (or finds the one it's already open in). */
-    suspend fun openWorktree(
-        workspaceId: String? = null,
-        cwd: String? = null,
-        path: String? = null,
-        branch: String? = null,
-        label: String? = null,
-        trustRepository: Boolean = false,
-    ): WorktreeOpened = decode(
-        connection.call(
-            "worktree.open",
-            repoParams(workspaceId, cwd, trustRepository, "path" to path, "branch" to branch, "label" to label, "focus" to false),
-            timeoutMs = 60_000,
-        ),
-    )
-
-    /**
-     * Deletes the linked worktree checkout that [workspaceId] is open on, and closes the workspace.
-     * herdr refuses a checkout with changes (`dirty_worktree_requires_force`) unless [force].
-     */
-    suspend fun removeWorktree(workspaceId: String, force: Boolean = false, trustRepository: Boolean = false): WorktreeRemoved =
-        decode(
-            connection.call(
-                "worktree.remove",
-                params("workspace_id" to workspaceId, "force" to force, "trust_repository" to trustRepository.takeIf { it }),
-                timeoutMs = 60_000,
-            ),
-        )
-
     suspend fun pane(paneId: String): PaneInfo =
         HerdrJson.decodeFromJsonElement(connection.call("pane.get", params("pane_id" to paneId))["pane"] ?: JsonObject(emptyMap()))
 
@@ -223,56 +167,6 @@ class HerdrApi(private val connection: ApiCaller) {
     suspend fun activateLink(paneId: String, viewportRow: Int, col: Int): LinkActivation =
         decode(connection.call("pane.link.activate", params("pane_id" to paneId, "viewport_row" to viewportRow, "col" to col)))
 
-    // ---- Layout ------------------------------------------------------------------------
-
-    /** Moves the split edge of [paneId] toward [direction] by [amount] (a fraction of the split; herdr's step when null). */
-    suspend fun resizePane(paneId: String, direction: ResizeDirection, amount: Float? = null): PaneResizeResult =
-        HerdrJson.decodeFromJsonElement(
-            connection.call("pane.resize", params("pane_id" to paneId, "direction" to direction.wire, "amount" to amount))["resize"]
-                ?: JsonObject(emptyMap()),
-        )
-
-    /** The pane's tab layout as rectangles: panes and splits. */
-    suspend fun paneLayout(paneId: String): TabLayout =
-        HerdrJson.decodeFromJsonElement(connection.call("pane.layout", params("pane_id" to paneId))["layout"] ?: JsonObject(emptyMap()))
-
-    /** The tab's split tree. */
-    suspend fun exportLayout(tabId: String): LayoutDescription =
-        HerdrJson.decodeFromJsonElement(connection.call("layout.export", params("tab_id" to tabId))["layout"] ?: JsonObject(emptyMap()))
-
-    /** Sets the ratio of the split at [path] in [tabId] (false = first child, true = second; empty = the root). */
-    suspend fun setSplitRatio(tabId: String, path: List<Boolean>, ratio: Float): LayoutDescription =
-        HerdrJson.decodeFromJsonElement(
-            connection.call(
-                "layout.set_split_ratio",
-                params("tab_id" to tabId, "path" to JsonArray(path.map(::JsonPrimitive)), "ratio" to ratio),
-            )["layout"] ?: JsonObject(emptyMap()),
-        )
-
-    /**
-     * Builds [root] as a tab. With [replaceTabId], that tab's panes are closed and the layout
-     * takes its place; otherwise it opens as a new tab in [workspaceId] named [label].
-     */
-    suspend fun applyLayout(
-        root: LayoutNode,
-        workspaceId: String? = null,
-        replaceTabId: String? = null,
-        label: String? = null,
-    ): LayoutDescription =
-        HerdrJson.decodeFromJsonElement(
-            connection.call(
-                "layout.apply",
-                params(
-                    "root" to HerdrJson.encodeToJsonElement(root),
-                    "workspace_id" to workspaceId,
-                    "tab_id" to replaceTabId,
-                    "tab_label" to label,
-                    "focus" to false,
-                ),
-                timeoutMs = 60_000,
-            )["layout"] ?: JsonObject(emptyMap()),
-        )
-
     private fun point(p: TextPoint) = params("row" to p.row, "col" to p.col)
 
     // Workspaces
@@ -288,9 +182,6 @@ class HerdrApi(private val connection: ApiCaller) {
         connection.call("workspace.close", params("workspace_id" to workspaceId))
     }
 
-    /** Names the repository by workspace or folder; trust is only sent when granted. */
-    private fun repoParams(workspaceId: String?, cwd: String?, trust: Boolean, vararg more: Pair<String, Any?>): JsonObject =
-        params("workspace_id" to workspaceId, "cwd" to cwd, "trust_repository" to trust.takeIf { it }, *more)
     suspend fun focusWorkspace(workspaceId: String) {
         connection.call("workspace.focus", params("workspace_id" to workspaceId))
     }

@@ -2,6 +2,7 @@ package com.makefunstuff.herdr.core.hc
 
 import com.makefunstuff.herdr.core.agents.AgentKinds
 import com.makefunstuff.herdr.core.api.AgentInfo
+import com.makefunstuff.herdr.core.api.AgentSessionRef
 import com.makefunstuff.herdr.core.api.AgentStatus
 import com.makefunstuff.herdr.core.api.PaneInfo
 import com.makefunstuff.herdr.core.api.SessionSnapshot
@@ -107,6 +108,9 @@ object HcMapping {
     private const val ASSISTANT = "herdr.coordinator"
     private const val TASK_SPACE = "herdr.task.space"
 
+    /** The agents whose transcript is found from their process (Shepherdr 3.1's chat finds the same two). */
+    private val BY_PID = setOf("claude", "codex")
+
     /**
      * The hc address of a pane id from [snapshot], or null when it isn't one of herdr-core's: `t7`
      * for `hc:t7` (the default session's) and for `hc:@shepherdr:t7` (another session's, [session]).
@@ -132,6 +136,19 @@ object HcMapping {
         if (app.isNotEmpty()) return AgentKinds.fromApp(app) ?: app.removeSuffix("-cli")
         val argv = t.foreground?.argv?.takeIf { it.isNotEmpty() } ?: t.argv
         return AgentKinds.fromArgv(argv) ?: AgentKinds.normalize(t.foreground?.name)
+    }
+
+    /**
+     * Where the agent's own transcript is found: hc reports no session, so it is looked up from the
+     * agent's process on the machine ([AgentSessionRef] kind `pid`). Only for the agents whose
+     * transcripts the app reads that way, and not on a machine this core added (`rohan/t7`): the
+     * process runs there, not on the machine the app reaches.
+     */
+    fun sessionOf(t: HcTerminal): AgentSessionRef? {
+        val agent = agentName(t)?.takeIf { it in BY_PID } ?: return null
+        val pid = t.foreground?.pid?.takeIf { it > 0 } ?: return null
+        if ('/' in t.address) return null
+        return AgentSessionRef(agent = agent, kind = "pid", value = pid.toString(), source = "herdr-core")
     }
 
     /** It reports a status now, or a known agent runs in it ([HcTerminal.reported] stays true after the agent quit). */
@@ -261,6 +278,7 @@ object HcMapping {
                 stateChangeSeq = t.statusMs ?: t.createdMs,
                 completionSeq = t.turn.takeIf { it > 0 },
                 cwd = t.foreground?.cwd ?: t.cwd,
+                agentSession = sessionOf(t),
                 shepherdrTask = shepherdrTask(t)?.takeIf { t.labels[ROLE] != "reviewer" },
                 shepherdrSpace = shepherdrSpace(t),
             )

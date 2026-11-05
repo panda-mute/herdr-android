@@ -1,5 +1,7 @@
 package com.makefunstuff.herdr.ui.agents
 
+import androidx.compose.ui.graphics.RectangleShape
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -10,7 +12,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -60,7 +61,7 @@ fun EditDiff(diff: FileDiff, key: String, modifier: Modifier = Modifier) {
     val long = count > FOLDED_LINES + 3
     var all by rememberSaveable(key) { mutableStateOf(false) }
     val shown = if (all || !long) rows else rows.take(rows.indexOfNth(FOLDED_LINES) { it.kind != CodeRow.Kind.Hunk } + 1)
-    val shape = RoundedCornerShape(Radius.l)
+    val shape = RectangleShape
     Column(modifier.fillMaxWidth().clip(shape).background(c.panel).border(1.dp, c.line, shape)) {
         Row(Modifier.fillMaxWidth().padding(start = Space.m, end = Space.m, top = Space.s, bottom = Space.xs), verticalAlignment = Alignment.Top) {
             Column(Modifier.weight(1f)) {

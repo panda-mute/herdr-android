@@ -285,7 +285,7 @@ private fun signOutCommand(cli: CliLogin, provider: String?) = when (cli.id) {
  * one that ran out or the key in a profile when there is one. Read when it shows and is older than ten minutes.
  */
 @Composable
-fun LoginsRow(session: HostSession, onOpen: () -> Unit, modifier: Modifier = Modifier) {
+fun LoginsRow(session: HostSession, onOpen: () -> Unit, modifier: Modifier = Modifier, tile: Boolean = false) {
     val store = LocalContainer.current.logins
     val latest by store.latest.collectAsStateWithLifecycle()
     val state by session.state.collectAsStateWithLifecycle()
@@ -304,6 +304,13 @@ fun LoginsRow(session: HostSession, onOpen: () -> Unit, modifier: Modifier = Mod
         else -> null
     }
     val line = report?.let { LoginWords.glance(it, now) } ?: "Which agent CLIs are signed in"
+    if (tile) {
+        com.makefunstuff.herdr.ui.machines.PlaceTile(
+            HerdrIcons.KeyRound, "Logins", line, tint ?: c.muted, modifier, onOpen, "Open agent logins",
+            edge = tint ?: c.lineStrong, iconTint = tint ?: c.text,
+        )
+        return
+    }
     QuietCard(
         modifier.semantics(mergeDescendants = true) { contentDescription = "Agent logins: $line" },
         onClick = onOpen, onClickLabel = "Open agent logins", edge = tint ?: c.line,

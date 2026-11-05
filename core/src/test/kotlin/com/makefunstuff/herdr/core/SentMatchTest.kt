@@ -1,8 +1,5 @@
 package com.makefunstuff.herdr.core
 
-import com.makefunstuff.herdr.core.board.CoordinatorChat
-import com.makefunstuff.herdr.core.board.CoordinatorView
-import com.makefunstuff.herdr.core.board.Said
 import com.makefunstuff.herdr.core.chat.SentMatch
 import com.makefunstuff.herdr.core.chat.SentMatch.Pending
 import kotlin.test.Test
@@ -60,16 +57,6 @@ class SentMatchTest {
         assertEquals(0, open(listOf(Pending(msg, 0)).also { }, emptyList()).size - 1)
         assertEquals(0, SentMatch.unconfirmed(listOf(Pending(msg, 0))) { SentMatch.countOnScreen(it.text, "> $msg\nreply") }.size)
         assertEquals(1, SentMatch.unconfirmed(listOf(Pending(msg, 1))) { SentMatch.countOnScreen(it.text, "> $msg\nreply") }.size)
-    }
-
-    @Test fun coordinatorLinesShowRepeatedMessageTwice() {
-        val talk = listOf(Said(true, msg), Said(false, "answer"))
-        val view = CoordinatorView(state = "working", sent = msg, talk = talk)
-        assertEquals(2, CoordinatorChat.lines(view, talk, baseline = 1).count { it.you })
-        // The board's conversation already holds the new one: shown once.
-        val both = talk + Said(true, "$msg\n[sent with tab]")
-        assertEquals(2, CoordinatorChat.lines(view, both, baseline = 1).count { it.you })
-        assertEquals(1, CoordinatorChat.lines(CoordinatorView(state = "working", sent = msg, talk = listOf(Said(true, "$msg\n[sent with tab]")))).count { it.you })
     }
 
     @Test fun reviewProbes() {

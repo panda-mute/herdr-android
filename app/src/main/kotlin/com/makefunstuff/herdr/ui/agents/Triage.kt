@@ -40,12 +40,11 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.makefunstuff.herdr.core.home.AgentRow
 import com.makefunstuff.herdr.core.home.HomeAgent
-import com.makefunstuff.herdr.core.home.Snooze
 import com.makefunstuff.herdr.ui.common.LocalContainer
 import com.makefunstuff.herdr.ui.common.toast
 import com.makefunstuff.herdr.ui.design.HerdrIcons
 import com.makefunstuff.herdr.ui.manage.ManageRow
-import com.makefunstuff.herdr.ui.manage.ManageSheet
+import com.makefunstuff.herdr.ui.spaces.NotifyPicker
 import com.makefunstuff.herdr.ui.theme.Herdr
 import com.makefunstuff.herdr.ui.theme.Space
 import kotlinx.coroutines.launch
@@ -59,36 +58,27 @@ private val SEEN_AT = 96.dp
 
 /**
  * What the Agents list does to one agent from its swipes, its long-press sheet and TalkBack's
- * actions: mark a finish seen, pin it on top, snooze it, mute its notifications. Kept on this phone
- * ([com.makefunstuff.herdr.data.TriageStore], [com.makefunstuff.herdr.data.SeenStore]).
+ * actions: mark a finish seen, pin it on top. Kept on this phone
+ * ([com.makefunstuff.herdr.data.TriageStore], [com.makefunstuff.herdr.data.SeenStore]); what reaches
+ * the phone from it is its space's Notify, in the same sheet ([NotifyPicker]).
  */
 class TriageActions(
     private val seen: (HomeAgent) -> Unit,
     private val pin: (HomeAgent, Boolean) -> Unit,
-    /** Opens the snooze choices for an agent; null takes its snooze back. */
-    private val snooze: (HomeAgent, Boolean) -> Unit,
-    private val mute: (HomeAgent, Boolean) -> Unit,
 ) {
     fun seen(row: AgentRow) = seen(row.agent)
     fun pin(row: AgentRow) = pin(row.agent, !row.pinned)
-    fun snooze(row: AgentRow) = snooze(row.agent, row.snooze == null)
-    fun mute(row: AgentRow) = mute(row.agent, !row.muted)
 
     /** The same, as TalkBack offers them on the row. */
     fun accessibility(row: AgentRow): List<CustomAccessibilityAction> = listOfNotNull(
         CustomAccessibilityAction("Mark seen") { seen(row); true }.takeIf { row.new },
         CustomAccessibilityAction(if (row.pinned) "Unpin" else "Pin to the top") { pin(row); true },
-        CustomAccessibilityAction(if (row.snooze != null) "Stop snoozing" else "Snooze") { snooze(row); true },
-        muteAction(row),
     )
-
-    /** Muting it alone, as a question's card offers it (it has no other triage). */
-    fun muteAction(row: AgentRow) = CustomAccessibilityAction(if (row.muted) "Unmute notifications" else "Mute notifications") { mute(row); true }
 }
 
 /** The actions on the home list, kept in the phone's stores, with a toast for each. */
 @Composable
-fun rememberTriageActions(onSnoozeChoices: (HomeAgent) -> Unit): TriageActions {
+fun rememberTriageActions(): TriageActions {
     val container = LocalContainer.current
     val context = LocalContext.current
     return remember(container, context) {
@@ -101,25 +91,12 @@ fun rememberTriageActions(onSnoozeChoices: (HomeAgent) -> Unit): TriageActions {
                 container.triage.change { (if (on) it.pin(a.key) else it.unpin(a.key)).copy(used = true) }
                 context.toast(if (on) "Pinned to the top" else "Unpinned")
             },
-            snooze = { a, on ->
-                if (on) onSnoozeChoices(a) else {
-                    container.triage.change { it.wake(a.key) }
-                    context.toast("Not snoozed any more")
-                }
-            },
-            mute = { a, on ->
-                container.triage.change { (if (on) it.mute(a.key) else it.unmute(a.key)).copy(used = true) }
-                context.toast(if (on) "Muted: no notifications from ${name(a)}" else "Notifications from ${name(a)} again")
-            },
         )
     }
 }
 
-private fun name(a: HomeAgent) = a.agent.name?.takeIf { it.isNotBlank() } ?: a.agent.displayName
-
 /**
- * A row that swipes: right marks a finish seen (when [AgentRow.new]), left shows Pin, Snooze and Mute
- * under it. [open]: whether it stays open on the left, so that only one row is open at a time.
+ * A row that swipes: right marks a finish seen (when [AgentRow.new]), left shows Pin under it. [open]: whether it stays open on the left, so that only one row is open at a time.
  */
 @Composable
 fun SwipeRow(
@@ -132,7 +109,7 @@ fun SwipeRow(
     val c = Herdr.colors
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
-    val reveal = with(density) { (ACTION * 3).toPx() }
+    val reveal = with(density) { ACTION.toPx() }
     val seenAt = with(density) { SEEN_AT.toPx() }
     var x by remember { mutableFloatStateOf(0f) }
     suspend fun settle(to: Float) = animate(x, to) { v, _ -> x = v }
@@ -154,8 +131,6 @@ fun SwipeRow(
             Row(Modifier.matchParentSize().background(c.card), horizontalArrangement = Arrangement.End) {
                 fun done(f: () -> Unit) { onOpen(false); f() }
                 SwipeAction(if (row.pinned) "Unpin" else "Pin", if (row.pinned) HerdrIcons.PinOff else HerdrIcons.Pin, c.text) { done { actions.pin(row) } }
-                SwipeAction(if (row.snooze != null) "Wake" else "Snooze", HerdrIcons.Clock, c.accent) { done { actions.snooze(row) } }
-                SwipeAction(if (row.muted) "Unmute" else "Mute", if (row.muted) HerdrIcons.Bell else HerdrIcons.BellOff, c.text) { done { actions.mute(row) } }
             }
         }
         Box(
@@ -189,38 +164,12 @@ private fun SwipeAction(label: String, icon: ImageVector, tint: Color, onClick: 
     }
 }
 
-/** How long to snooze [agent]: until it changes, or until a time. */
-@Composable
-fun SnoozeSheet(agent: HomeAgent, onDismiss: () -> Unit) {
-    val container = LocalContainer.current
-    val context = LocalContext.current
-    val now = container.triage.now()
-    val zone = container.triage.zone()
-    ManageSheet("Snooze ${name(agent)}", "Off the list until then. A question still shows in Needs you.", onDismiss) {
-        Snooze.choices(agent, now, zone).forEachIndexed { i, (label, s) ->
-            ManageRow(
-                label,
-                icon = if (i == 0) HerdrIcons.RefreshCw else HerdrIcons.Clock,
-                detail = when {
-                    i == 0 -> "Back when it works, finishes or asks again"
-                    label.startsWith("For") -> s.label(now, zone).replaceFirstChar { it.uppercase() }
-                    else -> null
-                },
-            ) {
-                container.triage.change { it.snooze(agent.key, s).copy(used = true) }
-                context.toast("Snoozed ${s.label(now, zone)}")
-                onDismiss()
-            }
-        }
-    }
-}
-
 /**
- * The triage rows of an agent's long-press sheet: Mark seen (a finish not looked at), Pin to the top,
- * Snooze, Mute notifications; each taken back from the same row.
+ * The triage rows of an agent's long-press sheet: Mark seen (a finish not looked at), Pin to the top
+ * (taken back from the same row), and its space's Notify (All / Needs me / Off).
  */
 @Composable
-fun TriageRows(agent: HomeAgent, onSnooze: () -> Unit) {
+fun TriageRows(agent: HomeAgent) {
     val container = LocalContainer.current
     val context = LocalContext.current
     val triage by container.triage.state.collectAsStateWithLifecycle()
@@ -237,27 +186,5 @@ fun TriageRows(agent: HomeAgent, onSnooze: () -> Unit) {
         container.triage.change { (if (pinned) it.unpin(key) else it.pin(key)).copy(used = true) }
         context.toast(if (pinned) "Unpinned" else "Pinned to the top")
     }
-    val snooze = triage.snoozeOf(agent, container.triage.now())
-    ManageRow(
-        if (snooze != null) "Stop snoozing" else "Snooze",
-        icon = HerdrIcons.Clock,
-        detail = snooze?.let { "Snoozed ${it.label(container.triage.now(), container.triage.zone())}" } ?: "Until it changes, or until a time",
-        selected = snooze != null,
-        chevron = snooze == null,
-    ) {
-        if (snooze != null) {
-            container.triage.change { it.wake(key) }
-            context.toast("Not snoozed any more")
-        } else onSnooze()
-    }
-    val muted = key in triage.muted
-    ManageRow(
-        if (muted) "Unmute notifications" else "Mute notifications",
-        icon = if (muted) HerdrIcons.Bell else HerdrIcons.BellOff,
-        detail = if (muted) "Muted: nothing it says reaches the phone" else "No notifications from it; a watch you set still comes",
-        selected = muted,
-    ) {
-        container.triage.change { (if (muted) it.unmute(key) else it.mute(key)).copy(used = true) }
-        context.toast(if (muted) "Notifications from ${name(agent)} again" else "Muted: no notifications from ${name(agent)}")
-    }
+    NotifyPicker(agent.space)
 }
