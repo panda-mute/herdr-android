@@ -274,7 +274,12 @@ class ClaudeTranscript(private val sidechain: Boolean = false) : Transcript() {
                     val id = block.str("id") ?: return@forEachIndexed
                     val name = block.str("name").orEmpty()
                     val input = block.obj("input") ?: JsonObject(emptyMap())
-                    put(ChatItem.Tool(id, name, ToolSummary.of(name, input), ToolSummary.detail(input), diffs = EditCalls.of(name, input).orEmpty()))
+                    put(
+                        ChatItem.Tool(
+                            id, name, ToolSummary.of(name, input), ToolSummary.detail(input), diffs = EditCalls.of(name, input).orEmpty(),
+                            asks = if (name == "AskUserQuestion") AskedQuestions.of(input) else emptyList(),
+                        ),
+                    )
                 }
             }
         }

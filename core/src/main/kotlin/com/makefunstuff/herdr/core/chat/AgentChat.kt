@@ -252,7 +252,7 @@ class AgentChat(private val host: HostSession, val paneId: String, private val s
                     _state.update { s ->
                         s.copy(
                             screen = (recent ?: visible ?: s.screen).trimEnd(),
-                            prompt = visible?.let { BlockedPrompt.parse(it) },
+                            prompt = visible?.let { BlockedPrompt.parse(it) }?.let { AskedQuestions.fill(it, s.items) },
                             pending = if (source == Source.Screen && recent != null) SentMatch.unconfirmed(s.pending) { p -> SentMatch.slid(p, SentMatch.countOnScreen(p.text, recent), System.currentTimeMillis()) } else s.pending,
                         )
                     }

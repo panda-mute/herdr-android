@@ -35,6 +35,8 @@ sealed interface ChatItem {
         val state: ToolState = ToolState.Running,
         val diffs: List<FileDiff> = emptyList(),
         val subagent: String? = null,
+        /** Claude's AskUserQuestion: its questions as asked, for the card read off the screen ([AskedQuestions]). */
+        val asks: List<AskedQuestion> = emptyList(),
     ) : ChatItem
 
     /** A quiet marker in the timeline: interrupted, compacted, a slash command. */
