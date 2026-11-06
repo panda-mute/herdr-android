@@ -91,6 +91,42 @@ class AgentRestartTest {
         assertEquals("prompt go", pane.log.last())
     }
 
+    /** A pane whose herdr refuses to start an agent with [why], [times] times (or always). */
+    private class Refusing(val why: String, val times: Int = Int.MAX_VALUE, val pane: Pane = Pane(listOf("claude"))) : AgentRestart.Port by pane {
+        var refused = 0
+        override suspend fun start(name: String, kind: String, paneId: String, args: List<String>, timeoutMs: Long) {
+            if (refused++ < times) throw HerdrApiException("invalid", why)
+            pane.start(name, kind, paneId, args, timeoutMs)
+        }
+        override suspend fun type(paneId: String, text: String) {
+            pane.type(paneId, text)
+            if (text.startsWith("claude ")) pane.running = true
+        }
+    }
+
+    @Test
+    fun waitsForASlowShellAsAlmaDoes() = runBlocking {
+        val pane = Refusing("pane w1:p1 is not an available shell", times = 10)
+        AgentRestart.run(pane, "w1:p1", "claude", ref, "go", {}, stepMs = 1, startRetryMs = 1)
+        assertEquals(11, pane.refused)
+        assertEquals("start claude --resume 6877705b-c46f", pane.pane.log.dropLast(1).last())
+        assertEquals("prompt go", pane.pane.log.last())
+    }
+
+    @Test
+    fun typesTheCommandWhereHerdrCantStartIt() = runBlocking {
+        for (why in listOf("unknown variant `pi`", "not available from the phone", "pane w1:p1 is not an available shell")) {
+            val pane = Refusing(why, pane = Pane(listOf("claude", "--add-dir", "/my dir")))
+            AgentRestart.run(pane, "w1:p1", "claude", ref, "carry on", {}, stepMs = 1, startRetryMs = 1, typedSettleMs = 1)
+            assertEquals(listOf("type claude --add-dir '/my dir' --resume 6877705b-c46f", "type carry on"), pane.pane.log.filter { it.startsWith("type") }, why)
+        }
+    }
+
+    @Test
+    fun otherRefusalsStillFail() = runBlocking<Unit> {
+        assertFailsWith<IOException> { AgentRestart.run(Refusing("agent name taken"), "w1:p1", "claude", ref, null, {}, stepMs = 1) }
+    }
+
     @Test
     fun givesUpWhenNothingStopsIt() = runBlocking<Unit> {
         val pane = object : AgentRestart.Port by Pane(listOf("claude"), quitsOn = 99) {

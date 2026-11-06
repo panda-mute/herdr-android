@@ -195,6 +195,11 @@ object AgentRestart {
         }
     }
 
+    private val PLAIN = Regex("^[A-Za-z0-9_@%+=:,./-]+$")
+
+    /** A word for the shell, quoted only when it needs it. */
+    private fun word(s: String) = if (PLAIN.matches(s)) s else com.makefunstuff.herdr.core.ssh.HerdrCommands.quote(s)
+
     private val ID = Regex("^[A-Za-z0-9_-]{1,128}$")
     private val SUPPORTED = setOf("claude", "codex", "pi")
 
@@ -243,6 +248,10 @@ object AgentRestart {
         killMs: Long = 3_000,
         goneMs: Long = 5_000,
         startMs: Long = 60_000,
+        startRetryMs: Long = 500,
+        startTries: Int = 60,
+        /** After a typed start, from the agent showing up to typing to it: its input box comes a moment later. */
+        typedSettleMs: Long = 1_500,
     ) {
         val session = session(agent, ref) ?: throw IOException("$agent can't be reopened from the phone.")
         onPhase(Phase.Stopping)
@@ -265,33 +274,57 @@ object AgentRestart {
         }
         onPhase(Phase.Waiting)
         val name = "$agent-" + java.lang.Long.toHexString(System.nanoTime()).takeLast(8)
+        val args = resumeArgs(agent, session, kept.flags)
+        // As Alma does: herdr's start, while the shell's prompt comes back (a slow shell rc takes a
+        // while); where herdr can't start it (an older herdr, or the shell never settles), the
+        // command typed into the shell.
+        var typed = false
         var attempt = 1
         while (true) {
             try {
-                port.start(name, agent, paneId, resumeArgs(agent, session, kept.flags), startMs)
+                port.start(name, agent, paneId, args, startMs)
                 break
             } catch (e: HerdrApiException) {
-                // The shell's prompt may not be back yet.
-                if (attempt < 4 && "not an available shell" in e.message.orEmpty()) {
+                val why = e.message.orEmpty()
+                fun says(s: String) = why.contains(s, ignoreCase = true)
+                val notReady = says("not an available shell")
+                if (notReady && attempt < startTries) {
                     attempt++
-                    delay(1_000)
+                    delay(startRetryMs)
                     continue
                 }
-                throw IOException("It didn't start again: ${e.message}")
+                if (!notReady && !says("unknown variant") && !says("not available from the phone")) {
+                    throw IOException("It didn't start again: $why")
+                }
+                port.type(paneId, (listOf(agent) + args).joinToString(" ", transform = ::word))
+                typed = true
+                break
             }
         }
         val prompt = then?.trim()?.takeIf { it.isNotEmpty() }
         if (prompt != null) {
             onPhase(Phase.Sending)
-            var tried = 0L
-            while (true) {
-                try {
-                    port.prompt(name, prompt)
-                    break
-                } catch (e: HerdrApiException) {
-                    if (e.code != "agent_not_ready" || tried >= goneMs) throw e
+            if (typed) {
+                // Not started by name: its words go to the pane once herdr sees the agent in it.
+                var waited = 0L
+                while (port.pane(paneId).agent == null) {
+                    if (waited >= startMs) throw IOException("It was started, but didn't come back in time for “$prompt”.")
                     delay(500)
-                    tried += 500
+                    waited += 500
+                }
+                delay(typedSettleMs)
+                port.type(paneId, prompt)
+            } else {
+                var tried = 0L
+                while (true) {
+                    try {
+                        port.prompt(name, prompt)
+                        break
+                    } catch (e: HerdrApiException) {
+                        if (e.code != "agent_not_ready" || tried >= goneMs) throw e
+                        delay(500)
+                        tried += 500
+                    }
                 }
             }
         }
