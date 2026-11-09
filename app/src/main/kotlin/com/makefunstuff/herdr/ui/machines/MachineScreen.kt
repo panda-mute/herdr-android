@@ -81,6 +81,7 @@ import com.makefunstuff.herdr.ui.design.QuietCard
 import com.makefunstuff.herdr.ui.manage.PaneActionsSheet
 import com.makefunstuff.herdr.ui.manage.TabActionsSheet
 import com.makefunstuff.herdr.ui.manage.WorkspaceActionsSheet
+import com.makefunstuff.herdr.ui.manage.shepherdrsSpace
 import com.makefunstuff.herdr.ui.theme.Herdr
 import com.makefunstuff.herdr.ui.theme.statusWord
 import com.makefunstuff.herdr.ui.theme.Space
@@ -110,6 +111,7 @@ fun MachineScreen(nav: NavController, machineId: String) {
     var workspaceMenu by remember { mutableStateOf<WorkspaceInfo?>(null) }
     var tabMenu by remember { mutableStateOf<TabInfo?>(null) }
     var paneMenu by remember { mutableStateOf<PaneInfo?>(null) }
+    var coreClose by remember { mutableStateOf<PaneInfo?>(null) }
     val selectedTab = remember { mutableStateMapOf<String, String>() }
 
     fun openPane(pane: PaneInfo) {
@@ -128,6 +130,7 @@ fun MachineScreen(nav: NavController, machineId: String) {
                 BarIcon(HerdrIcons.Search, "Search ${state.machine.label}", { nav.navigate(Routes.search(machineId)) })
                 BarIcon(HerdrIcons.Ellipsis, "More", { menu = true })
                 HerdrMenu(expanded = menu, onDismissRequest = { menu = false }, title = state.machine.label) {
+                    MenuRow("Docs", HerdrIcons.FileText, { menu = false; nav.navigate(Routes.docs(machineId)) })
                     MenuRow("Edit machine", HerdrIcons.Pencil, { menu = false; nav.navigate(Routes.edit(machineId)) })
                     ChangeScreenRow { menu = false }
                 }
@@ -180,7 +183,7 @@ fun MachineScreen(nav: NavController, machineId: String) {
                     onTabMenu = { tabMenu = it },
                     onPaneMenu = { paneMenu = it },
                 ) else WorkspaceCard(
-                    // herdr-core has no layouts or actions on its spaces: the panes open, nothing more.
+                    // herdr-core has no layouts or actions on its spaces: the panes open, and close (`hc kill`) on a long press.
                     ws,
                     from,
                     meta = emptyMap(),
@@ -189,11 +192,16 @@ fun MachineScreen(nav: NavController, machineId: String) {
                     onOpenPane = ::openPane,
                     onTerminal = { nav.navigate(Routes.terminal(machineId, it.paneId)) },
                     backend = if (both) "herdr-core ${core?.version.orEmpty()}".trim() else null,
+                    // A space of Shepherdr's (its Assistant's, its tasks' workers') closes as Shepherdr closes them, not here.
+                    onPaneMenu = { p: PaneInfo -> coreClose = p }.takeIf { !from.shepherdrsSpace(ws.workspaceId) },
                 )
             }
         }
     }
 
+    coreClose?.let { pane ->
+        com.makefunstuff.herdr.ui.manage.CloseHcTerminalDialog(session, pane.paneId, pane.displayName, onDismiss = { coreClose = null })
+    }
     snap?.let { s ->
         workspaceMenu?.let { ws ->
             val folder = ws.worktree?.checkoutPath?.ifBlank { null } ?: s.workspaceFolder(ws.workspaceId)

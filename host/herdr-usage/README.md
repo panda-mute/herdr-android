@@ -39,7 +39,7 @@ Every provider card has a 7-day chart (tokens a day, and their cost where it is 
 | pi, omp | `~/.pi/agent/sessions/`, `~/.omp/agent/sessions/` | each reply's `usage`, with its provider and cost |
 | opencode | `~/.local/share/opencode/opencode.db` (read only) | each assistant message's tokens and cost |
 
-Tokens are input, output and cache writes; cache reads are left out (they would drown everything else, at a tenth of the price). A session belongs to the board task whose worktree it ran in (`~/.herdr/worktrees/<repo>/work-<n>-…` is `<repo>/<n>`, its title from the board's record `~/.herdr-projects/data/tasks/<repo>/<n>/task.json`), or to the Coordinator (`~/.herdr-projects/data/coordinator`). An agent is its harness and model (`claude · claude-opus-5-5`).
+Tokens are input, output and cache writes; cache reads are left out (they would drown everything else, at a tenth of the price). A session belongs to the board task whose worktree it ran in (`~/.herdr/worktrees/<repo>/work-<n>-…` is `<repo>/<n>`, its title from the board's record `~/.herdr-projects/data/tasks/<repo>/<n>/task.json`), or to the Coordinator (`~/.herdr-projects/data/coordinator`). That is herdr-projects 1.x's layout, which herdr-usage still reads; the tasks of Shepherdr 3 and simple-herdr-projects (worktrees `task-<n>-…`) and their Assistants aren't told apart yet, so their sessions count under the agent only. An agent is its harness and model (`claude · claude-opus-5-5`).
 
 The days are the machine's.
 

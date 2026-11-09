@@ -36,6 +36,21 @@ A machine that is offline is set up the next time the app connects to it. Machin
 
 The app also **looks at its machines itself** while it is closed (every 15 minutes by default; Settings → Notifications → The app also looks), with an exact alarm. That covers a machine without python3, or a push that got lost. Pushes arrive within seconds; the app's own looks only as often as you set.
 
+## On Windows
+
+herdr-push runs on a Windows PC with Git Bash under OpenSSH Server (see [Windows](../../README.md#windows) in the README), with Python 3.6 or newer. The app installs it as it does elsewhere; by hand, `python herdr-push install` does the same.
+
+It starts without administrator rights, in two ways:
+
+- A `Run` value under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, `"<pythonw.exe>" "<script>" run`, starts it when you sign in.
+- A scheduled task of yours named `herdr-push`, with no time limit, which `install` and `ensure` run to start it now. It starts in your desktop session, because a process started from the SSH session ends with it.
+
+`uninstall` removes both. `status` says `"autostart": "windows-run"` and `"interactive": true` when the watcher can run in a signed-in session, `false` when nobody is signed in: the PC has to be awake and signed in for pushes to come.
+
+`presence` run over SSH on Windows reads as away and locked (an SSH session has no input desktop); the watcher, running in the signed-in session, sends the real value.
+
+What works there: agents in herdr-core (read through `herdr-core connect`, only where `herdr-core server status` says a core runs; classic herdr is not on Windows), RAM, CPU, each fixed drive (as `/c`, `/d`…) and the top processes, and presence: how long ago the PC had keyboard or mouse input, and whether the session is locked. Shepherdr and App change are not there.
+
 ## What it puts on the machine
 
 | Path | What |
@@ -46,6 +61,7 @@ The app also **looks at its machines itself** while it is closed (every 15 minut
 | `~/.config/systemd/user/herdr-push.service` | Linux with systemd: a user service, `Restart=always` |
 | `~/Library/LaunchAgents/dev.herdr.push.plist` | macOS: a launchd agent |
 | an `@reboot` line in your crontab | elsewhere, when there is `crontab` |
+| the `Run` value and the `herdr-push` scheduled task of your user | Windows (see above) |
 
 On Linux, a user service stops when your last login ends unless lingering is on. herdr-push turns it on (`loginctl enable-linger`) where the system lets you; where it doesn't, the app's Settings say "it stops when you log out", and an admin can run `loginctl enable-linger <you>`. Without any of these, the app starts herdr-push again whenever it connects.
 
@@ -53,7 +69,7 @@ On Linux, a user service stops when your last login ends unless lingering is on.
 
 ```sh
 P=~/.local/share/herdr-push/herdr-push
-python3 $P status          # running?, start-up entry, phones, last error
+python3 $P status          # running?, start-up entry, phones, last error (on Windows also interactive: whether a user is signed in)
 python3 $P once --dry-run  # one look: what it would send now (the first look only learns how things stand)
 python3 $P test            # a test notification to every phone
 python3 $P journal         # what it kept for the brief (--since <unix seconds>)
@@ -83,7 +99,7 @@ curl -fsSLO https://raw.githubusercontent.com/makefunstuff/herdr-android/HEAD/ho
 python3 herdr-push pair
 ```
 
-It prints the code, what it names (the machine, its host key) and the link the code holds, to paste in the app when the phone can't scan. Then it waits until a phone paired, five minutes passed, or Ctrl-C. In the app: **Machines → Add machine → Scan the code**.
+It prints the code, what it names (the machine, its host key) and the link the code holds, to paste in the app when the phone can't scan. Then it waits until a phone paired, five minutes passed, or Ctrl-C. In the app: the spaces drawer's **Add machine → Scan the code**.
 
 | Option | |
 | --- | --- |
@@ -102,6 +118,8 @@ How it works:
 Anyone who sees the code within its five minutes could pair with it, as with any such code: show it where you'd type a password.
 
 It touches one line in `~/.ssh/authorized_keys` while it waits (then the phone's key is there instead), and `pair-<token>.json` and `pair.lock` in `~/.local/state/herdr-push/`. It needs neither the watcher running nor a phone subscribed.
+
+On Windows (OpenSSH Server with Git Bash as its `DefaultShell`), `python herdr-push pair` works too. It reads the host keys and `sshd_config` in `C:\ProgramData\ssh`, writes the one-time key's command with forward-slash paths for Bash, and, for a user in Administrators while the stock `Match Group administrators` block is there, uses `administrators_authorized_keys`, which only a terminal opened as administrator can change.
 
 It can't help when sshd reads keys from elsewhere (`AuthorizedKeysFile` in `/etc/ssh/sshd_config`; the phone then says the machine still refuses its key), or when the phone reaches the machine only through another one (a jump host): add those by hand.
 

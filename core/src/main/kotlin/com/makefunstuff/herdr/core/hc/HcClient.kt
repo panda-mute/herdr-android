@@ -47,6 +47,20 @@ class HcClient(private val caller: ApiCaller) {
         caller.call("terminal.interrupt", Requests.terminal(terminal), timeoutMs = 30_000).decode()
 
     /**
+     * Starts a new terminal (`hc run --bg`): [argv], or [line] through the machine's shell, else that machine's own
+     * shell; in [cwd], with [labels] and [env] (its terminal identity, `TERM`), on another machine hc added when [on]. No parent: the phone isn't
+     * a terminal, and it must outlive nothing. Returns it once it runs.
+     */
+    suspend fun run(
+        line: String? = null, cwd: String? = null, labels: Map<String, String> = emptyMap(), name: String? = null, on: String? = null,
+        env: Map<String, String> = emptyMap(), argv: List<String> = emptyList(),
+    ): HcTerminal = caller.call("terminal.run", Requests.run(line, cwd, labels, name, on, env, argv), timeoutMs = 30_000).decode()
+
+    /** Ends [terminal]'s program (`hc kill`: hangup, then terminate, then kill); returns what was seen. */
+    suspend fun kill(terminal: String): HcTerminal =
+        caller.call("terminal.kill", Requests.terminal(terminal), timeoutMs = 30_000).decode()
+
+    /**
      * Subscribes to every change: [HcSubscription.snapshot] first, then [HcSubscription.events] in
      * order. Subscribe before reading anything else, so no change slips between them.
      */
@@ -76,6 +90,19 @@ class HcClient(private val caller: ApiCaller) {
             obj("terminal" to terminal, "text" to text, "force" to force.takeIf { it })
         fun keys(terminal: String, keys: List<String>): JsonObject =
             obj("terminal" to terminal, "keys" to JsonArray(keys.map { JsonPrimitive(it) }))
+        fun run(
+            line: String?, cwd: String?, labels: Map<String, String>, name: String?, on: String?,
+            env: Map<String, String> = emptyMap(), argv: List<String> = emptyList(),
+        ): JsonObject = obj(
+            "argv" to argv.takeIf { it.isNotEmpty() }?.let { a -> JsonArray(a.map { JsonPrimitive(it) }) },
+            "line" to line,
+            "cwd" to cwd,
+            "labels" to labels.takeIf { it.isNotEmpty() }?.let { l -> JsonObject(l.mapValues { JsonPrimitive(it.value) }) },
+            "name" to name,
+            "on" to on,
+            "env" to env.takeIf { it.isNotEmpty() }?.let { e -> JsonObject(e.mapValues { JsonPrimitive(it.value) }) },
+            "no_parent" to true,
+        )
         fun attach(terminal: String, cols: Int, rows: Int, history: Int, observe: Boolean): JsonObject = obj(
             "terminal" to terminal,
             "cols" to cols,

@@ -2,6 +2,7 @@ package com.makefunstuff.herdr.core.usage
 
 import com.makefunstuff.herdr.core.ssh.CommandResult
 import com.makefunstuff.herdr.core.ssh.HerdrCommands.quote
+import com.makefunstuff.herdr.core.ssh.HostPython
 import kotlinx.serialization.json.JsonPrimitive
 import java.io.IOException
 
@@ -32,15 +33,13 @@ object HerdrUsage {
     const val NO_PYTHON_EXIT = 127
 
     /**
-     * `herdr-usage <args>` by python3 (on the PATH, or as a login shell finds it). Exits
-     * [MISSING_EXIT] before it is there, [NO_PYTHON_EXIT] without python3.
+     * `herdr-usage <args>` by Python 3 ([HostPython]). Exits [MISSING_EXIT] before it is there,
+     * [NO_PYTHON_EXIT] without Python 3.
      */
     fun command(vararg args: String): String = "sh -c " + quote(
         "[ -f \"$FILE\" ] || exit $MISSING_EXIT; " +
-            "P=\"\$(command -v python3 2>/dev/null)\"; " +
-            "[ -n \"\$P\" ] || P=\"\$(\"\${SHELL:-/bin/sh}\" -lc 'command -v python3' </dev/null 2>/dev/null | tail -n 1)\"; " +
-            "[ -n \"\$P\" ] || { echo 'python3 is not installed' >&2; exit $NO_PYTHON_EXIT; }; " +
-            "exec \"\$P\" \"$FILE\" \"\$@\"",
+            HostPython.find(NO_PYTHON_EXIT) + "; " +
+            "exec \"\$P\" \$PA \"$FILE\" \"\$@\"",
     ) + " sh" + args.joinToString("") { " " + quote(it) }
 
     /**
@@ -67,7 +66,7 @@ object HerdrUsage {
                 r = run(command(*args.toTypedArray()), timeout)
             }
             if (r.exitStatus == NO_PYTHON_EXIT && UsageReader.answer(r.stdout) == null) {
-                throw IOException("Reading usage needs python3 on $label, and it isn't installed")
+                throw IOException("Reading usage needs Python 3 on $label, and it isn't installed")
             }
             if (r.exitStatus == null && UsageReader.answer(r.stdout) == null) throw IOException("Reading $label's usage took too long")
             if (UsageReader.answer(r.stdout) == null) throw IOException(problem(r.stderr, "herdr-usage gave no answer on $label"))

@@ -13,7 +13,7 @@ Kotlin and Jetpack Compose; see the README's **Layout** for the modules and [`do
 Every change to what the app shows is checked by rendering its screens on the desktop JVM, not by starting an Android emulator:
 
 ```sh
-./gradlew -p tools/ui-preview render -Ponly=board,task   # just the ones the change touches, a few seconds each
+./gradlew -p tools/ui-preview render -Ponly=agents,chat  # just the ones the change touches, a few seconds each
 ./gradlew -p tools/ui-preview render                     # all scenes, dark and light, about half an hour
 ```
 

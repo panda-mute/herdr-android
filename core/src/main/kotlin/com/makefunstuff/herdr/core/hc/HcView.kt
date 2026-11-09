@@ -161,7 +161,8 @@ object HcMapping {
         else -> s
     }
 
-    private data class Place(val spaceId: String, val spaceName: String, val tabId: String, val tabName: String)
+    /** [named]: [spaceName] is the desktop app's (its `where` label), not made up from an id. */
+    private data class Place(val spaceId: String, val spaceName: String, val tabId: String, val tabName: String, val named: Boolean = false)
 
     private fun placeOf(t: HcTerminal, all: Map<String, HcTerminal>, scope: String): Place {
         var cur: HcTerminal? = t
@@ -199,10 +200,11 @@ object HcMapping {
      * What Shepherdr 3 calls the agent it started: its task (`HERD-8`, `HERD-8 reviewer`) or `<space> Assistant`, in
      * place of the terminal's name; null for any other terminal.
      */
-    fun shepherdrName(t: HcTerminal): String? {
+    fun shepherdrName(t: HcTerminal, spaceName: String? = null): String? {
         shepherdrTask(t)?.let { task -> return if (t.labels[ROLE] == "reviewer") "${task.substringAfter(':')} reviewer" else task.substringAfter(':') }
         shepherdrSpace(t) ?: return null
-        val space = t.labels[WHERE]?.split(" / ", limit = 2)?.firstOrNull()?.takeIf { it.isNotBlank() }
+        // An Assistant Shepherdr started before the desktop app showed it has no `where`: its space's name is another terminal's.
+        val space = t.labels[WHERE]?.split(" / ", limit = 2)?.firstOrNull()?.takeIf { it.isNotBlank() } ?: spaceName?.takeIf { it.isNotBlank() }
         return if (space != null) "$space Assistant" else "Assistant"
     }
 
@@ -222,6 +224,7 @@ object HcMapping {
             spaceName = names?.get(0)?.takeIf { it.isNotBlank() } ?: space ?: "Space",
             tabId = "$spaceId/$tabKey",
             tabName = names?.getOrNull(1)?.takeIf { it.isNotBlank() } ?: tab ?: t.name ?: t.address,
+            named = names?.get(0)?.isNotBlank() == true,
         )
     }
 
@@ -245,7 +248,11 @@ object HcMapping {
         val other = scope + OTHER.removePrefix(PREFIX)
         val all = terminals.associateBy { it.address }
         val live = terminals.filter { it.live }.sortedWith(compareBy({ it.createdMs }, { it.address }))
-        val placed = live.map { it to placeOf(it, all, scope) }
+        val raw = live.map { it to placeOf(it, all, scope) }
+        // A space is called what any of its terminals' `where` calls it: the first one placed may carry only its id.
+        val spaceNames = raw.map { it.second }.filter { it.named }.groupBy { it.spaceId }.mapValues { it.value.first().spaceName }
+        val placed = raw.map { (t, p) -> t to (spaceNames[p.spaceId]?.let { p.copy(spaceName = it, named = true) } ?: p) }
+        fun nameOf(t: HcTerminal, p: Place) = shepherdrName(t, p.spaceName.takeIf { p.named })
         val panes = placed.map { (t, p) ->
             val agent = agentName(t)
             PaneInfo(
@@ -255,7 +262,7 @@ object HcMapping {
                 tabId = p.tabId,
                 cwd = t.cwd,
                 foregroundCwd = t.foreground?.cwd,
-                label = shepherdrName(t) ?: t.name ?: if (agent == null) t.foreground?.name else null,
+                label = nameOf(t, p) ?: t.name ?: if (agent == null) t.foreground?.name else null,
                 agent = agent,
                 terminalTitle = t.title.ifBlank { null },
                 agentStatusRaw = if (isAgent(t)) statusWord(t) else AgentStatus.Unknown.wire,
@@ -265,7 +272,7 @@ object HcMapping {
         val agents = placed.filter { isAgent(it.first) }.map { (t, p) ->
             AgentInfo(
                 terminalId = t.address,
-                name = shepherdrName(t) ?: t.name,
+                name = nameOf(t, p) ?: t.name,
                 agent = agentName(t),
                 title = t.status?.msg?.ifBlank { null } ?: t.status?.title?.ifBlank { null },
                 terminalTitle = t.title.ifBlank { null },

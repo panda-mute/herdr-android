@@ -149,6 +149,12 @@ object V2Actions {
         put("place", place)
     }
 
+    /** A shell as a new tab of [place], in its folder (`tab-new` with no agent): the + menu's Terminal. */
+    fun tabNew(place: String): JsonObject = buildJsonObject {
+        put("type", "tab-new")
+        put("place", place)
+    }
+
     /** Names tab [tab] (the window's tab id), or the Assistant's tab of [place] when it has no id yet; empty unnames it. */
     fun tabRename(tab: String?, place: String?, name: String): JsonObject = buildJsonObject {
         put("type", "tab-rename")
@@ -364,6 +370,9 @@ class ShepherdrClient(private val transport: ShepherdrTransport) {
      * messages, and the call's state as text ones ([VoiceCall]).
      */
     suspend fun voice(chat: String): VoiceCall = VoiceCall(transport.webSocket("/api/voice?" + query("chat" to chat)))
+
+    /** [task]'s browser, live (`/api/browser`, this machine's tasks only): [TaskBrowser]. */
+    suspend fun browser(task: String): TaskBrowser = TaskBrowser(transport.browser(TaskBrowser.path(task)))
 
     private fun artifactPath(id: String, part: String, query: String) =
         "/api/artifacts/" + enc(id) + part + query.takeIf { it.isNotEmpty() }?.let { "?$it" }.orEmpty()

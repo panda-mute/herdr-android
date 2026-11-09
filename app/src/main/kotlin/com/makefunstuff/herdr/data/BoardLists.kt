@@ -17,7 +17,7 @@ import kotlinx.serialization.json.Json
 import java.io.File
 
 /**
- * Every machine's Shepherdr board as the app last read it, for the Agents screen's Needs you list and
+ * Every machine's task board (Shepherdr 3's or simple-herdr-projects') as the app last read it, for the Agents screen's Needs you list and
  * the Board tab. Read here ([readAll]) while one of them is on screen, and told of every other read
  * of a whole board (a machine's board screen).
  */
@@ -39,7 +39,7 @@ class BoardLists(
     /** By machine id; a machine never read isn't in it. */
     val lists: StateFlow<Map<String, Read>> = _lists.asStateFlow()
 
-    /** [machineId]'s Shepherdr 3 board, read somewhere in the app. */
+    /** [machineId]'s task board, read somewhere in the app. */
     fun put(machineId: String, work: WorkOverview) {
         readAt[machineId] = now()
         _lists.update { it + (machineId to Read(work)) }
@@ -49,7 +49,7 @@ class BoardLists(
     /** Reads every connected machine's board now, side by side; one read within [freshMs] is left as it is. */
     suspend fun readAll(freshMs: Long = 3_000) = coroutineScope {
         val t = now()
-        hosts.hosts.value.filter { it.online && it.onShepherdr && t - (readAt[it.machine.id] ?: 0L) >= freshMs }
+        hosts.hosts.value.filter { it.online && it.hasBoard && t - (readAt[it.machine.id] ?: 0L) >= freshMs }
             .map { h -> async { read(h.machine.id) } }.awaitAll()
         Unit
     }

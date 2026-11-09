@@ -56,6 +56,7 @@ import com.makefunstuff.herdr.bubble.LocalBubble
 import com.makefunstuff.herdr.ui.common.rememberFloat
 import com.makefunstuff.herdr.core.api.AgentStatus
 import com.makefunstuff.herdr.core.chat.AgentChat
+import com.makefunstuff.herdr.core.chat.ChatHeader
 import com.makefunstuff.herdr.core.chat.AgentInput
 import com.makefunstuff.herdr.core.push.Alerts
 import com.makefunstuff.herdr.core.chat.ChatItem
@@ -153,14 +154,36 @@ fun AgentScreen(nav: NavController, machineId: String, paneId: String) {
         val home = HomeAgent(machineId, host.machine.label, a, snapshot?.location(a.workspaceId, a.tabId).orEmpty(), snapshot?.workspace(a.workspaceId)?.label.orEmpty())
         Home.taskOf(home, boards.firstOrNull { it.machineId == machineId }?.tasks.orEmpty())
     }
-    // What the title bar says it works on: its task, else its own name (unless that is only its CLI's or a
-    // launcher's hash, `shep-1a2b…`), else its workspace, else (herdr-core's catch-all "Other terminals") its
-    // terminal's title. Not its step message, which changes with every step.
+    // Whose chat it is (3.1's header): its task, an Assistant, its own name or what its terminal says it works on;
+    // under it its CLI, space › tab (the space alone for an Assistant), machine when there are several, folder.
     val workspaceLabel = agent?.let { snapshot?.workspace(it.workspaceId)?.label?.ifBlank { null } }
-    val heading = task?.let { "${it.name} · ${it.title}" }
-        ?: name.takeIf { agent == null || !Home.isBareName(agent, it) }
-        ?: workspaceLabel?.takeIf { !it.startsWith("Other terminals") }
-        ?: agent?.terminalTitle?.ifBlank { null } ?: workspaceLabel ?: name
+    val machines by container.hosts.hosts.collectAsStateWithLifecycle()
+    // A space's own agent is titled by its space, as 3.1's phone header does; a task's by its key and
+    // title, anything else by what it calls itself. The CLI, machine and folder go under it.
+    val spaceHeading = workspaceLabel?.takeIf { !it.startsWith("Other terminals") && task == null && agent?.shepherdrSpace == null }
+    val heading = spaceHeading
+        ?: agent?.let { ChatHeader.agentTitle(it, task?.let { t -> ChatHeader.task(t.name, t.title) }, workspaceLabel?.takeIf { w -> !w.startsWith("Other terminals") }) }
+        ?: name
+    val place = when {
+        spaceHeading != null -> null
+        agent?.shepherdrSpace != null -> workspaceLabel
+        else -> snapshot?.let { s -> pane?.let { s.location(it.workspaceId, it.tabId) } }
+    }
+    val contextLine = agent?.let { ChatHeader.agentLine(it, heading, place, ChatHeader.machine(host.machine.label, machines.size)) }
+        ?: ChatHeader.line(place, ChatHeader.machine(host.machine.label, machines.size), ChatHeader.folder(pane?.foregroundCwd ?: pane?.cwd))
+    // A tap on it goes to its task, its space's Assistant, else its machine's spaces.
+    val panes = com.makefunstuff.herdr.LocalPanes.current
+    val openPlace: (() -> Unit)? = when {
+        LocalBubble.current != null -> null
+        task != null && host.onShepherdr -> ({ panes.openBoard(nav, machineId, task.id, alone = true) })
+        agent?.shepherdrSpace != null -> ({ panes.open(nav, Routes.coordinator(machineId, agent.shepherdrSpace)) })
+        else -> ({ nav.navigate(Routes.machine(machineId)) })
+    }
+    val placeAction = when {
+        task != null && host.onShepherdr -> "Open ${task.name}"
+        agent?.shepherdrSpace != null -> "Open the Assistant's chat"
+        else -> "Open ${host.machine.label}'s spaces"
+    }
     // Floating over other apps as a bubble, from here; in that bubble, back to the app.
     val bubbleChat = remember(machineId, paneId) { BubbleChat.Agent(machineId, paneId) }
     val float = rememberFloat(bubbleChat, heading, host.machine.label)
@@ -428,14 +451,16 @@ fun AgentScreen(nav: NavController, machineId: String, paneId: String) {
     /** A held message, now: sent as typed then (Claude Code and Codex take words mid-turn as their next). */
     fun sendHeld(m: HeldMessage) {
         if (heldSending || sending || !Held.canSend(status, false)) return
+        // Claimed first: Start work's first message on herdr-core may be going by itself at this moment.
+        val claimed = container.composer.take(chatKey, m.id) ?: return
         heldSending = true
         awayHidden = true
         chat.addPending(m.text)
         stick.sent()
         scope.launch {
             runCatching { AgentInput.send(session.awaitAgent(paneId), paneId, m.text, named = agent != null, blocked = false) }
-                .onSuccess { container.composer.drop(chatKey, m.id) }
                 .onFailure {
+                    container.composer.restore(chatKey, claimed)
                     chat.dropPending(m.text)
                     context.toast(it.message ?: "Couldn't send")
                 }
@@ -525,12 +550,9 @@ fun AgentScreen(nav: NavController, machineId: String, paneId: String) {
         topBar = {
             if (!typing) HerdrTopBar(
                 heading,
-                subtitle = listOfNotNull(
-                    agent?.agent?.takeIf { !it.equals(heading, ignoreCase = true) },
-                    host.machine.label,
-                    snapshot?.let { s -> pane?.let { s.location(it.workspaceId, it.tabId) } },
-                ).joinToString(" · "),
+                subtitle = contextLine.ifEmpty { null },
                 onBack = if (inBubble) null else ({ nav.popBackStack() }),
+                onTitle = openPlace, titleAction = placeAction,
             ) {
                 QuietButton(onClick = { nav.navigate(Routes.terminal(machineId, paneId)) }) { Text("Terminal") }
                 BarIcon(HerdrIcons.Ellipsis, "More", { menu = true })
@@ -694,6 +716,8 @@ fun AgentScreen(nav: NavController, machineId: String, paneId: String) {
             paneLabel = pane?.displayName ?: paneId,
             onDismiss = { menu = false },
             screenMenu = true,
+            // Back from the chat, unless the person has gone elsewhere while it closed.
+            onClosed = if (inBubble) null else nav.currentBackStackEntry.let { entry -> { if (nav.currentBackStackEntry == entry) nav.popBackStack() } },
             tabRows = tab?.takeIf { !inBubble }?.let { (space, t) ->
                 {
                     TabMenuRows(tabMenu, machineId, space, t, onPicked = { menu = false }) { label, icon, destructive, onClick ->

@@ -58,6 +58,12 @@ class FakeMachine(
     var activity: Map<String, String> = emptyMap(),
     /** Shepherdr 3's service there (reached with curl), or null where it doesn't run. */
     var shepherdr: FakeShepherdr? = null,
+    /** simple-herdr-projects' store there (`shp` and `hc`), or null where shp isn't installed. */
+    var shp: FakeShp? = null,
+    /** Its `~/.herdr/docs` (herdr.doc documents); null answers the list as an empty folder. */
+    var docs: FakeDocs? = null,
+    /** GitHub as gh answers it there (signed in), or null where gh isn't installed. */
+    var github: FakeGitHub? = null,
     /** Integration metadata per workspace (`workspace.get`'s tokens). */
     var workspaceTokens: Map<String, Map<String, String>> = emptyMap(),
     var version: String = "0.9.0",
@@ -108,9 +114,16 @@ class FakeMachine(
         // herdr-core's probe (HcDetection): its socket and core, or nothing where none runs.
         if ("core.lock" in command) return FakeCore.probe(core, coreSessions)
         shepherdr?.run(command, stdin)?.let { return it }
+        // The board look and the shp client: the app runs them in the machine's login shell.
+        val inner = Shell.words(command).let { if (it.size == 5 && it[0] == "sh" && it[1] == "-c" && it[3] == "sh") it[4] else command }
+        if (inner.contains("command -v shp")) return ok(if (shp != null) "/home/demo/.local/bin/shp\n" else "")
+        if (inner.contains(" gh api ")) return github?.run(inner, stdin) ?: CommandResult(127, "", "sh: 1: gh: not found")
+        shp?.run(inner, stdin)?.let { return it }
+        shp?.hc(inner)?.let { return it }
         appBuild?.run(command)?.let { return it }
+        docs?.run(command)?.let { return it }
         Shell.words(command).let { w ->
-            // Words in the chats (ChatSearch.command): the transcripts' lines that hold them, under each chat's mark.
+            // Words in the chats (ChatSearch.commands): the transcripts' lines that hold them, under each chat's mark.
             val chat = w.indexOf("herdr-chat-search")
             if (chat >= 0) {
                 val q = w[chat + 1]
@@ -185,6 +198,8 @@ class FakeMachine(
         }
         // A sign-in (herdr-logins run): what it says until the person has something to do; what they type is taken.
         logins?.events(command)?.let { events -> return stream { _, out -> events.forEach { out.println(it) }; out.flush() } }
+        // A task's browser through the relay (CurlTransport.browser), where Shepherdr runs.
+        if (DemoBrowser.isRelay(command)) shepherdr?.let { sh -> return stream { input, out -> DemoBrowser.relay(DemoBrowser.taskOf(command) in sh.browsers, input, out) } }
         return when {
             "@@missing" in command -> stream { _, out ->
                 // TranscriptFollower: kind, value, agent, bytes and a subagent id (or nothing) after "follow".

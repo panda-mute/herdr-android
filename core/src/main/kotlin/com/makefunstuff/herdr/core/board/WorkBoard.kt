@@ -2,8 +2,10 @@ package com.makefunstuff.herdr.core.board
 
 import com.makefunstuff.herdr.core.shepherdr.AutopilotSettings
 import com.makefunstuff.herdr.core.shepherdr.Recipe
+import com.makefunstuff.herdr.core.shepherdr.TaskBrowser
 import com.makefunstuff.herdr.core.shepherdr.TaskFolder
 import com.makefunstuff.herdr.core.shepherdr.V2Artifact
+import com.makefunstuff.herdr.core.shepherdr.V2Browser
 import com.makefunstuff.herdr.core.shepherdr.V2Chat
 import com.makefunstuff.herdr.core.shepherdr.V2Evidence
 import com.makefunstuff.herdr.core.shepherdr.V2ModelMenu
@@ -23,6 +25,9 @@ import java.io.IOException
 sealed interface BoardApi {
     /** Shepherdr 3: its service on the machine's 127.0.0.1:7788 ([com.makefunstuff.herdr.core.shepherdr.BoardDetection]). */
     data class V2(val version: String) : BoardApi
+
+    /** simple-herdr-projects: `shp` over SSH, with no service ([com.makefunstuff.herdr.core.shp.ShpBoard]). */
+    data object Shp : BoardApi
     data object None : BoardApi
 }
 
@@ -77,6 +82,9 @@ data class WorkSpace(
     val pilot: V2Pilot? = null,
     /** Its tabs as the bar shows them, the Assistant's first ([TabMenus]). */
     val tabs: List<WorkTab> = emptyList(),
+    /** Its Assistant's header as 3.1's says it ("Assistant · Claude Code"), and the folder it works in ("~/Work/app"). */
+    val header: String = "",
+    val where: String = "",
 )
 
 /** One task on Shepherdr's board. */
@@ -109,6 +117,10 @@ data class WorkTask(
     /** Its agent's CLI as the board names it ("Claude Code"); none before its agent starts. */
     val agent: String = "",
     val pinned: Boolean = false,
+    /** Its agent's process is up. */
+    val running: Boolean = false,
+    /** Shepherdr 3.1's live view of its browser ([V2Browser]); none where its board has none. */
+    val browser: V2Browser? = null,
 )
 
 /**
@@ -184,7 +196,7 @@ data class CoordinatorThread(
 
 /**
  * The work board on one machine: what the Board, task and Assistant screens use. `V2WorkBoard` is Shepherdr 3's
- * service.
+ * service; `ShpBoard` is simple-herdr-projects over SSH.
  */
 interface WorkBoard {
     val api: BoardApi
@@ -213,6 +225,9 @@ interface WorkBoard {
 
     /** [task]'s pull request with its checks, as GitHub says it now (the task view's Pull request). */
     suspend fun pullRequest(task: WorkTask): V2PrAnswer = throw IOException("This board doesn't read pull requests")
+
+    /** [task]'s browser, live, as 3.1's Browser tab. */
+    suspend fun browser(task: WorkTask): TaskBrowser = throw IOException("This board has no browser to watch")
 
     /** Marks [task] done with nothing merged; refused while it holds work main lacks. */
     suspend fun close(task: WorkTask): String
@@ -328,6 +343,9 @@ interface WorkBoard {
 
     /** The agents a tab of [space] can switch to ([TabMenus.switchChoices]). */
     suspend fun tabAgents(space: String): List<WorkAgentChoice> = throw IOException(NO_TABS)
+
+    /** Opens a shell as a new tab of [space], in its folder: the + menu's Terminal. */
+    suspend fun newTerminal(space: String): Unit = throw IOException(NO_TABS)
 
     /** Names [tab] of [space] [name]; an empty name unnames it. */
     suspend fun renameTab(space: String, tab: WorkTab, name: String): Unit = throw IOException(NO_TABS)

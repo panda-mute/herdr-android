@@ -1,5 +1,5 @@
-// The made-up world every scene starts from: the README screenshots' demo host
-// (docs/screenshots/demo-host) as fixed data. devbox runs three agents and the work board;
+// The made-up world every scene starts from: the demo host the README's screenshots were once
+// taken on (containers, since retired) as fixed data. devbox runs three agents and the work board;
 // gpu-box and ci-runner are reached through it; mac-mini refuses the app's key.
 package preview
 
@@ -111,7 +111,7 @@ object Demo {
             .withSpace(com.makefunstuff.herdr.core.push.Notify.key(DEVBOX, "herdr-android"), com.makefunstuff.herdr.core.push.Notify.All),
     )
 
-    /** Notifications on: devbox and gpu-box send, ci-runner is left out, mac-mini has no python3. */
+    /** Notifications on: devbox and gpu-box send, ci-runner is left out, mac-mini has no Python 3. */
     fun push(): PushState {
         val endpoint = "https://ntfy.sh/upDemoTopic?up=1"
         return PushState(
@@ -120,7 +120,7 @@ object Demo {
                 DEVBOX to MachinePush(key = "demo", sentTo = endpoint, version = "1"),
                 GPU to MachinePush(key = "demo", sentTo = endpoint, version = "1", note = "it stops when you log out (loginctl enable-linger keeps it running)"),
                 CI to MachinePush(off = true),
-                MINI to MachinePush(key = "demo", problem = "herdr-push needs python3 on mac-mini, and it isn't installed"),
+                MINI to MachinePush(key = "demo", problem = "herdr-push needs Python 3 on mac-mini, and it isn't installed"),
             ),
         )
     }
@@ -160,13 +160,15 @@ object Demo {
     fun sharedFile(): java.io.File = kotlin.io.path.createTempFile("shared", ".png").toFile().apply { writeBytes(picture("task").readBytes()) }
 
     /**
-     * A screenshot on the phone, for the composer and the chat's pictures: the README's own
-     * screenshots of the app (540×1200, `docs/screenshots/<name>.webp`), as a phone's would be.
+     * A screenshot on the phone, for the composer and the chat's pictures: old screenshots of the app
+     * (540×1200, `src/main/resources/demo/pictures/<name>.webp`), as a phone's would be.
      */
     fun picture(name: String): java.io.File {
         val start = java.io.File("").absoluteFile
-        val repo = generateSequence(start) { it.parentFile }.firstOrNull { java.io.File(it, "docs/screenshots").isDirectory } ?: error("no docs/screenshots above $start")
-        return java.io.File(repo, "docs/screenshots/$name.webp")
+        val dir = generateSequence(start) { it.parentFile }.flatMap {
+            sequenceOf(java.io.File(it, "src/main/resources/demo/pictures"), java.io.File(it, "tools/ui-preview/src/main/resources/demo/pictures"))
+        }.firstOrNull { it.isDirectory } ?: error("no demo pictures above $start")
+        return java.io.File(dir, "$name.webp")
     }
 
     /** Where devbox keeps the pictures sent to its agents, as `HostSession.upload` puts them. */

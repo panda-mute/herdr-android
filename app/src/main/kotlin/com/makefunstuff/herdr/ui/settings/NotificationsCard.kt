@@ -109,7 +109,7 @@ fun NotificationsCard(onQuietHours: () -> Unit, onRules: () -> Unit) {
         PushAppLine(st, pushApps, phone::label, onGet = phone::getPushApp, onAsk = { container.pushHosts.turnOn() })
 
         Text(
-            "Each machine runs herdr-push, which the app sets up over SSH as the machine connects. It needs python3 there.",
+            "Each machine runs herdr-push, which the app sets up over SSH as the machine connects. It needs a Python 3 there.",
             style = MaterialTheme.typography.bodySmall,
             color = c.muted,
         )

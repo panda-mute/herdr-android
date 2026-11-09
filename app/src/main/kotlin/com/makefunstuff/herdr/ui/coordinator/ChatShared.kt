@@ -109,10 +109,10 @@ private suspend fun sharePicture(f: com.makefunstuff.herdr.core.share.SharedFile
     return true
 }
 
-/** The screen's own empty state: an icon, a heading and a sentence, centred in the space. */
+/** The screen's own empty state: an icon, a heading and a sentence, centred in the space, with its one action when there is one. */
 @Composable
-internal fun ChatEmpty(icon: ImageVector, title: String, body: String) {
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { StateBlock(icon, title, body) }
+internal fun ChatEmpty(icon: ImageVector, title: String, body: String, action: (@Composable () -> Unit)? = null) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { StateBlock(icon, title, body, action = action) }
 }
 
 @Composable

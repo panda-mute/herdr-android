@@ -37,6 +37,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
 import com.makefunstuff.herdr.LocalPanes
 import com.makefunstuff.herdr.Routes
+import com.makefunstuff.herdr.core.hc.HcStart
 import com.makefunstuff.herdr.core.host.HostSession
 import com.makefunstuff.herdr.core.start.AgentLaunch
 import com.makefunstuff.herdr.core.start.Folder
@@ -65,6 +66,7 @@ import com.makefunstuff.herdr.ui.design.RowDivider
 import com.makefunstuff.herdr.ui.design.SegmentedPills
 import com.makefunstuff.herdr.ui.theme.Herdr
 import com.makefunstuff.herdr.ui.theme.Space
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
@@ -92,7 +94,8 @@ fun StartWorkScreen(nav: NavController, machineId: String? = null, text: String 
 
     // Where each way can run: a board task on a machine with a board, an agent on any machine online.
     val online = hosts.filter { it.online && it.machine.enabled }
-    val able = online.filter { if (board) it.onShepherdr else it.classic } // an agent starts in classic herdr
+    // An agent starts in classic herdr, else in herdr-core (the desktop app's `hc run`).
+    val able = online.filter { if (board) it.onShepherdr else it.classic || it.herdrCore != null }
     val host = able.firstOrNull { it.machine.id == chosen } ?: able.firstOrNull()
     val session = host?.let { container.hosts.session(it.machine.id) }
     val mid = host?.machine?.id
@@ -106,7 +109,9 @@ fun StartWorkScreen(nav: NavController, machineId: String? = null, text: String 
     var spaceId by rememberSaveable { mutableStateOf<String?>(null) }
     val space = spaces?.let { l -> l.firstOrNull { it.id == spaceId } ?: l.firstOrNull { !it.home } ?: l.firstOrNull() }
     // The folders used and the workspaces'.
-    val places = remember(host?.snapshot, starts, mid) { mid?.let { StartWork.recentFolders(host.snapshot, container.starts.folders(it)) }.orEmpty() }
+    val places = remember(host?.snapshot, host?.herdrCore, starts, mid) {
+        mid?.let { StartWork.recentFolders(if (host.classic) host.snapshot else host.view, container.starts.folders(it)) }.orEmpty()
+    }
     val place = folder?.takeIf { it.isNotEmpty() } ?: places.firstOrNull()
     // The agents installed there, as herdr's integrations and the machine's programs say; the usual list when it can't say.
     val kinds by produceState<List<String>?>(null, mid, board) {
@@ -133,15 +138,52 @@ fun StartWorkScreen(nav: NavController, machineId: String? = null, text: String 
     }
 
     fun startAgent(s: HostSession, m: String, said: String, k: String, dir: String) {
-        val snapshot = host?.snapshot
+        val classic = host?.classic == true
+        val snapshot = if (classic) host?.snapshot else host?.view
         busy = true
         scope.launch {
             runCatching {
                 val taken = snapshot?.agents?.mapNotNull { it.name }.orEmpty()
-                AgentLaunch.inFolder(s.awaitApi(10_000), snapshot, dir, k, StartWork.agentName(said, k, taken), said).also { s.refresh() }
+                val name = StartWork.agentName(said, k, taken)
+                if (classic) AgentLaunch.inFolder(s.awaitApi(10_000), snapshot, dir, k, name, said).also { s.refresh() }
+                else {
+                    // herdr-core alone: `hc run` in the folder, in the desktop app's space that sits there (else Other terminals).
+                    val ws = HcStart.spaceIn(snapshot, dir)
+                    val space = ws?.let { id -> snapshot?.workspaces?.firstOrNull { it.workspaceId == id } }
+                    val place = ws?.let { HcStart.place(it, space?.label.orEmpty(), name) } ?: HcStart.Place(null, null, emptyMap())
+                    val client = s.awaitHerdrCore(10_000, ws)
+                    // A Windows machine (Git Bash) runs hc's lines with cmd.exe: asked once, as the health page asks.
+                    val windows = runCatching { HcStart.windows(s.awaitConnection(10_000).run("uname -s", timeoutSeconds = 10).stdout) }.getOrDefault(false)
+                    val pane = HcStart.launch(client, place, dir, StartWork.STARTABLE[k] ?: k, name, windows)
+                    container.starts.started(m, dir, board = false, startNow = starts.startNow, kind = k)
+                    // The chat opens now, the sentence held above its box (to send or discard by hand meanwhile). It goes
+                    // in once the agent says it waits, on the app's scope so leaving the chat doesn't lose it, and only
+                    // while it is still held there; else it stays held, and a toast says why.
+                    if (said.isNotBlank()) {
+                        val key = com.makefunstuff.herdr.data.DraftStore.agent(m, pane)
+                        val held = container.composer.hold(key, said, container.clock())
+                        container.scope.launch {
+                            var claimed = false
+                            val why = HcStart.deliver(
+                                client, pane, said,
+                                wanted = { container.composer.held(key).any { it.id == held.id } },
+                                // Taken off the list as it goes, so Send now can't send it as well.
+                                claim = { (container.composer.take(key, held.id) != null).also { claimed = it } },
+                            )
+                            // Claimed and refused: back above the box.
+                            if (why != null && claimed) container.composer.restore(key, held)
+                            if (why != null) kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                com.makefunstuff.herdr.ui.design.Toasts.show("What you said didn't go in to $k ($why): it waits above its chat's box")
+                            }
+                        }
+                    }
+                    kotlinx.coroutines.withTimeoutOrNull(10_000) { s.state.first { st -> st.view?.panes?.any { it.paneId == pane } == true } }
+                    pane
+                }
             }
                 .onSuccess { pane ->
-                    container.starts.started(m, dir, board = false, startNow = starts.startNow, kind = k)
+                    // herdr-core's start was recorded as soon as it ran.
+                    if (classic) container.starts.started(m, dir, board = false, startNow = starts.startNow, kind = k)
                     nav.popBackStack()
                     panes.open(nav, Routes.agent(m, pane))
                 }

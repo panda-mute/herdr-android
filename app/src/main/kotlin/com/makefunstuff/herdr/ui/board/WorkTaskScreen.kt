@@ -129,7 +129,7 @@ internal fun WorkTaskContent(
         Scaffold(
             containerColor = c.ground,
             topBar = {
-                HerdrTopBar(t.name, subtitle = space.ifEmpty { null }, onBack = onBack, backLabel = "Back to the board") {
+                HerdrTopBar(t.title, subtitle = listOfNotNull(t.name, space.ifEmpty { null }).joinToString(" · "), onBack = onBack, backLabel = "Back to the board") {
                     if (canClose || LocalScreenChange.current != null) BarIcon(HerdrIcons.Ellipsis, "More", { menu = true })
                 }
             },

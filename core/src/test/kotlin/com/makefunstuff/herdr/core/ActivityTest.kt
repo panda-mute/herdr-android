@@ -389,13 +389,13 @@ class ActivityTest {
             }
             val f = sessionFile(dir, "long.jsonl", lines)
             val sources = listOf(SessionSource("claude", "path", f.path))
-            // A PATH with the shell's tools but no python3: the plain tail is used instead.
+            // A PATH with the shell's tools but no python3, and a login shell that finds none: the plain tail is used instead.
             val bin = File(dir, "bin").also { it.mkdirs() }
             for (tool in listOf("sh", "head", "tail", "wc", "tr", "cat", "find", "kill")) {
                 val real = listOf("/bin", "/usr/bin").map { File(it, tool) }.firstOrNull { it.exists() } ?: continue
                 Files.createSymbolicLink(File(bin, tool).toPath(), real.toPath())
             }
-            for (env in listOf(emptyMap(), mapOf("PATH" to bin.path))) {
+            for (env in listOf(emptyMap(), mapOf("PATH" to bin.path, "SHELL" to "/bin/false"))) {
                 val reader = SessionsReader(sources)
                 SessionsReader.stream({ local(it, env) }, ActivityCommands.sessions(sources, follow = false, bytes = 30_000), reader) {}
                 assertTrue(reader.truncated, "cut with $env")

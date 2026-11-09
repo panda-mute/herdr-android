@@ -92,7 +92,7 @@ fun EditMachineScreen(nav: NavController, id: String?) {
 }
 
 /** The machine's address and settings, typed; [onScan] (adding only) goes back to scanning its code. */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun MachineForm(nav: NavController, id: String?, onScan: (() -> Unit)?) {
     val container = LocalContainer.current
@@ -106,6 +106,7 @@ private fun MachineForm(nav: NavController, id: String?, onScan: (() -> Unit)?) 
     var label by remember { mutableStateOf(existing?.label ?: "") }
     var session by remember { mutableStateOf(existing?.session ?: "default") }
     var herdrPath by remember { mutableStateOf(existing?.herdrPath ?: "") }
+    var taskSource by remember { mutableStateOf(existing?.taskSource) }
     var allowHostScripts by remember { mutableStateOf(existing?.allowHostScripts ?: true) }
     var viaId by remember { mutableStateOf(existing?.viaMachineId) }
     var pinnedKey by remember { mutableStateOf(existing?.hostKey) }
@@ -136,6 +137,7 @@ private fun MachineForm(nav: NavController, id: String?, onScan: (() -> Unit)?) 
             herdrPath = herdrPath.trim().ifEmpty { null },
             enabled = existing?.enabled ?: true,
             allowHostScripts = allowHostScripts,
+            taskSource = taskSource,
         )
     }
 
@@ -260,6 +262,20 @@ private fun MachineForm(nav: NavController, id: String?, onScan: (() -> Unit)?) 
                 label = "herdr path",
                 hint = "Leave empty to find it automatically",
             )
+
+            SectionHeading("Tasks")
+            Column(verticalArrangement = Arrangement.spacedBy(Space.xs)) {
+                Text(
+                    "Which task source the board shows. Detect uses simple-herdr-projects where shp is on the machine, and Shepherdr 3 otherwise.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Herdr.colors.muted,
+                )
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(Space.s), verticalArrangement = Arrangement.spacedBy(Space.xs)) {
+                    HerdrChip("Detect", selected = taskSource == null, onClick = { taskSource = null })
+                    HerdrChip("Shepherdr 3", selected = taskSource == Machine.TASK_SHEPHERDR, onClick = { taskSource = Machine.TASK_SHEPHERDR })
+                    HerdrChip("simple-herdr-projects", selected = taskSource == Machine.TASK_SHP, onClick = { taskSource = Machine.TASK_SHP })
+                }
+            }
             QuietCard(padded = true) {
                 SwitchRow(
                     label = "Allow host scripts",

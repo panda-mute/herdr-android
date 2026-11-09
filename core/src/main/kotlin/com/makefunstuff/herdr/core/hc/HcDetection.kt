@@ -19,6 +19,12 @@ data class HcProbe(
     val coreExes: List<String> = emptyList(),
     /** The other sessions whose core runs , by name. */
     val others: List<HcSession> = emptyList(),
+    /**
+     * A Windows machine (OpenSSH with Git Bash as its shell): there the core listens where no `sh`
+     * can see it, so there is no [socket]; `hc server status` says whether it runs, and `connect`
+     * finds it the way hc does ([HcDetection.windowsConnectCommand]).
+     */
+    val windows: Boolean = false,
 ) {
     /**
      * The executable to run `connect` with: a running core's own build that is also installed where
@@ -93,8 +99,22 @@ object HcDetection {
      */
     val probe: String get() = "sh -c ${quote(PROBE)} hc"
 
+    /**
+     * Windows (Git Bash, MSYS or Cygwin under OpenSSH): `windows`, then, when the default session's
+     * core answers `server status`, `core<TAB>exe<TAB>pid` and `bin<TAB>exe<TAB>--version<TAB>core`
+     * for the herdr-core on PATH, else the desktop app's own install. Other sessions aren't looked for.
+     */
+    private const val WINDOWS = "case \"\$(uname -s 2>/dev/null)\" in MINGW*|MSYS*|CYGWIN*) " +
+        "echo windows; b=\"\$(command -v herdr-core 2>/dev/null)\"; " +
+        "if [ -z \"\$b\" ] && [ -n \"\$LOCALAPPDATA\" ]; then b=\"\$(cygpath -u \"\$LOCALAPPDATA\" 2>/dev/null)/Programs/herdr-core/herdr-core\"; fi; " +
+        "[ -n \"\$b\" ] && [ -f \"\$b\" ] || exit 0; " +
+        "j=\"\$(\"\$b\" server status --json </dev/null 2>/dev/null)\" || exit 0; " +
+        "p=\"\$(printf '%s' \"\$j\" | sed -n 's/.*\"pid\":\\([0-9][0-9]*\\).*/\\1/p' | head -n 1)\"; [ -n \"\$p\" ] || exit 0; " +
+        "printf 'core\\t%s\\t%s\\n' \"\$b\" \"\$p\"; " +
+        "printf 'bin\\t%s\\t%s\\tcore\\n' \"\$b\" \"\$(\"\$b\" --version </dev/null 2>/dev/null | head -n 1)\"; exit 0;; esac; "
+
     private val PROBE: String
-        get() = SOCKET +
+        get() = WINDOWS + SOCKET +
             "seen=' '; found=''; " +
             "emit() { [ -n \"\$2\" ] && [ -f \"\$2\" ] && [ -x \"\$2\" ] || return 0; " +
             "k=\"\$1:\$2\"; case \"\$seen\" in *\" \$k \"*) return 0;; esac; seen=\"\$seen\$k \"; found=1; " +
@@ -162,8 +182,19 @@ object HcDetection {
         val coreRows = rows.count { it.size >= 2 && it[0] == "core" }
         // The session's lock held (Linux), else some core process (pgrep), else the socket alone.
         val locked = rows.any { it.size >= 2 && it[0] == "lock" }
+        if (rows.any { it.singleOrNull() == "windows" }) {
+            // Windows: the core answered `server status`, which is all there is to know.
+            return HcProbe(null, running = coreRows > 0 && binaries.isNotEmpty(), binaries = binaries.distinctBy { it.path to it.source }, coreExes = cores, windows = true)
+        }
         return HcProbe(socket, running = socket != null && (locked || coreRows > 0 || noPgrep), binaries = binaries.distinctBy { it.path to it.source }, coreExes = cores, others = others)
     }
+
+    /**
+     * `<binary> connect` on Windows, where hc finds the default session's core itself; refused when
+     * `server status` says none runs, so `connect` never starts one there either.
+     */
+    fun windowsConnectCommand(binary: HcBinary): String =
+        "sh -c ${quote("\"\$1\" server status --json </dev/null >/dev/null 2>&1 || { echo 'herdr-core stopped' >&2; exit 3; }; exec \"\$1\" connect")} hc ${quote(binary.path)}"
 
     /**
      * `<binary> connect` on [socket]: the core's API on the channel's stdin/stdout, never a new core
@@ -195,6 +226,11 @@ object HcDetection {
 
     /** Connects to [session]'s core as [probe] found it (null: the default session's); null where it doesn't run. */
     suspend fun open(conn: MachineConnection, scope: CoroutineScope, probe: HcProbe, session: String?): HerdrCore? {
+        if (probe.windows) {
+            if (session != null || !probe.running) return null
+            val binary = probe.binary ?: return null
+            return HerdrCore(binary, HcConnection.open(conn.start(windowsConnectCommand(binary)), scope), null)
+        }
         val socket = if (session == null) probe.socket?.takeIf { probe.running } else probe.others.firstOrNull { it.name == session }?.socket
         socket ?: return null
         val binary = probe.binary ?: return null

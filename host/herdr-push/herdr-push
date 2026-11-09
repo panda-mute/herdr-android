@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# version: 11
+# version: 13
 """herdr-push: tells your phone when a herdr agent needs you.
 
 It runs on the machine with herdr, watches its agents (`herdr api snapshot`, and the Herdr desktop
@@ -33,7 +33,7 @@ that wasn't sealed with it. Python 3 alone, no packages.
   herdr-push test [<id>]         send a test notification now
   herdr-push status              how it stands, as JSON
   herdr-push ensure              start the watcher when it isn't running
-  herdr-push install             start it now and with the machine (systemd, launchd or cron)
+  herdr-push install             start it now and with the machine (systemd, launchd, cron or, on Windows, your sign-in)
   herdr-push uninstall [--purge] stop it and remove the start-up entry (--purge: and its settings)
   herdr-push once [--dry-run]    one look, printing what it would send
   herdr-push journal [--session NAME] [--since SECONDS]
@@ -42,28 +42,40 @@ that wasn't sealed with it. Python 3 alone, no packages.
   herdr-push pair [--host NAME[,NAME…]] [--port N] [--session NAME] [--name NAME]
                                  show a QR code a phone scans to add this machine (one-time, 5 minutes)
 
+On Windows (OpenSSH with Git Bash as its shell) it runs in your own desktop session, started when you sign in (a
+Run entry) and, from `install` or `ensure`, through a scheduled task of yours: never as a child of the SSH session.
+No elevation is asked.
+
 See host/herdr-push/README.md in the herdr-android repo.
 """
 
 import base64
-import fcntl
 import hashlib
 import hmac
 import json
 import os
+import queue
 import re
 import shutil
 import signal
 import socket
+import struct
 import subprocess
 import sys
+import tempfile
+import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import zlib
 
-VERSION = "11"
+try:
+    import fcntl
+except ImportError:  # Windows: msvcrt's locks stand in for it
+    fcntl = None
+
+VERSION = "13"
 NAME = "herdr-push"
 
 HOME = os.path.expanduser("~")
@@ -77,6 +89,16 @@ LOCK = os.path.join(STATE_DIR, "run.lock")
 LOG = os.path.join(STATE_DIR, NAME + ".log")
 # Touched by anything that knows you are here (a shell prompt, an editor hook): counts as typing in herdr.
 PRESENT = os.path.join(STATE_DIR, "present")
+WINDOWS = os.name == "nt"
+NO_WINDOW = 0x08000000 if WINDOWS else 0  # CREATE_NO_WINDOW for the commands run: a watcher without a console opens none
+# The one byte of the lock file that a running watcher locks. Windows locks are mandatory, so it is not one that holds the pid.
+LOCK_BYTE = 1 << 20
+RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"  # where Windows starts a user's programs at sign-in
+_KERNEL32 = None  # kernel32 once loaded, see kernel32()
+_USER32 = None  # user32 once loaded, see user32()
+_WTSAPI32 = None  # wtsapi32 once loaded, see wtsapi32()
+# Where sshd keeps its config and host keys: Win32-OpenSSH's under ProgramData.
+SSHD_DIR = os.path.join(os.environ.get("PROGRAMDATA") or "C:\\ProgramData", "ssh") if WINDOWS else "/etc/ssh"
 
 INTERVAL = float(os.environ.get("HERDR_PUSH_INTERVAL", "4"))
 # ntfy and most push servers take 4 KB; the sealed text stays under this.
@@ -174,7 +196,15 @@ def write_json(path, value, private=False):
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600 if private else 0o644)
     with os.fdopen(fd, "w") as f:
         json.dump(value, f, indent=1)
-    os.replace(tmp, path)
+    for attempt in range(5):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            # Windows refuses the swap while another process has the target open that instant: try again shortly.
+            if not WINDOWS or attempt == 4:
+                raise
+            time.sleep(0.05)
 
 
 def subscribers():
@@ -220,7 +250,7 @@ class Source:
 
     def run(self, args, timeout=20):
         r = subprocess.run(args, env=self.env(), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                           stderr=subprocess.PIPE, timeout=timeout)
+                           stderr=subprocess.PIPE, timeout=timeout, creationflags=NO_WINDOW)
         if r.returncode != 0:
             raise RuntimeError((r.stderr.decode(errors="replace").strip().splitlines() or ["exit %d" % r.returncode])[-1])
         return r.stdout.decode(errors="replace")
@@ -316,6 +346,89 @@ class HerdrCore:
             except OSError:
                 pass
         self.sock = self.f = None
+
+    def screen(self, address):
+        return self.call("terminal.read", {"terminal": address, "lines": 0}).get("text", "")
+
+
+def herdr_core_exe():
+    """Windows: where herdr-core.exe is, on the PATH or where its installer puts it; None when it isn't there."""
+    exe = shutil.which("herdr-core")
+    if not exe:
+        exe = os.path.join(os.environ.get("LOCALAPPDATA") or "", "Programs", "herdr-core", "herdr-core.exe")
+    return exe if os.path.isfile(exe) else None
+
+
+class HcPipe:
+    """herdr-core's API through `herdr-core connect` (JSON-RPC lines over its stdin and stdout), for Windows, where the
+    core has no Unix socket. Same calls as HerdrCore. It never starts a core: the caller checks one runs first."""
+
+    def __init__(self, exe):
+        self.exe = exe
+        self.proc = None
+        self.lines = None
+        self.n = 0
+
+    def call(self, method, params=None):
+        if self.proc is None:
+            self.proc = subprocess.Popen([self.exe, "connect"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                         stderr=subprocess.DEVNULL, creationflags=NO_WINDOW)
+            self.lines = queue.Queue()
+            # A pipe has no read timeout: a thread reads it and the calls wait on the queue.
+            threading.Thread(target=self._read, args=(self.proc.stdout, self.lines), daemon=True).start()
+            self._rpc("hello", {"generation": 1})
+        return self._rpc(method, params or {})
+
+    @staticmethod
+    def _read(f, lines):
+        try:
+            for line in f:
+                lines.put(line)
+        except (OSError, ValueError):
+            pass
+        lines.put(None)
+
+    def _rpc(self, method, params):
+        self.n += 1
+        try:
+            self.proc.stdin.write((json.dumps({"jsonrpc": "2.0", "id": self.n, "method": method, "params": params}) + "\n").encode())
+            self.proc.stdin.flush()
+            # Short, as HerdrCore's: a core that doesn't answer mustn't hold up classic herdr's notifications.
+            end = time.time() + 3
+            while True:
+                try:
+                    line = self.lines.get(timeout=max(end - time.time(), 0.01))
+                except queue.Empty:
+                    raise RuntimeError("herdr-core did not answer")
+                if line is None:
+                    raise RuntimeError("herdr-core closed the connection")
+                out = json.loads(line.decode(errors="replace"))
+                if out.get("id") == self.n:
+                    break
+        except Exception:
+            # What is left of this connection is of no use: the next call starts a new one.
+            self.close()
+            raise
+        if out.get("error"):
+            raise RuntimeError(out["error"].get("message") or "herdr-core: error")
+        return out.get("result") or {}
+
+    def close(self):
+        p, self.proc = self.proc, None
+        if p is None:
+            return
+        # Killed first: closing stdout waits for the reader thread, which waits for the child. A child that
+        # outlives the kill keeps its stdout open rather than hang the watcher.
+        try:
+            p.kill()
+            p.wait(timeout=3)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        for c in (p.stdin, p.stdout) if p.poll() is not None else (p.stdin,):
+            try:
+                c.close()
+            except (OSError, ValueError):
+                pass
 
     def screen(self, address):
         return self.call("terminal.read", {"terminal": address, "lines": 0}).get("text", "")
@@ -528,8 +641,190 @@ def live_event(st, agents, now, first):
 
 # ---- health (RAM, CPU, disks) --------------------------------------------------------------------
 
+def kernel32():
+    """Windows: kernel32 with the signatures of the calls health uses (64-bit safe), loaded once."""
+    global _KERNEL32
+    if _KERNEL32 is None:
+        import ctypes
+        from ctypes import wintypes
+        k = ctypes.WinDLL("kernel32", use_last_error=True)
+        k.GlobalMemoryStatusEx.argtypes = [ctypes.c_void_p]
+        k.GlobalMemoryStatusEx.restype = wintypes.BOOL
+        k.GetSystemTimes.argtypes = [ctypes.POINTER(wintypes.FILETIME)] * 3
+        k.GetSystemTimes.restype = wintypes.BOOL
+        k.GetLogicalDrives.argtypes = []
+        k.GetLogicalDrives.restype = wintypes.DWORD
+        k.GetDriveTypeW.argtypes = [wintypes.LPCWSTR]
+        k.GetDriveTypeW.restype = wintypes.UINT
+        k.GetDiskFreeSpaceExW.argtypes = [wintypes.LPCWSTR] + [ctypes.POINTER(ctypes.c_ulonglong)] * 3
+        k.GetDiskFreeSpaceExW.restype = wintypes.BOOL
+        k.SetThreadErrorMode.argtypes = [wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)]
+        k.SetThreadErrorMode.restype = wintypes.BOOL
+        k.GetTickCount64.argtypes = []
+        k.GetTickCount64.restype = ctypes.c_ulonglong
+        k.GetCurrentProcessId.argtypes = []
+        k.GetCurrentProcessId.restype = wintypes.DWORD
+        k.ProcessIdToSessionId.argtypes = [wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)]
+        k.ProcessIdToSessionId.restype = wintypes.BOOL
+        _KERNEL32 = k
+    return _KERNEL32
+
+
+def user32():
+    """Windows: user32 with the signatures of the calls presence uses (64-bit safe), loaded once."""
+    global _USER32
+    if _USER32 is None:
+        import ctypes
+        from ctypes import wintypes
+        u = ctypes.WinDLL("user32", use_last_error=True)
+        u.GetLastInputInfo.argtypes = [ctypes.c_void_p]
+        u.GetLastInputInfo.restype = wintypes.BOOL
+        u.OpenInputDesktop.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        u.OpenInputDesktop.restype = ctypes.c_void_p
+        u.CloseDesktop.argtypes = [ctypes.c_void_p]
+        u.CloseDesktop.restype = wintypes.BOOL
+        _USER32 = u
+    return _USER32
+
+
+def wtsapi32():
+    """Windows: wtsapi32 with the signatures of the calls presence uses (64-bit safe), loaded once."""
+    global _WTSAPI32
+    if _WTSAPI32 is None:
+        import ctypes
+        from ctypes import wintypes
+        w = ctypes.WinDLL("wtsapi32", use_last_error=True)
+        w.WTSQuerySessionInformationW.argtypes = [ctypes.c_void_p, wintypes.DWORD, ctypes.c_int,
+                                                  ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(wintypes.DWORD)]
+        w.WTSQuerySessionInformationW.restype = wintypes.BOOL
+        w.WTSEnumerateProcessesW.argtypes = [ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD,
+                                             ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(wintypes.DWORD)]
+        w.WTSEnumerateProcessesW.restype = wintypes.BOOL
+        w.WTSFreeMemory.argtypes = [ctypes.c_void_p]
+        w.WTSFreeMemory.restype = None
+        _WTSAPI32 = w
+    return _WTSAPI32
+
+
+def windows_swap():
+    """(total, in use) bytes of the page files, from NtQuerySystemInformation(SystemPageFileInformation); None if not told."""
+    import ctypes
+    ntdll = ctypes.WinDLL("ntdll")
+    ntdll.NtQuerySystemInformation.argtypes = [ctypes.c_ulong, ctypes.c_void_p, ctypes.c_ulong, ctypes.POINTER(ctypes.c_ulong)]
+    ntdll.NtQuerySystemInformation.restype = ctypes.c_long
+    size = 4096
+    for _ in range(4):
+        buf = ctypes.create_string_buffer(size)
+        need = ctypes.c_ulong()
+        status = ntdll.NtQuerySystemInformation(18, buf, size, ctypes.byref(need))  # SystemPageFileInformation
+        if status & 0xFFFFFFFF == 0xC0000004:  # STATUS_INFO_LENGTH_MISMATCH
+            size = max(need.value, size * 2)
+            continue
+        if status != 0:
+            return None
+        # A chain of entries: next entry's offset, then size, in use and peak in 4 KiB pages.
+        total = used = offset = 0
+        while True:
+            nxt, pages, in_use = struct.unpack_from("<III", buf, offset)
+            total, used = total + pages * 4096, used + in_use * 4096
+            if not nxt:
+                return total, used
+            offset += nxt
+    return None
+
+
+def windows_memory():
+    """read_memory on Windows: GlobalMemoryStatusEx for the RAM, the page files for the swap."""
+    import ctypes
+
+    class MemoryStatus(ctypes.Structure):
+        _fields_ = [("length", ctypes.c_ulong), ("load", ctypes.c_ulong), ("total_phys", ctypes.c_ulonglong),
+                    ("avail_phys", ctypes.c_ulonglong), ("total_page", ctypes.c_ulonglong),
+                    ("avail_page", ctypes.c_ulonglong), ("total_virtual", ctypes.c_ulonglong),
+                    ("avail_virtual", ctypes.c_ulonglong), ("avail_extended", ctypes.c_ulonglong)]
+
+    m = MemoryStatus()
+    m.length = ctypes.sizeof(m)
+    if not kernel32().GlobalMemoryStatusEx(ctypes.byref(m)):
+        return None
+    try:
+        swap = windows_swap()
+    except Exception:  # noqa: BLE001
+        swap = None
+    swap_total, swap_used = swap or (0, 0)
+    return {"total": m.total_phys // 1024, "available": min(m.avail_phys, m.total_phys) // 1024,
+            "swap_total": swap_total // 1024, "swap_free": max(swap_total - swap_used, 0) // 1024}
+
+
+def windows_cpu():
+    """read_cpu on Windows, from GetSystemTimes: the kernel time already includes the idle time."""
+    from ctypes import wintypes
+    idle, kernel, user = wintypes.FILETIME(), wintypes.FILETIME(), wintypes.FILETIME()
+    if not kernel32().GetSystemTimes(idle, kernel, user):
+        return None
+
+    def ticks(t):
+        return (t.dwHighDateTime << 32) | t.dwLowDateTime
+    return (ticks(kernel) + ticks(user), ticks(idle))
+
+
+def windows_disks():
+    """read_disks on Windows: each fixed drive (not a card reader, a network drive or a CD) as /c, /d. A drive that
+    can't be read is left out."""
+    import ctypes
+    from ctypes import wintypes
+    k = kernel32()
+    # No "insert a disk" dialog for a drive that is not ready: the call just fails.
+    old = wintypes.DWORD()
+    k.SetThreadErrorMode(0x0001, ctypes.byref(old))  # SEM_FAILCRITICALERRORS
+    disks = []
+    try:
+        mask = k.GetLogicalDrives()
+        for i in range(26):
+            letter = chr(ord("a") + i)
+            root = letter.upper() + ":\\"
+            if not mask & (1 << i) or k.GetDriveTypeW(root) != 3:  # DRIVE_FIXED
+                continue
+            avail, total, free = ctypes.c_ulonglong(), ctypes.c_ulonglong(), ctypes.c_ulonglong()
+            if not k.GetDiskFreeSpaceExW(root, ctypes.byref(avail), ctypes.byref(total), ctypes.byref(free)) or total.value <= 0:
+                continue
+            disks.append({"mount": "/" + letter, "device": letter.upper() + ":", "total": total.value // 1024,
+                          "used": (total.value - free.value) // 1024, "avail": avail.value // 1024})
+    finally:
+        k.SetThreadErrorMode(old, None)
+    return disks
+
+
+def windows_proc_name(name, cmdline):
+    """proc_name for a Windows process: its image name without .exe, or the nicer name proc_name gives."""
+    exe = name[:-4] if name.lower().endswith(".exe") else name
+    label = proc_name((name.replace(" ", "") + " " + cmdline).replace("\\", "/"))
+    return exe if label == name.replace(" ", "") else label
+
+
+def windows_top_memory(n):
+    """top_memory on Windows: the working set of each process, from CIM through PowerShell."""
+    script = ("[Console]::OutputEncoding = [Text.Encoding]::UTF8; Get-CimInstance Win32_Process | "
+              "Sort-Object WorkingSetSize -Descending | Select-Object -First %d | ForEach-Object { "
+              "\"$($_.WorkingSetSize)`t$($_.Name)`t$($_.CommandLine)\" -replace '[\\r\\n]+', ' ' }" % n)
+    try:
+        r = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script], stdin=subprocess.DEVNULL,
+                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=30, creationflags=NO_WINDOW)
+    except Exception:  # noqa: BLE001
+        return []
+    rows = []
+    for line in r.stdout.decode("utf-8", "replace").splitlines():
+        parts = line.split("\t", 2)
+        if len(parts) == 3 and parts[0].strip().isdigit():
+            rows.append([windows_proc_name(parts[1], parts[2]), int(parts[0]) // 1024])
+    return rows[:n]
+
+
 def read_memory():
-    """{"total", "available", "swap_total", "swap_free"} in KiB, from /proc/meminfo; None elsewhere."""
+    """{"total", "available", "swap_total", "swap_free"} in KiB, from /proc/meminfo (GlobalMemoryStatusEx on Windows);
+    None elsewhere."""
+    if WINDOWS:
+        return windows_memory()
     try:
         with open(MEMINFO) as f:
             m = {}
@@ -548,7 +843,9 @@ def read_memory():
 
 
 def read_cpu():
-    """(total, idle) CPU ticks so far, from /proc/stat; None elsewhere."""
+    """(total, idle) CPU ticks so far, from /proc/stat (GetSystemTimes on Windows); None elsewhere."""
+    if WINDOWS:
+        return windows_cpu()
     try:
         with open("/proc/stat") as f:
             x = [int(v) for v in f.readline().split()[1:9]]
@@ -559,6 +856,8 @@ def read_cpu():
 
 def read_disks():
     """The real filesystems from `df -kPT` (or `-kP`), as the app picks them: [{"mount", "total", "used", "avail"}]."""
+    if WINDOWS:
+        return windows_disks()
     out = ""
     if DF:
         with open(DF) as f:
@@ -618,6 +917,8 @@ def proc_name(args):
 
 def top_memory(n=3):
     """The [n] processes using the most memory: [name, KiB], biggest first."""
+    if WINDOWS:
+        return windows_top_memory(n)
     try:
         r = subprocess.run(["ps", "-axo", "rss=,args="], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                            stderr=subprocess.DEVNULL, timeout=15)
@@ -701,7 +1002,7 @@ def usage_look(st, now):
     st["at"] = now
     try:
         r = subprocess.run([sys.executable, USAGE_SCRIPT, "limits"], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                           stderr=subprocess.DEVNULL, timeout=120)
+                           stderr=subprocess.DEVNULL, timeout=120, creationflags=NO_WINDOW)
         lines = [l for l in r.stdout.decode("utf-8", "replace").splitlines() if l.strip().startswith("{")]
         out = json.loads(lines[-1]) if lines else {}
     except Exception as e:  # noqa: BLE001
@@ -825,13 +1126,39 @@ def herdr_client(argv):
     return True
 
 
+def windows_last_input(now=None):
+    """Windows: when this session last had keyboard or mouse input, or None if it can't tell. There is no input to read
+    from an SSH session, so this only means something where the watcher runs in the interactive one."""
+    import ctypes
+    from ctypes import wintypes
+
+    class LASTINPUTINFO(ctypes.Structure):
+        _fields_ = [("cbSize", wintypes.UINT), ("dwTime", wintypes.DWORD)]
+
+    info = LASTINPUTINFO(ctypes.sizeof(LASTINPUTINFO), 0)
+    try:
+        if not user32().GetLastInputInfo(ctypes.byref(info)):
+            return None
+        # dwTime is a 32-bit tick count that wraps every 49.7 days, so take the difference modulo 2**32.
+        idle_ms = ((kernel32().GetTickCount64() & 0xFFFFFFFF) - info.dwTime) % 2 ** 32
+    except Exception:  # noqa: BLE001 - no user32 or no desktop: it can't tell
+        return None
+    return (time.time() if now is None else now) - idle_ms / 1000.0
+
+
 def typed_at(ps=None):
-    """When someone last typed in a herdr client here (its terminal's last input), or touched the presence file; None."""
+    """When someone last typed in a herdr client here (its terminal's last input), or touched the presence file; None.
+    On Windows it is the last keyboard or mouse input of the session instead (see windows_last_input)."""
     times = []
     try:
         times.append(os.stat(PRESENT).st_mtime)
     except OSError:
         pass
+    if WINDOWS:
+        last = windows_last_input()
+        if last is not None:
+            times.append(last)
+        return max(times) if times else None
     ps = _out(["ps", "-A", "-o", "tty=,args="]) if ps is None else ps
     for line in (ps or "").splitlines():
         parts = line.split()
@@ -849,6 +1176,8 @@ def screen_unlocked():
     forced = os.environ.get("HERDR_PUSH_SCREEN")  # tests: locked, unlocked or none
     if forced:
         return {"locked": False, "unlocked": True}.get(forced)
+    if WINDOWS:
+        return windows_unlocked()
     if sys.platform == "darwin":
         return _mac_unlocked()
     sessions = _out(["loginctl", "list-sessions", "--no-legend"])
@@ -870,6 +1199,110 @@ def screen_unlocked():
         if any(l.strip() in LOCKERS for l in running.splitlines()):
             return False
     return desktop
+
+
+def windows_session_id():
+    """Windows: the session id of this process, or None if it can't tell."""
+    import ctypes
+    from ctypes import wintypes
+
+    k = kernel32()
+    mine = wintypes.DWORD()
+    return mine.value if k.ProcessIdToSessionId(k.GetCurrentProcessId(), ctypes.byref(mine)) else None
+
+
+def windows_sessions(exe):
+    """Windows: the session id of each running process whose image is called [exe] (lower case), and of this one:
+    ([ids], mine), mine None if it can't tell. Asks the terminal service for the process list, which gives every process
+    its session (ProcessIdToSessionId is refused for SYSTEM ones like LogonUI.exe), in a few milliseconds and with no
+    process spawned. None instead if the list can't be read."""
+    import ctypes
+    from ctypes import wintypes
+
+    class WTS_PROCESS_INFOW(ctypes.Structure):
+        _fields_ = [("SessionId", wintypes.DWORD), ("ProcessId", wintypes.DWORD), ("pProcessName", wintypes.LPWSTR),
+                    ("pUserSid", ctypes.c_void_p)]
+
+    w = wtsapi32()
+    first = ctypes.c_void_p()
+    count = wintypes.DWORD()
+    # Level 0 (WTS_PROCESS_INFOW), version 1, on this server (a null handle).
+    if not w.WTSEnumerateProcessesW(None, 0, 1, ctypes.byref(first), ctypes.byref(count)):
+        return None
+    try:
+        rows = ctypes.cast(first, ctypes.POINTER(WTS_PROCESS_INFOW))
+        ids = [rows[i].SessionId for i in range(count.value) if (rows[i].pProcessName or "").lower() == exe]
+    finally:
+        w.WTSFreeMemory(first)
+    return ids, windows_session_id()
+
+
+def windows_lock_screen():
+    """Windows: whether LogonUI.exe, the lock screen, runs in this session. It runs once per session, so the lock screen of
+    another signed-in user doesn't count."""
+    found = windows_sessions("logonui.exe")
+    if found is None:
+        return False
+    ids, mine = found
+    return any(mine is None or i == mine for i in ids)
+
+
+def windows_interactive():
+    """Windows: whether someone is signed in at the PC, which is when explorer.exe runs in a session other than 0 (services
+    and SSH sessions live in session 0, a desktop session never does)."""
+    found = windows_sessions("explorer.exe")
+    return found is not None and any(i != 0 for i in found[0])
+
+
+def windows_session_locked():
+    """Windows: whether the terminal service says this session is locked: True or False, or None if it doesn't say (the
+    call fails, the flag is unknown, or this is session 0, which has no desktop to lock)."""
+    import ctypes
+    from ctypes import wintypes
+
+    class LEVEL1(ctypes.Structure):  # the start of WTSINFOEX_LEVEL1_W, the part that is read
+        _fields_ = [("SessionId", wintypes.ULONG), ("SessionState", ctypes.c_int), ("SessionFlags", ctypes.c_long)]
+
+    class LEVELS(ctypes.Union):  # the union is 8-byte aligned (it has a LARGE_INTEGER), so Level1 sits at offset 8
+        _fields_ = [("Level1", LEVEL1), ("align", ctypes.c_longlong)]
+
+    class WTSINFOEXW(ctypes.Structure):
+        _fields_ = [("Level", wintypes.DWORD), ("Data", LEVELS)]
+
+    mine = windows_session_id()
+    if not mine:  # None, or 0: an SSH session or a service
+        return None
+    w = wtsapi32()
+    buf = ctypes.c_void_p()
+    size = wintypes.DWORD()
+    if not w.WTSQuerySessionInformationW(None, mine, 25, ctypes.byref(buf), ctypes.byref(size)):  # WTSSessionInfoEx
+        return None
+    try:
+        info = ctypes.cast(buf, ctypes.POINTER(WTSINFOEXW)).contents
+        flags = info.Data.Level1.SessionFlags if info.Level == 1 else None
+    finally:
+        w.WTSFreeMemory(buf)
+    return {0: True, 1: False}.get(flags)  # WTS_SESSIONSTATE_LOCK is 0, _UNLOCK is 1, _UNKNOWN is -1
+
+
+def windows_unlocked():
+    """Windows: whether this session's screen is unlocked. The terminal service's lock flag for the session says it; where
+    it doesn't (it can't tell, or this is an SSH session), it is locked while the lock screen runs or the input desktop
+    can't be opened (it is the secure one then). Only means something in the interactive session: an SSH session has no
+    input desktop of its own, so it reads as locked there."""
+    try:
+        locked = windows_session_locked()
+        if locked is not None:
+            return not locked
+        if windows_lock_screen():
+            return False
+        desktop = user32().OpenInputDesktop(0, False, 0x100)  # DESKTOP_SWITCHDESKTOP
+        if not desktop:
+            return False
+        user32().CloseDesktop(desktop)
+        return True
+    except Exception:  # noqa: BLE001 - it can't tell
+        return None
 
 
 def _mac_unlocked():
@@ -1005,11 +1438,21 @@ _classic_last = {}
 
 def core_look(src, st, now):
     """herdr-core's agents where a core runs (else None), with [src] set to read their screens."""
-    path = hc_socket()
+    path = None if WINDOWS else hc_socket()
     try:
-        if not os.path.exists(path):
-            raise RuntimeError("no herdr-core socket")
-        src.core = HerdrCore(path)
+        if WINDOWS:
+            exe = herdr_core_exe()
+            if not exe:
+                raise RuntimeError("no herdr-core")
+            # `server status` exits 0 only while a core runs, so a machine without one is never given one.
+            if subprocess.call([exe, "server", "status", "--json"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL, timeout=5, creationflags=NO_WINDOW) != 0:
+                raise RuntimeError("no herdr-core running")
+            src.core = HcPipe(exe)
+        else:
+            if not os.path.exists(path):
+                raise RuntimeError("no herdr-core socket")
+            src.core = HerdrCore(path)
         snap = hc_snapshot(src.core.call("terminal.list").get("terminals") or [])
         _core_last[src.key] = (snap, now)
         st.pop("core_problem", None)
@@ -1051,88 +1494,91 @@ def tick(state, n, dry_run=False, now=None):
         return seen_here[0]
 
     srcs = sources(subs)
-    for key, (src, group) in srcs.items():
-        st = state.setdefault("sessions", {}).setdefault(key, {})
-        live = any(s.get("live") for s in group)
-        watch_panes = watched(group, "watch_panes")
-        events = []
-        agents = None
-        # What the journal saw last; its first look only learns how things stand.
-        jst = st.setdefault("journal", {})
-        noted = []
-        core = core_look(src, st, now) if src.session == "default" else None
-        # herdr-core's agents last told, on a machine without classic herdr: they go when the core does.
-        told_core = any(p.startswith(HC_PREFIX) for p in st.get("agents") or {})
-        if src.herdr or core is not None or told_core:
+    try:
+        for key, (src, group) in srcs.items():
+            st = state.setdefault("sessions", {}).setdefault(key, {})
+            live = any(s.get("live") for s in group)
+            watch_panes = watched(group, "watch_panes")
+            events = []
+            agents = None
+            # What the journal saw last; its first look only learns how things stand.
+            jst = st.setdefault("journal", {})
+            noted = []
+            core = core_look(src, st, now) if src.session == "default" else None
+            # herdr-core's agents last told, on a machine without classic herdr: they go when the core does.
+            told_core = any(p.startswith(HC_PREFIX) for p in st.get("agents") or {})
+            if src.herdr or core is not None or told_core:
+                try:
+                    snap = {"workspaces": [], "tabs": [], "agents": []}
+                    if src.herdr:
+                        try:
+                            snap = src.snapshot()
+                            _classic_last[key] = snap
+                            st.pop("classic_problem", None)
+                        except Exception:  # noqa: BLE001 - herdr-core's agents are still told, classic herdr's kept as they were
+                            # Without classic herdr's last snapshot, one that had agents keeps them by not looking now.
+                            told_classic = any(not p.startswith(HC_PREFIX) for p in st.get("agents") or {})
+                            if key not in _classic_last and (told_classic or (core is None and not told_core)):
+                                raise
+                            log_once(st, "classic_problem", "herdr session %s:" % key, sys.exc_info()[1])
+                            snap = _classic_last.get(key, snap)
+                    if core is not None:
+                        snap = merged(snap, core)
+                        # A core seen for the first time (herdr-push updated to read it): its agents
+                        # as they stand are learnt, not told, as on a first look.
+                        if not st.get("core_known"):
+                            for a in core.get("agents") or []:
+                                if "agents" in st:
+                                    st["agents"].setdefault(a["pane_id"], a.get("agent_status", "unknown"))
+                                if "agents" in jst:
+                                    jst["agents"].setdefault(a["pane_id"], "%s#%s" % (a.get("agent_status", "unknown"), a.get("state_change_seq", "")))
+                        st["core_known"] = True
+                    first = "agents" not in st
+                    told = agent_events(src, snap, st.setdefault("agents", {}), first)
+                    events += told
+                    events += watch_agent_events(snap, st.setdefault("watch_agents", {}), watch_panes,
+                                                 {e["agent"].get("pane_id") for e in told})
+                    learn = "agents" not in jst or first
+                    noted += journal_agents(snap, jst.setdefault("agents", {}), learn, now)
+                    if live:
+                        agents = live_agents(snap, st, now)
+                    st.pop("problem", None)
+                except Exception as e:  # noqa: BLE001
+                    if st.get("problem") != str(e):
+                        log("herdr session %s:" % key, e)
+                    st["problem"] = str(e)
             try:
-                snap = {"workspaces": [], "tabs": [], "agents": []}
-                if src.herdr:
-                    try:
-                        snap = src.snapshot()
-                        _classic_last[key] = snap
-                        st.pop("classic_problem", None)
-                    except Exception:  # noqa: BLE001 - herdr-core's agents are still told, classic herdr's kept as they were
-                        # Without classic herdr's last snapshot, one that had agents keeps them by not looking now.
-                        told_classic = any(not p.startswith(HC_PREFIX) for p in st.get("agents") or {})
-                        if key not in _classic_last and (told_classic or (core is None and not told_core)):
-                            raise
-                        log_once(st, "classic_problem", "herdr session %s:" % key, sys.exc_info()[1])
-                        snap = _classic_last.get(key, snap)
-                if core is not None:
-                    snap = merged(snap, core)
-                    # A core seen for the first time (herdr-push updated to read it): its agents
-                    # as they stand are learnt, not told, as on a first look.
-                    if not st.get("core_known"):
-                        for a in core.get("agents") or []:
-                            if "agents" in st:
-                                st["agents"].setdefault(a["pane_id"], a.get("agent_status", "unknown"))
-                            if "agents" in jst:
-                                jst["agents"].setdefault(a["pane_id"], "%s#%s" % (a.get("agent_status", "unknown"), a.get("state_change_seq", "")))
-                    st["core_known"] = True
-                first = "agents" not in st
-                told = agent_events(src, snap, st.setdefault("agents", {}), first)
-                events += told
-                events += watch_agent_events(snap, st.setdefault("watch_agents", {}), watch_panes,
-                                             {e["agent"].get("pane_id") for e in told})
-                learn = "agents" not in jst or first
-                noted += journal_agents(snap, jst.setdefault("agents", {}), learn, now)
-                if live:
-                    agents = live_agents(snap, st, now)
-                st.pop("problem", None)
-            except Exception as e:  # noqa: BLE001
-                if st.get("problem") != str(e):
-                    log("herdr session %s:" % key, e)
-                st["problem"] = str(e)
-        try:
-            if noted:
-                journal_add(key, noted, now)
-            elif "at" not in jst:
-                journal_start(key, now)
-            # Up to when the journal is complete (the watcher may be stopped for a while).
-            jst["at"] = int(now)
-        except Exception as e:  # noqa: BLE001 - the journal is a nicety next to the pushes
-            log("journal:", e)
-        if live:
-            ev = live_event(st, agents, now, first="live_sent" not in st)
-            if ev is not None:
-                events.append(ev)
-        else:
-            for k in ("live_sent", "live_agents", "live_agents_since"):
-                st.pop(k, None)
-        if not events:
-            continue
-        sent[key] = events
-        for sub in group:
-            record = state.setdefault("phones", {}).setdefault(sub["id"], {})
-            if gone(record, sub):
+                if noted:
+                    journal_add(key, noted, now)
+                elif "at" not in jst:
+                    journal_start(key, now)
+                # Up to when the journal is complete (the watcher may be stopped for a while).
+                jst["at"] = int(now)
+            except Exception as e:  # noqa: BLE001 - the journal is a nicety next to the pushes
+                log("journal:", e)
+            if live:
+                ev = live_event(st, agents, now, first="live_sent" not in st)
+                if ev is not None:
+                    events.append(ev)
+            else:
+                for k in ("live_sent", "live_agents", "live_agents_since"):
+                    st.pop(k, None)
+            if not events:
                 continue
-            mine = [e for e in events if (e.get("type") != "live" or sub.get("live")) and sub["id"] in e.get("for", [sub["id"]])]
-            if dry_run or not mine:
-                continue
-            send(sub, mine, record, here)
-    for src, _ in srcs.values():
-        if src.core:
-            src.core.close()
+            sent[key] = events
+            for sub in group:
+                record = state.setdefault("phones", {}).setdefault(sub["id"], {})
+                if gone(record, sub):
+                    continue
+                mine = [e for e in events if (e.get("type") != "live" or sub.get("live")) and sub["id"] in e.get("for", [sub["id"]])]
+                if dry_run or not mine:
+                    continue
+                send(sub, mine, record, here)
+    finally:
+        # Also when a look fails: a herdr-core connection that stays open is a process (Windows) that stays on.
+        for src, _ in srcs.values():
+            if src.core:
+                src.core.close()
     if subs:
         ev = health_look(state.setdefault("health", {}), now)
         if ev is not None:
@@ -1155,12 +1601,27 @@ def tick(state, n, dry_run=False, now=None):
     return sent
 
 
+def lock_byte(f, mode):
+    """Windows: locks or unlocks (msvcrt.LK_NBLCK, LK_UNLCK) the byte of [f] that tells a watcher runs. It is far past the
+    pid, which the locked byte would hide from the other processes. Raises OSError when another process holds it."""
+    import msvcrt
+    f.seek(LOCK_BYTE)
+    msvcrt.locking(f.fileno(), mode, 1)
+
+
 def run():
     os.makedirs(STATE_DIR, exist_ok=True)
+    if WINDOWS and sys.stderr is None:
+        # pythonw.exe has no console, so no stderr either: what log() says goes to the log file.
+        sys.stdout = sys.stderr = open(LOG, "a", buffering=1, encoding="utf-8")
     # Not "w": that would wipe the running watcher's pid before finding out it runs.
     lock = open(LOCK, "a+")
     try:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        if WINDOWS:
+            import msvcrt
+            lock_byte(lock, msvcrt.LK_NBLCK)
+        else:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
         log("already running")
         return 0
@@ -1195,12 +1656,19 @@ def running_pid():
         return None
     with f:
         try:
-            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            if WINDOWS:
+                import msvcrt
+                lock_byte(f, msvcrt.LK_NBLCK)
+            else:
+                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
             f.seek(0)
             pid = f.read().strip()
             return int(pid) if pid.isdigit() else -1
-        fcntl.flock(f, fcntl.LOCK_UN)
+        if WINDOWS:
+            lock_byte(f, msvcrt.LK_UNLCK)
+        else:
+            fcntl.flock(f, fcntl.LOCK_UN)
         return None
 
 
@@ -1470,7 +1938,24 @@ _KEY_IN_LINE = re.compile(r"(?:^|\s)(" + "|".join(re.escape(t) for t in PAIR_KEY
 
 
 def authorized_keys_path():
-    return os.environ.get("HERDR_PAIR_AUTHORIZED_KEYS") or os.path.join(HOME, ".ssh", "authorized_keys")
+    return os.environ.get("HERDR_PAIR_AUTHORIZED_KEYS") or (WINDOWS and windows_admin_keys()) or os.path.join(HOME, ".ssh", "authorized_keys")
+
+
+def windows_admin_keys():
+    """Win32-OpenSSH's own file for administrators' keys when sshd_config's stock `Match Group
+    administrators` block names it and this user is one; None otherwise."""
+    try:
+        with open(os.path.join(SSHD_DIR, "sshd_config")) as f:
+            config = f.read()
+    except OSError:
+        return None
+    hit = re.search(r"^[ \t]*Match[ \t]+Group[ \t]+administrators[ \t]*\r?\n[ \t]+AuthorizedKeysFile[ \t]+(\S+)", config, re.I | re.M)
+    if not hit:
+        return None
+    groups = _out(["whoami", "/groups"], timeout=10) or ""
+    if "S-1-5-32-544" not in groups:  # the local Administrators group
+        return None
+    return hit.group(1).replace("__PROGRAMDATA__", os.environ.get("PROGRAMDATA") or "C:\\ProgramData")
 
 
 def parse_public_key(line):
@@ -1498,7 +1983,7 @@ def key_fingerprint(blob):
 def ssh_port():
     """The port sshd listens on, as its config says (the first Port line), else 22."""
     try:
-        with open("/etc/ssh/sshd_config") as f:
+        with open(os.path.join(SSHD_DIR, "sshd_config")) as f:
             for line in f:
                 hit = re.match(r"\s*Port\s+(\d+)\s*$", line, re.I)
                 if hit:
@@ -1510,7 +1995,7 @@ def ssh_port():
 
 def host_key_fingerprints(port):
     """This machine's SSH host keys' fingerprints, Ed25519 first: from /etc/ssh, else as sshd shows them."""
-    where = os.environ.get("HERDR_PAIR_HOST_KEYS") or "/etc/ssh"
+    where = os.environ.get("HERDR_PAIR_HOST_KEYS") or SSHD_DIR
     blobs = []
     for kind in ("ed25519", "ecdsa", "rsa"):
         try:
@@ -1544,6 +2029,20 @@ def ssh_answers(port):
         return False
 
 
+def tailscale_cli():
+    """Tailscale's command line: the one on the PATH, else, on Windows, where its installer puts it. The
+    installer adds that folder to the PATH, but only programs started afterwards see it: sshd, and every
+    shell open at the time, keep the old one until restarted."""
+    found = shutil.which("tailscale")
+    if found or not WINDOWS:
+        return found or "tailscale"
+    for root in (os.environ.get("ProgramFiles"), os.environ.get("ProgramW6432"), "C:\\Program Files"):
+        exe = os.path.join(root, "Tailscale", "tailscale.exe") if root else None
+        if exe and os.path.isfile(exe):
+            return exe
+    return "tailscale"
+
+
 def pair_addresses():
     """Where a phone may reach this machine, best first: its Tailscale name and address, then the
     address of its default route (the local network)."""
@@ -1553,7 +2052,7 @@ def pair_addresses():
         if address and address not in found and not address.startswith("127."):
             found.append(address)
 
-    status = _out(["tailscale", "status", "--json"], timeout=5)
+    status = _out([tailscale_cli(), "status", "--json"], timeout=5)
     if status:
         try:
             me = json.loads(status).get("Self") or {}
@@ -1657,7 +2156,12 @@ def edit_authorized_keys(path, state_dir, change):
     keeping its mode) only when it changed. A one-time key whose time is over goes on the way."""
     os.makedirs(state_dir, exist_ok=True)
     with open(os.path.join(state_dir, "pair.lock"), "a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        if fcntl:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+        else:
+            import msvcrt
+            lock.seek(0)
+            msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
         try:
             with open(path) as f:
                 lines = f.read().splitlines()
@@ -1736,15 +2240,20 @@ def cmd_pair(rest):
               "  python3 herdr-push pair", file=sys.stderr)
         return 2
     keys = authorized_keys_path()
-    for path in (script, sys.executable, STATE_DIR, keys):
+    python, state_dir = sys.executable, STATE_DIR
+    if WINDOWS:
+        # Git Bash runs the one-time key's command: Windows paths with forward slashes read the same there.
+        script, python, state_dir, keys = (p.replace("\\", "/") for p in (script, python, state_dir, keys))
+    for path in (script, python, state_dir, keys):
         if any(c in path for c in '"\\\n'):
             print("herdr-push pair: the path %s can't go in authorized_keys (a quote or a backslash in it)." % path, file=sys.stderr)
             return 2
     port = opts["port"] or ssh_port()
     fingerprints = host_key_fingerprints(port)
     if not fingerprints:
-        print("Couldn't read this machine's SSH host keys (/etc/ssh/ssh_host_*_key.pub), and no SSH server answered "
-              "on port %d. Is sshd running? (--port N for another port)" % port, file=sys.stderr)
+        print("Couldn't read this machine's SSH host keys (%s), and no SSH server answered "
+              "on port %d. Is sshd running? (--port N for another port)" % (os.path.join(SSHD_DIR, "ssh_host_*_key.pub"), port),
+              file=sys.stderr)
         return 1
     addresses = opts["host"] + [a for a in pair_addresses() if a not in opts["host"]]
     if not addresses:
@@ -1755,7 +2264,7 @@ def cmd_pair(rest):
         import pwd
         user = pwd.getpwuid(os.getuid()).pw_name
     except (ImportError, KeyError):
-        user = os.environ.get("USER") or "me"
+        user = os.environ.get("USER") or os.environ.get("USERNAME") or "me"
     name = opts["name"] or socket.gethostname().split(".")[0] or addresses[0]
     try:
         seed, blob = one_time_key()
@@ -1767,7 +2276,7 @@ def cmd_pair(rest):
     expires = int(time.time()) + opts["ttl"]
     state_path = pair_state_path(STATE_DIR, token)
     write_json(state_path, {"expires": expires, "used": False}, private=True)
-    command = " ".join(_sh_quote(p) for p in (sys.executable, script, "pair-accept", token, STATE_DIR, keys))
+    command = " ".join(_sh_quote(p) for p in (python, script, "pair-accept", token, state_dir, keys))
     version = openssh_version()
     options = []
     if version is None or version >= (8, 2):
@@ -1781,6 +2290,8 @@ def cmd_pair(rest):
     except OSError as e:
         _remove(state_path)
         print("herdr-push pair: can't add the one-time key to %s: %s" % (keys, e), file=sys.stderr)
+        if WINDOWS and keys == (windows_admin_keys() or "").replace("\\", "/"):
+            print("sshd reads administrators' keys from that file: run herdr-push pair in a terminal opened as administrator.", file=sys.stderr)
         return 1
 
     link = pair_link(name, user, addresses, port, fingerprints, seed, expires, opts["session"])
@@ -1883,6 +2394,8 @@ def cmd_pair_accept(rest):
 
 def system_localtime(when):
     """`when` in the system's time zone, as sshd reads expiry-time, whatever TZ this shell has."""
+    if not hasattr(time, "tzset"):  # Windows: no TZ to set aside
+        return time.localtime(when)
     tz = os.environ.pop("TZ", None)
     try:
         time.tzset()
@@ -1956,6 +2469,14 @@ def cmd_test(pid=None):
 
 
 def autostart():
+    if WINDOWS:
+        import winreg
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as key:
+                winreg.QueryValueEx(key, NAME)
+            return "windows-run"
+        except OSError:
+            return "none"
     if sys.platform == "darwin":
         return "launchd" if os.path.exists(launchd_plist()) else "none"
     if os.path.exists(systemd_unit()):
@@ -1978,8 +2499,11 @@ def cmd_status():
                        "ok": r.get("ok"), "error": r.get("error"), "gone": gone(r, s)})
     problems = {k: v["problem"] for k, v in state.get("sessions", {}).items() if v.get("problem")}
     pid = running_pid()
-    out({"ok": True, "version": VERSION, "running": pid is not None, "pid": pid, "autostart": autostart(),
-         "phones": phones, "problems": problems, "path": os.path.abspath(__file__)})
+    info = {"ok": True, "version": VERSION, "running": pid is not None, "pid": pid, "autostart": autostart(),
+            "phones": phones, "problems": problems, "path": os.path.abspath(__file__)}
+    if WINDOWS:
+        info["interactive"] = windows_interactive()  # false: no one is signed in, so there is nowhere to run it
+    out(info)
     return 0
 
 
@@ -1996,6 +2520,18 @@ def start_background():
 
 
 def cmd_ensure():
+    if WINDOWS:
+        # Never a child of this (SSH) session: the task starts it in the signed-in user's own session.
+        if running_pid() is None and windows_interactive():
+            # Make the task (and the Run value, if sign-in autostart is installed) again from this script: after a
+            # Python upgrade or a move they point at a program that is gone, and /run would start nothing. An
+            # `uninstall`ed machine gets no Run value back, as Linux's ensure leaves no unit or cron line.
+            windows_task_create()
+            if autostart() == "windows-run":
+                windows_run_value()
+            windows_task("/run")
+            wait_for_watcher(5)
+        return cmd_status()
     if running_pid() is None:
         kind = autostart()
         if kind == "systemd":
@@ -2023,7 +2559,111 @@ def has_systemd():
         return False
 
 
+def wait_for_watcher(seconds):
+    """Waits up to [seconds] for the watcher to hold the lock; whether it does."""
+    for _ in range(int(seconds * 10)):
+        if running_pid() is not None:
+            return True
+        time.sleep(0.1)
+    return running_pid() is not None
+
+
+def windows_command():
+    """What starts the watcher on Windows: (pythonw.exe, which opens no console window, next to this Python; its arguments)."""
+    py = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+    if not os.path.exists(py):
+        py = sys.executable
+    return py, '"%s" run' % os.path.abspath(__file__)
+
+
+def windows_task(*args):
+    """Runs schtasks on this user's task of the watcher: (whether it worked, what it said)."""
+    try:
+        r = subprocess.run(["schtasks"] + list(args) + ["/tn", NAME], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                           stderr=subprocess.STDOUT, timeout=30, creationflags=NO_WINDOW)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return False, str(e)
+    return r.returncode == 0, r.stdout.decode(errors="replace").strip()
+
+
+TASK_XML = """<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <Principals>
+    <Principal id="Author">
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>%s</Command>
+      <Arguments>%s</Arguments>
+    </Exec>
+  </Actions>
+</Task>
+"""
+
+
+def windows_task_create():
+    """The task that starts the watcher in the user's interactive session (InteractiveToken: only while they are signed
+    in, no password, no elevation). It is what `schtasks /run` starts from an SSH session, which can't open a window
+    there. No trigger (the Run value starts it at sign-in), and none of the limits a task has by default: it would stop
+    the watcher after 3 days, or on battery."""
+    from xml.sax.saxutils import escape
+    py, args = windows_command()
+    fd, path = tempfile.mkstemp(suffix=".xml")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-16") as f:  # schtasks reads a UTF-16 file
+            f.write(TASK_XML % (escape(py), escape(args)))
+        return windows_task("/create", "/xml", path, "/f")
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
+def windows_run_value():
+    """Writes the Run value that starts the watcher at sign-in."""
+    import winreg
+    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as key:
+        winreg.SetValueEx(key, NAME, 0, winreg.REG_SZ, '"%s" %s' % windows_command())
+
+
+def windows_install():
+    windows_run_value()  # first: sign-in autostart doesn't depend on the task
+    ok, err = windows_task_create()
+    note = ""
+    if not ok:
+        note = "couldn't create the task (%s): it starts with the next sign-in" % " ".join(err.split())
+    elif windows_interactive():
+        if running_pid() is not None:
+            stop()  # one of an older install: the task starts the one that is here now
+        windows_task("/run")
+        if not wait_for_watcher(5):
+            # The task may still count the watcher just stopped as running, and then ignores this start: once more.
+            windows_task("/run")
+            wait_for_watcher(5)
+    else:
+        note = "no one is signed in at the PC: it starts with the next sign-in"
+    pid = running_pid()
+    out({"ok": pid is not None or bool(note), "msg": note or ("running" if pid is not None else "the task didn't start it"),
+         "autostart": autostart(), "pid": pid, "version": VERSION})
+    return 0 if pid is not None or note else 1
+
+
 def cmd_install():
+    if WINDOWS:
+        return windows_install()
     me = os.path.abspath(__file__)
     note = ""
     if sys.platform == "darwin":
@@ -2088,7 +2728,25 @@ def stop():
             time.sleep(0.1)
 
 
+def windows_uninstall():
+    import winreg
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:
+            winreg.DeleteValue(key, NAME)
+    except OSError:
+        pass
+    windows_task("/delete", "/f")
+
+
 def cmd_uninstall(purge):
+    if WINDOWS:
+        windows_uninstall()
+        stop()
+        if purge:
+            shutil.rmtree(CONFIG_DIR, ignore_errors=True)
+            shutil.rmtree(STATE_DIR, ignore_errors=True)
+        out({"ok": True, "msg": "removed"})
+        return 0
     if sys.platform == "darwin" and os.path.exists(launchd_plist()):
         subprocess.run(["launchctl", "unload", "-w", launchd_plist()], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         os.remove(launchd_plist())
@@ -2166,6 +2824,9 @@ LAUNCHD = """<?xml version="1.0" encoding="UTF-8"?>
 def main(argv):
     cmd = argv[1] if len(argv) > 1 else "help"
     rest = argv[2:]
+    if WINDOWS and hasattr(sys.stdout, "reconfigure"):
+        # A pipe there is in the ANSI code page, which has no block characters for the QR code.
+        sys.stdout.reconfigure(encoding="utf-8")
     if cmd == "run":
         return run()
     if cmd == "subscribe":

@@ -39,13 +39,33 @@ object TranscriptFollower {
      * agent's process, which reports no session) is looked up as Shepherdr 3.1 does: Claude Code
      * names its session in `sessions/<pid>.json`, codex keeps its rollout file open; the process's
      * children are tried too, for an agent started through a wrapper.
+     * On Windows (Git Bash) the children come from the process table, as there is no `pgrep`.
      */
     internal val FIND = """
         if [ "${'$'}kind" = path ]; then
           f="${'$'}value"
           case "${'$'}f" in "~/"*) f="${'$'}HOME/${'$'}{f#\~/}" ;; esac
         elif [ "${'$'}kind" = pid ]; then
-          kids() { for k in ${'$'}(pgrep -P "${'$'}1" 2>/dev/null); do echo "${'$'}k"; kids "${'$'}k"; done; }
+          case "${'$'}(uname -s 2>/dev/null)" in
+            MINGW*|MSYS*|CYGWIN*)
+              # Git Bash has no pgrep and can't see Windows processes. Read the table of every process and
+              # its parent (once for all the chats of a search, even when it comes back empty) and walk it
+              # down from the pid; a parent id can be stale (Windows reuses pids), so each pid is taken once.
+              [ -n "${'$'}ptried" ] || ptried=1 ptable=${'$'}(powershell.exe -NoProfile -Command 'Get-CimInstance Win32_Process | Format-Table -HideTableHeaders ProcessId,ParentProcessId' 2>/dev/null </dev/null | tr -d '\r')
+              kids() {
+                printf '%s\n' "${'$'}ptable" | awk -v root="${'$'}1" '
+                  ${'$'}1 ~ /^[0-9]+${'$'}/ && ${'$'}2 ~ /^[0-9]+${'$'}/ { n++; pid[n] = ${'$'}1; par[n] = ${'$'}2 }
+                  END {
+                    seen[root] = 1; queue[1] = root; head = 1; tail = 1
+                    while (head <= tail) {
+                      cur = queue[head++]
+                      for (i = 1; i <= n; i++) if (par[i] == cur && !(pid[i] in seen)) { seen[pid[i]] = 1; queue[++tail] = pid[i]; print pid[i] }
+                    }
+                  }'
+              } ;;
+            *)
+              kids() { for k in ${'$'}(pgrep -P "${'$'}1" 2>/dev/null); do echo "${'$'}k"; kids "${'$'}k"; done; } ;;
+          esac
           for p in "${'$'}value" ${'$'}(kids "${'$'}value"); do
             case "${'$'}agent" in
               claude)

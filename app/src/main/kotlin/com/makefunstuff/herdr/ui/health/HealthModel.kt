@@ -73,7 +73,10 @@ class HealthModel(private val session: HostSession, private val store: HealthSto
 
     val gradle: List<LabeledProc> get() = procs.filter { it.own && it.kind.gradle }
 
-    /** Stops [targets] (SIGTERM, then SIGKILL after 5 s), [what] naming them in the outcome. */
+    /** Whether the machine last read is a Windows one; false until it has been read. */
+    val windows: Boolean get() = sample?.windows == true
+
+    /** Stops [targets] (SIGTERM then SIGKILL after 5 s; on Windows `taskkill` then `taskkill /F`), [what] naming them in the outcome. */
     fun stop(targets: List<LabeledProc>, what: String) = act("Stopping $what…") {
         val k = client().kill(ProcLabels.targets(targets))
         look()
@@ -109,3 +112,8 @@ class HealthModel(private val session: HostSession, private val store: HealthSto
         }
     }
 }
+
+/** What the stop dialog says happens to the processes on [machine]. */
+fun stopNote(machine: String, windows: Boolean): String =
+    if (windows) "Each is asked to close on $machine, and ended by force if it refuses or still runs after 5 seconds. Unsaved work in them is lost."
+    else "Each gets SIGTERM on $machine, and SIGKILL if it still runs after 5 seconds. Unsaved work in them is lost."

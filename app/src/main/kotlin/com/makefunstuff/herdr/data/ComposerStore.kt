@@ -32,6 +32,23 @@ class ComposerStore(private val file: File) {
         return m
     }
 
+    /**
+     * Claims [id] to send it: takes it out of [key]'s list and says whether it was still there, at once, so two
+     * senders (Send now, and Start work's first message) never both send it. A failed send puts it back ([restore]).
+     */
+    @Synchronized
+    fun take(key: String, id: String): HeldMessage? {
+        val m = held(key).firstOrNull { it.id == id } ?: return null
+        drop(key, id)
+        return m
+    }
+
+    /** Puts [m] back in [key]'s list, in its place by time: its send failed. */
+    fun restore(key: String, m: HeldMessage) = change { s ->
+        val list = s.held[key].orEmpty().filterNot { it.id == m.id }
+        s.copy(held = s.held + (key to (list + m).sortedBy { it.at }))
+    }
+
     /** Takes [id] out of [key]'s list: sent, or discarded. */
     fun drop(key: String, id: String) = change { s ->
         val left = s.held[key].orEmpty().filterNot { it.id == id }

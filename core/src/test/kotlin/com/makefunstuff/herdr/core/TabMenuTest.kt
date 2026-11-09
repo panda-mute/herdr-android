@@ -1,10 +1,16 @@
 package com.makefunstuff.herdr.core
 
+import com.makefunstuff.herdr.core.api.AgentInfo
+import com.makefunstuff.herdr.core.api.PaneInfo
+import com.makefunstuff.herdr.core.api.SessionSnapshot
+import com.makefunstuff.herdr.core.api.WorkspaceInfo
 import com.makefunstuff.herdr.core.board.TabMenus
 import com.makefunstuff.herdr.core.board.TabMenus.Row
 import com.makefunstuff.herdr.core.board.WorkAgentChoice
 import com.makefunstuff.herdr.core.board.WorkSpace
+import com.makefunstuff.herdr.core.board.WorkStatus
 import com.makefunstuff.herdr.core.board.WorkTab
+import com.makefunstuff.herdr.core.board.WorkTask
 import com.makefunstuff.herdr.core.shepherdr.ModelMenus
 import com.makefunstuff.herdr.core.shepherdr.ShepherdrJson
 import com.makefunstuff.herdr.core.shepherdr.V2Board
@@ -119,5 +125,34 @@ class TabMenuTest {
         assertEquals("auto", ModelMenus.choose(menu, now, "codex", menu.menus.getValue("codex").models[0]).perm)
         // Nothing restarts from a machine it can't.
         assertEquals(emptyList(), ModelMenus.changes(menu.copy(remote = "This computer only"), sonnet))
+    }
+
+    @Test
+    fun theTerminalsBehindAChatAndANewTab() {
+        fun pane(id: String, ws: String = "hc:sp1") = PaneInfo(paneId = id, workspaceId = ws, tabId = "$ws/tab")
+        fun agent(id: String, task: String? = null, space: String? = null) =
+            AgentInfo(workspaceId = "hc:sp1", tabId = "hc:sp1/tab", paneId = id, shepherdrTask = task, shepherdrSpace = space)
+        val view = SessionSnapshot(
+            workspaces = listOf(WorkspaceInfo("hc:sp1", label = "herdr-android"), WorkspaceInfo("hc:sp2", label = "notes")),
+            panes = listOf(pane("hc:t1"), pane("hc:t4"), pane("hc:t9")),
+            agents = listOf(agent("hc:t1", space = "sp1"), agent("hc:t4", task = "AND-19")),
+        )
+        val task = WorkTask("AND-19", "AND-19", "Speed up /jobs", "sp1", WorkStatus.Work, chat = "t:t4")
+        // Its worker, found by the task Shepherdr labelled it with; else by its chat's terminal, when the machine shows it.
+        assertEquals("hc:t4", TabMenus.taskTerminal(view, task))
+        assertEquals("hc:t9", TabMenus.taskTerminal(view, task.copy(id = "AND-7", name = "AND-7", chat = "t:t9")))
+        assertNull(TabMenus.taskTerminal(view, task.copy(id = "AND-7", name = "AND-7", chat = "t:t44")))
+        assertNull(TabMenus.taskTerminal(view, task.copy(id = "AND-7", name = "AND-7", chat = "")))
+        assertNull(TabMenus.taskTerminal(null, task))
+        assertEquals("hc:t1", TabMenus.assistantTerminal(view, "sp1"))
+        assertNull(TabMenus.assistantTerminal(view, "sp2"))
+        // The + menu's Terminal: the shell that wasn't there, in that space; an agent or another space's doesn't count.
+        val after = view.copy(
+            panes = view.panes + pane("hc:t10", "hc:sp2") + pane("hc:t11") + pane("hc:t12"),
+            agents = view.agents + agent("hc:t11"),
+        )
+        assertEquals("hc:t12", TabMenus.newShell(view, after, "HERDR-ANDROID"))
+        assertEquals("hc:t10", TabMenus.newShell(view, after, "notes"))
+        assertNull(TabMenus.newShell(view, view, "herdr-android"))
     }
 }

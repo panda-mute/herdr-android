@@ -7,6 +7,7 @@ import com.makefunstuff.herdr.core.chat.OptionRole
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -120,10 +121,17 @@ private fun MetaLine(key: String?, parts: List<String>, modifier: Modifier = Mod
 
 /**
  * Where an agent works, for a meta line: the agent, its workspace (its task's list when it works on one:
- * the workspace is named after the task, which the line already shows), and its machine when there are several.
+ * the workspace is named after the task, which the line already shows) with its tab for an agent on no task, so two
+ * in one space read apart (an Assistant's own name says its space), and its machine when there are several.
  */
 private fun where(a: HomeAgent, task: WorkTask?, showMachine: Boolean) =
-    listOfNotNull(a.agent.displayName, task?.listName?.ifEmpty { null } ?: a.workspace.ifEmpty { a.location }, a.machineLabel.takeIf { showMachine })
+    listOfNotNull(
+        a.agent.displayName,
+        task?.listName?.ifEmpty { null }
+            ?: (if (task == null && a.agent.shepherdrSpace == null && a.agent.shepherdrTask == null) a.location.ifEmpty { null } else null)
+            ?: a.workspace.ifEmpty { a.location },
+        a.machineLabel.takeIf { showMachine },
+    )
 
 /**
  * A card of the Needs you list: hairline card, chosen on a wide window when it is open beside the
@@ -462,4 +470,140 @@ fun AgentLine(
             Icon(HerdrIcons.Pin, null, tint = c.muted, modifier = Modifier.size(16.dp))
         }
     }
+}
+
+/**
+ * A thing waiting for you as one row, the way 3.1's Needs you list has it: who asks, what it is, the
+ * question in a line under it, and only its one action beside it (Accept a ready task, give a secret);
+ * anything else opens where it is answered. The full answer card is in the task's own chat, so a phone
+ * shows a screenful of what waits instead of one card at a time. A yes/no or two-choice question keeps
+ * its answers here, as its card had them, so the shortest answer stays one tap.
+ */
+@OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
+@Composable
+fun WaitingRow(
+    w: Waiting,
+    showMachine: Boolean,
+    busy: String?,
+    space: String = "",
+    onOpen: () -> Unit,
+    onGive: () -> Unit,
+    onMerge: () -> Unit,
+    onChoose: ((BlockedPrompt, Int) -> Unit)? = null,
+    /** Reply in words, with the question quoted, without opening its chat. */
+    onReply: (() -> Unit)? = null,
+    /** Its long-press sheet (Open terminal, why this state, the rest), or null where it has none. */
+    onMenu: (() -> Unit)? = null,
+    /** What its long-press sheet offers besides the row's own actions, as TalkBack's actions. */
+    more: List<CustomAccessibilityAction> = emptyList(),
+) {
+    val c = Herdr.colors
+    val mark: @Composable () -> Unit = when (w) {
+        is Waiting.Question -> ({ AgentMark(w.agent.agent.agent ?: w.agent.agent.displayName) })
+        is Waiting.Task -> ({
+            if (w.task.agent.isNotEmpty()) AgentMark(V2Board.agentKind(w.task.agent))
+            else Box(Modifier.size(22.dp), contentAlignment = Alignment.Center) { Icon(HerdrIcons.SquareKanban, null, tint = c.text, modifier = Modifier.size(20.dp)) }
+        })
+        is Waiting.Secret -> ({ Box(Modifier.size(22.dp), contentAlignment = Alignment.Center) { Icon(HerdrIcons.KeyRound, null, tint = c.text, modifier = Modifier.size(20.dp)) } })
+        is Waiting.Coordinator -> ({ Box(Modifier.size(22.dp), contentAlignment = Alignment.Center) { Icon(HerdrIcons.MessagesSquare, null, tint = c.text, modifier = Modifier.size(20.dp)) } })
+    }
+    val title: String
+    val key: String?
+    val meta: List<String>
+    val question: String?
+    val asked = if (w is Waiting.Question) rememberAsked(w.agent) else null
+    // The answers its card could send in one tap: a yes/no, or a menu of two. More than that is read in the chat.
+    val prompt = asked?.prompt?.takeIf { onChoose != null && busy == null && (it.yesNo || it.options.size in 1..2) }
+    val answers = if (prompt == null) emptyList() else if (prompt.yesNo) listOf(
+        CustomAccessibilityAction("Answer yes") { onChoose?.invoke(prompt, prompt.approveIndex!!); true },
+        CustomAccessibilityAction("Answer no") { onChoose?.invoke(prompt, prompt.denyIndex!!); true },
+    ) else prompt.options.indices.map { i ->
+        CustomAccessibilityAction("Answer: ${prompt.shortLabel(i)}") { onChoose?.invoke(prompt, i); true }
+    }
+    when (w) {
+        is Waiting.Question -> {
+            title = w.task?.title ?: w.agent.agent.subtitle ?: w.agent.agent.displayName
+            key = w.task?.name
+            meta = where(w.agent, w.task, showMachine)
+            question = asked?.question ?: "Waiting for your answer"
+        }
+        is Waiting.Task -> {
+            title = w.task.title
+            key = w.task.name
+            // What it says of itself belongs on one line, not twice: as the question while it asks, else as the meta.
+            val need = w.task.status == WorkStatus.Need
+            meta = listOfNotNull(
+                w.task.line.takeIf { !need && it.isNotEmpty() }, prNumberOf(w.task.pr)?.let { "PR #$it" },
+                space.takeIf { it.isNotEmpty() }, w.machineLabel.takeIf { showMachine },
+            )
+            question = w.task.line.takeIf { need && it.isNotEmpty() }
+        }
+        is Waiting.Secret -> {
+            title = w.task?.title ?: "${w.space?.name ?: "A space"}'s Assistant"
+            key = w.task?.name
+            meta = listOfNotNull("Wants the secret ${w.ask.name}", w.machineLabel.takeIf { showMachine })
+            question = w.ask.why?.takeIf { it.isNotBlank() }
+        }
+        is Waiting.Coordinator -> {
+            title = "${w.space.name}'s Assistant asks you"
+            key = null
+            meta = listOfNotNull("Answer it in the chat", w.machineLabel.takeIf { showMachine })
+            question = "Its question is waiting in the Assistant chat."
+        }
+    }
+    val tap = if (onMenu != null) {
+        Modifier.combinedClickable(onClickLabel = "Open", onClick = onOpen, onLongClickLabel = "show more actions", onLongClick = onMenu)
+    } else Modifier.clickable(onClickLabel = "Open", onClick = onOpen)
+    Row(
+        Modifier.fillMaxWidth().heightIn(min = 72.dp)
+            .then(tap)
+            .padding(start = Space.screen, end = Space.screen, top = Space.s, bottom = Space.s)
+            .semantics(mergeDescendants = true) {
+                contentDescription = listOfNotNull(title, key, question).joinToString(", ")
+                val all = answers + more
+                if (all.isNotEmpty()) customActions = all
+            },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        mark()
+        Spacer(Modifier.width(Space.m))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.titleMedium, color = c.strong, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            MetaLine(key, meta)
+            if (busy != null) Text(busy, style = MaterialTheme.typography.bodySmall, color = c.accent, maxLines = 1)
+            else question?.let {
+                Text(it, style = MaterialTheme.typography.bodyMedium, color = c.muted, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = Space.xxs))
+            }
+            if (prompt != null) FlowRow(
+                Modifier.padding(top = Space.s),
+                horizontalArrangement = Arrangement.spacedBy(Space.s),
+                verticalArrangement = Arrangement.spacedBy(Space.s),
+            ) {
+                when {
+                    prompt.yesNo -> {
+                        AnswerButton("Yes", HerdrIcons.Check, primary = true, enabled = true) { onChoose?.invoke(prompt, prompt.approveIndex!!) }
+                        AnswerButton("No", HerdrIcons.X, primary = false, enabled = true) { onChoose?.invoke(prompt, prompt.denyIndex!!) }
+                    }
+                    else -> prompt.options.forEachIndexed { i, _ ->
+                        // A permanent allow carries the fingerprint, as it asks for one first.
+                        val always = prompt.role(i) == OptionRole.Always
+                        AnswerButton(
+                            prompt.shortLabel(i).let { if (it.length <= 24) it else it.take(23).trimEnd() + "…" },
+                            if (always) HerdrIcons.FingerprintPattern else null, primary = i == 0 && !always, enabled = true,
+                        ) { onChoose?.invoke(prompt, i) }
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.width(Space.s))
+        when {
+            busy != null -> Unit
+            w is Waiting.Task && w.task.status == WorkStatus.Ready -> AnswerButton("Accept", HerdrIcons.Check, primary = true, enabled = true, onClick = onMerge)
+            w is Waiting.Secret -> AnswerButton("Give it", HerdrIcons.KeyRound, primary = true, enabled = true, onClick = onGive)
+            w is Waiting.Question && onReply != null -> AnswerButton("Reply", HerdrIcons.Reply, primary = false, enabled = true, onClick = onReply)
+            w is Waiting.Task && w.task.status == WorkStatus.Need && w.agent != null -> Text("Answer", style = MaterialTheme.typography.labelMedium, color = c.accent)
+            else -> Icon(HerdrIcons.ChevronRight, null, tint = c.muted, modifier = Modifier.size(18.dp))
+        }
+    }
+    Box(Modifier.fillMaxWidth().padding(start = Space.screen + 34.dp).height(1.dp).background(c.line))
 }

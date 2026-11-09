@@ -45,22 +45,22 @@ Near-black panels, amber frames, status lights. Flat and minimal: frames and fla
 ## Layout (Shepherdr 3.1's phone)
 
 - **Bottom bar**: **Chat** (the shown space), **Tasks** (owns the Needs you count, the only badge),
-  **Artifacts** (the shown space's). Each a glyph over its name in mono capitals; the chosen one amber,
+  **Artifacts** (the shown space's; where its machine has no Shepherdr, the machine's herdr.doc docs). Each a glyph over its name in mono capitals; the chosen one amber,
   with a 2dp amber bar along its top edge.
 - **Drawer of spaces** (`ui/spaces/Spaces.kt`), the desktop workbench's sidebar: the brand row (the
   HERDR chip, *HERDR*, an amber-framed *WORKBENCH* tag, search), *SPACES*, then each machine as a
   numbered bus (`BUS 1 · DEVBOX`, its meter: thin bars for CPU, memory and its tightest plan, amber
   near a limit and red past it; its connection LED; why, when it doesn't answer; a tap opens the
-  machine) with its spaces as numbered slots (`SlotNumber`, the name in capitals, the program's chip
-  or *ASSISTANT*, its one LED; the shown one on `selected` with an amber bar at its start and its
+  machine) with its spaces as numbered slots (`SlotNumber`, the name in sentence case, the program's chip
+  only where an agent really is, its one LED; the shown one on `selected` with an amber bar at its start and its
   number on amber). Classic herdr's and herdr-core's workspaces of one name are one slot. At its
   foot, *Settings* and *Add machine*. The circuit board shows, quietly, below the last bus.
 - **Chat tab**: the shown space's Assistant (Shepherdr), else its agent (the one that needs you
   first), else its terminals. The bar's leading button opens the drawer; its layers glyph opens the
   space's menu: its tabs (each agent's chat and terminal, each shell), *New task*, *Assistant*,
   *Start an agent*, and its machine.
-- **Tasks tab** (3.1's Tasks list): a filter row (All, then each group with its count), then
-  *Pinned*, *Needs you* (cards with their answers), *Ready* (with Accept), *Working*, *Queued*,
+- **Tasks tab** (3.1's Tasks list): a *Filter tasks* field and a filter row (All, then each group
+  with its count), then *Pinned*, *Needs you* (one row each, its answer beside it), *Ready* (with Accept), *Working*, *Queued*,
   *To do*, *Done* (five, then *Show N more*), *Idle*. One row per task: a task's agent is
   its row. A + offers *New task*, *Assistant* and *Start an agent*.
 - **Wide** (840dp and more): the drawer stays open on the left as a sidebar; the app fills the rest.
@@ -176,12 +176,12 @@ drawer's last bus. Never under rows of text; text over an empty state sits on th
 | `HerdrNavBar` / `NavItem` | See Layout. |
 | `SectionHeading` | Mono capitals in `muted` (or a state's colour when it needs you), then a 1dp `line` rule to the edge or to its trailing action. |
 | `QuietCard` | A module: a `lineStrong` frame, flat. Holds rows and sections. |
-| Needs you cards | The agent's chip, what it works on, its key and where; the question; its answers as square buttons (the main one amber). No status badge: the section says it. |
+| Needs you rows (`WaitingRow`) | One row per item: the agent's chip, the title, its key and space, the question in two lines, and its one action beside it (Accept, Give it, Answer; a yes/no keeps both answers as square buttons, the main one amber). No status badge: the section says it. The full card stays in the task's chat. |
 | `ListRow`, `ActionRow`, `MenuRow` | Optional leading cell, title, a dim line, trailing or chevron. A chosen action row sits on `selected` with a 3dp amber bar at its start. |
 | `PrimaryButton` / `SecondaryButton` / `QuietButton` / `DangerButton` | Square, 48dp, mono labels: amber with ink / framed on the ground / bare / the danger tint framed in red. |
 | `HerdrChip` | A framed cell; chosen: amber frame, amber text on amber's tint. |
 | `SegmentedPills` | One framed track; the chosen segment amber with ink. |
-| `ViewTabs` | The views of one thing (a task's Chat, Files, Changes, Pull request) under its bar: on `panel` over a `lineStrong` rule, names in mono capitals, the shown one amber with a 2dp amber bar along its bottom edge; scrolls sideways when they don't fit. |
+| `ViewTabs` | The views of one thing (a task's Chat, Files, Changes, Pull request, Browser) under its bar: on `panel` over a `lineStrong` rule, names in mono capitals, the shown one amber with a 2dp amber bar along its bottom edge; scrolls sideways when they don't fit. |
 | `HerdrField` | Label in mono capitals, the box on `input` framed in `lineStrong`, amber while focused. |
 | `HerdrSwitch`, `SwitchRow` | Square: a framed track with a square knob; on, amber with an ink knob. |
 | `StatusBadge`, `StatusLabel`, `Led` | See States. |

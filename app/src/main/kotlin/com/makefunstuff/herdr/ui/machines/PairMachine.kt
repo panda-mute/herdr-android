@@ -143,7 +143,7 @@ fun PairMachineScreen(nav: NavController, onType: () -> Unit) {
                     it.viaMachineId == null && it.user == f.offer.user && it.host == reached.address && it.port == f.offer.port
                 }
                 val paired = Pairing.pair(f.offer, reached, container.identity.get(), same?.id ?: MachineStore.newId())
-                val machine = same?.let { paired.copy(label = it.label, herdrPath = it.herdrPath, enabled = it.enabled, allowHostScripts = it.allowHostScripts) } ?: paired
+                val machine = same?.let { paired.copy(label = it.label, herdrPath = it.herdrPath, enabled = it.enabled, allowHostScripts = it.allowHostScripts, taskSource = it.taskSource) } ?: paired
                 container.machines.upsert(machine)
                 Toasts.show("${machine.label} added", error = false)
                 nav.navigate(Routes.machine(machine.id)) { popUpTo(Routes.EDIT) { inclusive = true } }
@@ -237,7 +237,8 @@ private fun HowTo() {
             MonoBlock(PAIR_COMMAND)
             Text(
                 "It shows a code for five minutes. Scanning it adds this phone's key there and checks the machine's " +
-                    "host key, so there's nothing to copy or type. Where herdr-push isn't yet, or doesn't know pair:",
+                    "host key, so there's nothing to copy or type. On Windows, use python in place of python3. " +
+                    "Where herdr-push isn't yet, or doesn't know pair:",
                 style = MaterialTheme.typography.bodyMedium,
                 color = Herdr.colors.muted,
             )

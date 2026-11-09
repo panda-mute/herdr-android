@@ -121,11 +121,11 @@ class BriefWork(
     fun start() {
         // A changed schedule (or the brief turned on): the alarm for the next one.
         scope.launch { store.state.map { it.schedule }.distinctUntilChanged().collect { plan() } }
-        // While on screen, the agents each machine shows are what the person sees.
+        // While on screen, the agents each machine shows are what the person sees (herdr-core's, where it has no classic herdr).
         scope.launch {
             hosts.hosts.collect { states ->
                 if (!hosts.isForeground) return@collect
-                for (s in states) if (s.online) s.snapshot?.let { looked(s.machine.id, null, it) }
+                for (s in states) if (s.online) (if (s.classic) s.snapshot else s.view)?.let { looked(s.machine.id, null, it) }
             }
         }
     }
@@ -199,17 +199,24 @@ class BriefWork(
 
     private suspend fun read(s: HostSession, m: Machine, since: Long, baseline: Baseline?): Pair<MachineLook, List<WorkTask>?> {
         // Online, or needing the person (a refused key, a changed host key): that won't change by waiting.
-        val state = withTimeoutOrNull(CONNECT_MS) { s.state.first { it.online || it.status is HostStatus.Attention } }
+        // A machine with herdr-core alone says Attention until herdr-core answers: that is waited for.
+        val state = withTimeoutOrNull(CONNECT_MS) { s.state.first { it.settled } }
         (state?.status as? HostStatus.Attention)?.let { throw IOException(it.message) }
-        val api = s.awaitApi(5_000)
         val conn = s.awaitConnection(5_000)
-        val snapshot = runCatching { api.snapshot() }.getOrElse { if (it is CancellationException) throw it; null }
+        // Classic herdr's own snapshot; on a machine with herdr-core alone, what herdr-core shows.
+        val coreOnly = state != null && state.online && !state.classic
+        val snapshot = if (coreOnly) {
+            state?.view
+        } else {
+            val api = s.awaitApi(5_000)
+            runCatching { api.snapshot() }.getOrElse { if (it is CancellationException) throw it; null }
+        }
         if (!s.state.value.boardChecked) s.checkBoard()
         val hasBoard = s.state.value.onShepherdr
         val tasks = if (hasBoard) runCatching { s.awaitWorkBoard().overview().tasks }.getOrNull() else null
-        // What each agent that asks wants, from its screen.
+        // What each agent that asks wants, from its screen (classic herdr's or herdr-core's, by the pane).
         val questions = snapshot?.agents.orEmpty().filter { it.agentStatus == AgentStatus.Blocked }.mapNotNull { a ->
-            val text = runCatching { api.readPane(a.paneId, source = "visible", lines = 60).text }.getOrNull() ?: return@mapNotNull null
+            val text = runCatching { s.awaitAgent(a.paneId, 5_000).read(a.paneId, lines = 60, visible = true) }.getOrNull() ?: return@mapNotNull null
             (BlockedPrompt.parse(text)?.question ?: PromptGuess.question(text))?.let { a.paneId to it }
         }.toMap()
         val journal = Journals.read(conn, m.label, s.machine.session, since / 1000)

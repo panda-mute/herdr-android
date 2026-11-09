@@ -23,6 +23,8 @@ import com.makefunstuff.herdr.core.shepherdr.ShepherdrClient
 import com.makefunstuff.herdr.core.shepherdr.ShepherdrTransport
 import com.makefunstuff.herdr.core.shepherdr.V2Version
 import com.makefunstuff.herdr.core.shepherdr.V2WorkBoard
+import com.makefunstuff.herdr.core.shp.ShpBoard
+import com.makefunstuff.herdr.core.shp.ShpClient
 import com.makefunstuff.herdr.core.ssh.ConnectError
 import com.makefunstuff.herdr.core.ssh.HerdrBinaries
 import com.makefunstuff.herdr.core.ssh.HerdrBinary
@@ -80,6 +82,8 @@ data class HostState(
     val herdrVersion: String? = null,
     /** Whether the look for Shepherdr answered since the machine connected, so a null [shepherdrVersion] means it isn't there. */
     val boardChecked: Boolean = false,
+    /** Whether `shp` is on the machine (simple-herdr-projects), which the board auto-detects; null until looked for. */
+    val shpPresent: Boolean? = null,
     /** Shepherdr's version where its service answers on the machine (3.x); null where it doesn't (or not checked yet). */
     val shepherdrVersion: String? = null,
     /** The herdr executable the app runs on the machine; null until it connects, or when it couldn't be probed. */
@@ -124,8 +128,11 @@ data class HostState(
     /** Whether classic herdr answers here (a machine may be online for herdr-core alone). */
     val classic: Boolean get() = online && classicMissing == null
 
-    /** Which board the machine runs: Shepherdr 3's, or none. */
-    val boardApi: BoardApi get() = BoardDetection.decide(shepherdrVersion?.let { V2Version(version = it) })
+    /** Which board the machine runs: simple-herdr-projects, Shepherdr 3's, or none ([Machine.taskSource] chooses). */
+    val boardApi: BoardApi get() = BoardDetection.decide(shepherdrVersion?.let { V2Version(version = it) }, shpPresent == true, machine.taskSource)
+
+    /** The machine has a task source to show: shp's board or Shepherdr 3's. */
+    val hasBoard: Boolean get() = boardApi != BoardApi.None
 
     /** It runs Shepherdr 3: its board screens talk to its service ([HostSession.awaitWorkBoard]). */
     val onShepherdr: Boolean get() = boardApi is BoardApi.V2
@@ -134,6 +141,15 @@ data class HostState(
     val herdrMachine: Machine get() = herdr?.let { machine.copy(herdrPath = it.binary.path) } ?: machine
 
     val online: Boolean get() = status == HostStatus.Online
+
+    /**
+     * Whether its look at the machine is over, for a read that runs once: online for classic herdr, or
+     * for herdr-core alone once every session of it was looked at ([herdrCoreLooked]); or needing the
+     * person, which waiting won't change. Not while herdr-core was found beside missing classic herdr and
+     * has yet to answer: the status says Attention until it does.
+     */
+    val settled: Boolean get() =
+        (online && (classicMissing == null || herdrCoreLooked)) || (status is HostStatus.Attention && classicMissing == null)
 }
 
 /**
@@ -230,6 +246,8 @@ class HostSession(
     /** How Shepherdr's service is reached on this connection (its port forward), once found; closed with the connection. */
     @Volatile private var shepherdr: ShepherdrTransport? = null
     private val shepherdrLock = Mutex()
+    /** One board look at a time: a switch's look must not be overwritten by one that started before it. */
+    private val boardLock = Mutex()
     @Volatile private var api: HerdrApi? = null
     /**
      * herdr-core's `hc connect`s on this connection, one a session that runs (null: the default
@@ -250,7 +268,9 @@ class HostSession(
         val reconnect = old.host != machine.host || old.port != machine.port || old.user != machine.user ||
             old.session != machine.session || old.viaMachineId != machine.viaMachineId ||
             old.herdrPath != machine.herdrPath || (old.hostKey != null && old.hostKey != machine.hostKey)
-        _state.update { it.copy(machine = machine) }
+        val boardChanged = old.taskSource != machine.taskSource
+        _state.update { it.copy(machine = machine).let { s -> if (boardChanged) s.copy(boardChecked = false) else s } }
+        if (boardChanged) scope.launch { runCatching { checkBoard() } }
         if (reconnect && loop?.isActive == true) {
             stop()
             start()
@@ -339,16 +359,32 @@ class HostSession(
         return java.util.Base64.getMimeDecoder().decode(result.stdout.trim())
     }
 
-    /** Looks for Shepherdr again, for one started or stopped since the machine connected. */
-    suspend fun checkBoard() {
-        val conn = connection ?: return
-        val v2 = findShepherdr(conn)
-        _state.update { it.copy(shepherdrVersion = v2?.version, boardChecked = true) }
+    /** Looks for the machine's board again: simple-herdr-projects where shp is there, and Shepherdr 3 where it may be. */
+    suspend fun checkBoard() = boardLock.withLock {
+        val conn = connection ?: return@withLock
+        val choice = machine.taskSource
+        val shp = ShpClient.present(conn)
+        // The service is only probed where it can be the board: forced, or auto with no shp to prefer.
+        val wantShepherdr = when (choice) {
+            Machine.TASK_SHP -> false
+            Machine.TASK_SHEPHERDR -> true
+            else -> !shp
+        }
+        val v2 = if (wantShepherdr) {
+            findShepherdr(conn)
+        } else {
+            closeShepherdr()
+            null
+        }
+        // The person switched while this looked: its own look is waiting and gives the answer.
+        if (machine.taskSource != choice) return@withLock
+        _state.update { it.copy(shpPresent = shp, shepherdrVersion = v2?.version, boardChecked = true) }
     }
 
     /**
      * Looks for the board again every [BOARD_RECHECK_MS] while none answers as Shepherdr: one started
-     * after the machine connected is found without a reconnect.
+     * after the machine connected is found without a reconnect. On shp a look also finds Shepherdr
+     * where shp has gone, and the other way round.
      */
     private suspend fun recheckBoard(): Nothing {
         while (true) {
@@ -373,9 +409,10 @@ class HostSession(
         if (!state.value.boardChecked) checkBoard()
         val s = state.value
         return when (val api = s.boardApi) {
-            // The client each time: after a reconnect it is the new connection's forward.
+            // The client each time: after a reconnect it is the new connection's commands.
             is BoardApi.V2 -> V2WorkBoard({ awaitShepherdr(timeoutMs) }, api.version)
-            BoardApi.None -> throw IOException("Shepherdr 3 isn't running on ${machine.label}")
+            BoardApi.Shp -> ShpBoard(ShpClient { awaitConnection(timeoutMs) }, s.machine.id, s.machine.label)
+            BoardApi.None -> throw IOException("No task board on ${machine.label}: neither shp nor Shepherdr 3 answered")
         }
     }
 
@@ -406,6 +443,12 @@ class HostSession(
             return@withLock null
         }
         v
+    }
+
+    /** Lets Shepherdr's port forward go: the machine's board is shp's, so the service isn't read. */
+    private suspend fun closeShepherdr() = shepherdrLock.withLock {
+        shepherdr?.let { runCatching { it.close() } }
+        shepherdr = null
     }
 
     private fun statusMessage(): String = state.value.classicMissing?.takeIf { state.value.online } ?: when (val s = state.value.status) {

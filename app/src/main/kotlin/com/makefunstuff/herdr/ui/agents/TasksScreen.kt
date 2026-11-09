@@ -249,7 +249,7 @@ fun TasksScreen(
 
     /** A Ready task whose Accept card is up, and its machine. */
     var acceptFor by remember { mutableStateOf<Pair<Waiting.Task, WorkTask>?>(null) }
-    // Shepherdr's Accept: its card first, which says what you approve.
+    // The Accept card first, which says what you approve (shp's own, as it has no evidence to read).
     fun merge(w: Waiting.Task, t: WorkTask) {
         acceptFor = w to t
     }
@@ -285,18 +285,30 @@ fun TasksScreen(
             is Waiting.Coordinator, is Waiting.Secret -> null
         }
     }.toSet()
+    var query by rememberSaveable { mutableStateOf("") }
+    fun hit(vararg words: String?) = query.isBlank() || words.filterNotNull().any { it.contains(query.trim(), ignoreCase = true) }
+    fun hitRow(r: AgentRow) = hit(r.task?.title, r.task?.name, r.agent.agent.displayName, r.agent.agent.subtitle)
+    // The filter narrows all of it, as 3.1's "Filter tasks" does.
     fun rows(list: List<AgentRow>) = list.filter { r ->
         if (r.task != null) (r.agent.machineId to r.task!!.id) !in asked else titleOf(r.agent, null) !in askedTitles
-    }
+    }.filter(::hitRow)
     val agentRows = rows(home.pinned + home.working + home.done + home.idle)
     val taskWithAgent = agentRows.mapNotNull { r -> r.task?.let { r.agent.machineId to it.id } }.toSet()
     val agentTitles = agentRows.map { titleOf(it.agent, it.task) }.toSet() + askedTitles
-    val ready = needsYou.filter { it is Waiting.Task && it.task.status == WorkStatus.Ready }
-    val waiting = needsYou - ready.toSet()
+    val ready = needsYou.filter { it is Waiting.Task && it.task.status == WorkStatus.Ready && hit(it.task.title, it.task.name, it.task.listName) }
+    val waiting = (needsYou - ready.toSet()).filter { w ->
+        when (w) {
+            is Waiting.Task -> hit(w.task.title, w.task.name, w.task.listName)
+            is Waiting.Question -> hit(w.task?.title, w.task?.name, w.agent.agent.displayName, w.agent.agent.subtitle)
+            is Waiting.Secret -> hit(w.task?.title, w.task?.name, w.space?.name, w.ask.name)
+            is Waiting.Coordinator -> hit(w.space.name)
+        }
+    }
     // Tasks no agent row carries, by status: Shepherdr's own rows.
     fun tasks(vararg st: WorkStatus) = boards.flatMap { b ->
         b.tasks.filter { t ->
-            t.status in st && (b.machineId to t.id) !in asked && (b.machineId to t.id) !in taskWithAgent && (b.machineId to t.title) !in agentTitles
+            t.status in st && (b.machineId to t.id) !in asked && (b.machineId to t.id) !in taskWithAgent && (b.machineId to t.title) !in agentTitles &&
+                hit(t.title, t.name, t.listName)
         }.map { b to it }
     }
     val workingTasks = tasks(WorkStatus.Work, WorkStatus.Merging)
@@ -356,6 +368,13 @@ fun TasksScreen(
                 // Room under the last row for the + button.
                 contentPadding = PaddingValues(bottom = 96.dp),
             ) {
+                item(key = "task-filter") {
+                    HerdrField(
+                        query, { query = it }, modifier = Modifier.fillMaxWidth().padding(horizontal = Space.screen).padding(top = Space.s, bottom = Space.xs),
+                        placeholder = { Text("Filter tasks") }, leadingIcon = { Icon(HerdrIcons.Search, null, Modifier.size(18.dp)) },
+                        singleLine = true,
+                    )
+                }
                 item(key = "filters") { FilterRow(shown, counts) { shown = it } }
                 boardProblems.forEach { (label, p) ->
                     item(key = "problem/$label") {
@@ -384,42 +403,29 @@ fun TasksScreen(
                     }
                 }
                 @Composable
-                fun card(w: Waiting) = when (w) {
-                    is Waiting.Question -> QuestionCard(
-                        w, showMachine, selected = inMiddle == w.agent.key, busy = busy[w.key],
-                        onOpen = { openAgent(w.agent) }, onMenu = { menuAgent = w.agent to w.task },
-                        onChoose = { prompt, i -> answer(w, prompt, i) },
-                        onReply = { reply = Reply.ToAgent(w) },
-                        more = sheetActions(w.agent, w.task),
-                    )
-                    is Waiting.Task -> {
-                        val t = w.task
-                        // The question it waits on, read from Shepherdr again whenever the task changes.
-                        val card by produceState<WorkCard?>(null, w.key, t.line, t.status) {
-                            value = if (t.status != WorkStatus.Need) null else runCatching {
-                                container.hosts.session(w.machineId)?.awaitWorkBoard()?.details(t)?.cards?.firstOrNull()
-                            }.getOrNull()
+                fun card(w: Waiting) = WaitingRow(
+                    w, showMachine, busy = busy[w.key],
+                    space = (w.task?.space?.takeIf { it.isNotEmpty() }?.let { id ->
+                        boards.firstOrNull { it.machineId == w.machineId }?.work?.spaces?.firstOrNull { it.id == id }?.name
+                    }).orEmpty(),
+                    onOpen = {
+                        when (w) {
+                            is Waiting.Question -> openAgent(w.agent)
+                            is Waiting.Task -> openTask(w)
+                            is Waiting.Coordinator -> panes.open(nav, Routes.coordinator(w.machineId, w.space.id))
+                            is Waiting.Secret -> {
+                                val t = w.task
+                                if (t != null) panes.openBoard(nav, w.machineId, t.id) else panes.open(nav, Routes.coordinator(w.machineId, w.space?.id))
+                            }
                         }
-                        WorkWaitingCard(
-                            w, t, space = boards.firstOrNull { it.machineId == w.machineId }?.work?.spaces?.firstOrNull { it.id == t.space }?.name.orEmpty(),
-                            showMachine = showMachine,
-                            // It opens on the board's pane, not in the middle: never shown chosen here.
-                            selected = false,
-                            busy = busy[w.key], card = card,
-                            onOpen = { openTask(w) },
-                            onMerge = { merge(w, t) },
-                            onChoose = { c, i -> choose(w, c, i) },
-                        )
-                    }
-                    is Waiting.Coordinator -> CoordinatorCard(w, showMachine) { panes.open(nav, Routes.coordinator(w.machineId, w.space.id)) }
-                    is Waiting.Secret -> SecretCard(
-                        w, showMachine, onGive = { giving = w },
-                        onOpen = {
-                            val t = w.task
-                            if (t != null) panes.openBoard(nav, w.machineId, t.id) else panes.open(nav, Routes.coordinator(w.machineId, w.space?.id))
-                        },
-                    )
-                }
+                    },
+                    onGive = { if (w is Waiting.Secret) giving = w },
+                    onMerge = { if (w is Waiting.Task) merge(w, w.task) },
+                    onChoose = { prompt, i -> if (w is Waiting.Question) answer(w, prompt, i) },
+                    onReply = { if (w is Waiting.Question) reply = Reply.ToAgent(w) },
+                    onMenu = (w as? Waiting.Question)?.let { { menuAgent = it.agent to it.task } },
+                    more = (w as? Waiting.Question)?.let { sheetActions(it.agent, it.task) }.orEmpty(),
+                )
                 if (on(TaskFilter.NeedsYou)) items(waiting, key = { it.key }) { card(it) }
                 if (on(TaskFilter.Ready) && ready.isNotEmpty()) {
                     item(key = "h-ready") { SectionHeading("Ready · ${ready.size}", Modifier.padding(horizontal = Space.screen), top = Space.l, color = Herdr.colors.done) }
@@ -536,7 +542,12 @@ fun TasksScreen(
         val board by androidx.compose.runtime.produceState<com.makefunstuff.herdr.core.board.WorkBoard?>(null, w.machineId) {
             value = runCatching { container.hosts.session(w.machineId)?.awaitWorkBoard() }.getOrNull()
         }
-        com.makefunstuff.herdr.ui.board.AcceptSheet(
+        val shp = container.hosts.session(w.machineId)?.state?.value?.boardApi is com.makefunstuff.herdr.core.board.BoardApi.Shp
+        if (shp) com.makefunstuff.herdr.ui.board.ShpAcceptSheet(
+            board, t, onDismiss = { acceptFor = null },
+            onAccepted = { context.toast(it); readNow.trySend(Unit) },
+            confirm = { run -> guard.run(Guarded.Merge, "Accept ${t.name}?", t.title) { view.confirmTap(); run() } },
+        ) else com.makefunstuff.herdr.ui.board.AcceptSheet(
             board, t, onDismiss = { acceptFor = null },
             onProof = { id -> nav.navigate(com.makefunstuff.herdr.Routes.artifact(w.machineId, id, null)) },
             onAccepted = {

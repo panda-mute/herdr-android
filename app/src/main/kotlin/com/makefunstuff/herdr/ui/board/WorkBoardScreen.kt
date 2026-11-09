@@ -114,9 +114,9 @@ private sealed interface WorkPending {
 }
 
 /**
- * The work board on one machine: Shepherdr 3's ([WorkBoardScreen]). With [alone],
- * [openTask] was opened from elsewhere (the Tasks tab): closing it goes back there. With [accept] (its Finished
- * alert), its Accept card opens over it while it is Ready.
+ * The work board on one machine: Shepherdr 3's, or simple-herdr-projects' over SSH ([WorkBoardScreen]). With
+ * [alone], [openTask] was opened from elsewhere (the Tasks tab): closing it goes back there. With [accept] (its
+ * Finished alert), its Accept card opens over it while it is Ready.
  */
 @Composable
 fun BoardScreen(nav: NavController, machineId: String, openTask: String? = null, alone: Boolean = false, accept: Boolean = false) {
@@ -127,16 +127,26 @@ fun BoardScreen(nav: NavController, machineId: String, openTask: String? = null,
     }
     val state by session.state.collectAsStateWithLifecycle()
     when {
-        state.onShepherdr -> WorkBoardScreen(nav, session, machineId, openTask, alone, accept)
-        state.online && !state.boardChecked -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { LoadingState("Looking for Shepherdr") }
-        else -> EmptyState("No work board", "Shepherdr 3 isn't running on ${state.machine.label}. Its tasks show here once it is.", icon = HerdrIcons.SquareKanban)
+        state.hasBoard -> WorkBoardScreen(nav, session, machineId, openTask, alone, accept)
+        state.online && !state.boardChecked -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { LoadingState("Looking for a task board") }
+        else -> EmptyState(
+            "No work board",
+            when (state.machine.taskSource) {
+                com.makefunstuff.herdr.core.ssh.Machine.TASK_SHP ->
+                    "simple-herdr-projects is chosen for this machine, but shp isn't on it."
+                com.makefunstuff.herdr.core.ssh.Machine.TASK_SHEPHERDR ->
+                    "Shepherdr 3 is chosen for this machine, but it isn't answering."
+                else -> "Neither shp nor Shepherdr 3 is running on ${state.machine.label}. Its tasks show here once one is."
+            },
+            icon = HerdrIcons.SquareKanban,
+        )
     }
 }
 
 /**
- * A machine's Shepherdr 3 board, as [BoardScreen] shows it there: what needs you first (tasks that ask
- * or wait, then those ready to merge, then coordinators that ask), then each space's tasks, done ones
- * folded away. Kept current from Shepherdr's live link, or read every few seconds where there is none.
+ * A machine's board, as [BoardScreen] shows it there: what needs you first (tasks that ask or wait, then those
+ * ready to merge, then coordinators that ask), then each space's tasks, done ones folded away. Shepherdr 3's is
+ * kept current from its live link, or read every few seconds; simple-herdr-projects' is read over SSH.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -233,6 +243,11 @@ internal fun WorkBoardScreen(
     }
 
     val o = board
+    val source = when (state.boardApi) {
+        is com.makefunstuff.herdr.core.board.BoardApi.V2 -> "Shepherdr"
+        com.makefunstuff.herdr.core.board.BoardApi.Shp -> "simple-herdr-projects"
+        else -> "No board"
+    }
     val needsYou = o?.needsYou.orEmpty()
     // A space whose coordinator has a question open for you.
     val asking = o?.spaces.orEmpty().filter { it.asks }
@@ -246,14 +261,14 @@ internal fun WorkBoardScreen(
             topBar = {
                 HerdrTopBar(
                     "Tasks",
-                    subtitle = "${state.machine.label} · ${if (o == null) "Shepherdr" else "${needsYou.size + asking.size} need you"}",
+                    subtitle = "${state.machine.label} · ${if (o == null) source else "${needsYou.size + asking.size} need you"}",
                     onBack = { nav.popBackStack() },
                 ) {
-                    BarIcon(HerdrIcons.MessagesSquare, "Assistant chat", { openCoordinator() })
+                    if (state.onShepherdr) BarIcon(HerdrIcons.MessagesSquare, "Assistant chat", { openCoordinator() })
                     BarIcon(HerdrIcons.RefreshCw, "Read the board again", { readNow.trySend(Unit) })
                 }
             },
-            floatingActionButton = { if (o != null) HerdrFab(null, "Add a task") { pending = WorkPending.Add } },
+            floatingActionButton = { if (o != null && state.onShepherdr) HerdrFab(null, "Add a task") { pending = WorkPending.Add } },
         ) { padding ->
             Column(Modifier.padding(padding).fillMaxSize()) {
                 busy?.let { BusyLine(it) }
@@ -261,7 +276,7 @@ internal fun WorkBoardScreen(
                     !state.online -> EmptyState(state.status.label(), state.status.detail() ?: "Waiting for ${state.machine.label}…", icon = HerdrIcons.Monitor)
                     !loaded -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { LoadingState("Reading the board on ${state.machine.label}") }
                     o == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        ErrorState("Shepherdr isn't answering", problem.orEmpty(), onRetry = { readNow.trySend(Unit) })
+                        ErrorState("The board isn't answering", problem.orEmpty(), onRetry = { readNow.trySend(Unit) })
                     }
                     else -> PullToRefreshBox(
                         isRefreshing = refreshing,
@@ -286,13 +301,14 @@ internal fun WorkBoardScreen(
                                 val open = o.tasksIn(s.id).filter { !it.status.needsYou && it.status != WorkStatus.Done }
                                 if (open.isEmpty() && !s.unreachable) return@forEach
                                 item(key = "h-${s.id}") {
-                                    // The space's heading opens its coordinator's chat.
-                                    SectionHeading(
-                                        listOfNotNull(s.name, open.size.takeIf { it > 0 }?.toString(), "can't be reached".takeIf { s.unreachable }).joinToString(" · "),
+                                    // Shepherdr's space heading opens its coordinator's chat; shp has no Assistant.
+                                    val label = listOfNotNull(s.name, open.size.takeIf { it > 0 }?.toString(), "can't be reached".takeIf { s.unreachable }).joinToString(" · ")
+                                    if (state.onShepherdr) SectionHeading(
+                                        label,
                                         Modifier.clickable(onClickLabel = "Open ${s.name}'s Assistant chat") { openCoordinator(s.id) }.heightIn(min = 48.dp),
                                         top = Space.m,
                                         trailing = { Icon(HerdrIcons.MessagesSquare, null, tint = Herdr.colors.muted, modifier = Modifier.size(18.dp)) },
-                                    )
+                                    ) else SectionHeading(label, top = Space.m)
                                 }
                                 items(open, key = { it.id }) { t -> WorkTaskRow(t, onOpen = { openId = t.id }) }
                             }
@@ -303,7 +319,11 @@ internal fun WorkBoardScreen(
                                     items(ts, key = { "l-${it.id}" }) { t -> WorkTaskRow(t, onOpen = { openId = t.id }) }
                                 }
                             if (needsYou.isEmpty() && asking.isEmpty() && o.tasks.none { it.status != WorkStatus.Done }) item(key = "empty") {
-                                StateBlock(HerdrIcons.SquareKanban, "Nothing open", "Add a task with +, or ask a space's Assistant.", Modifier.padding(top = Space.xxl))
+                                StateBlock(
+                                    HerdrIcons.SquareKanban, "Nothing open",
+                                    if (state.onShepherdr) "Add a task with +, or ask a space's Assistant." else "Tasks appear here as simple-herdr-projects has them.",
+                                    Modifier.padding(top = Space.xxl),
+                                )
                             }
                             if (done.isNotEmpty()) {
                                 item(key = "h-done") {
@@ -327,8 +347,16 @@ internal fun WorkBoardScreen(
         }
 
         val open = o?.tasks?.firstOrNull { it.id == openId }
-        // A task with an agent opens as its agent's chat; one not started yet as its details.
-        if (openId != null && open != null && open.chat.isNotEmpty()) {
+        // simple-herdr-projects' tasks show their own screen: its worker's chat, asks and Accept.
+        if (openId != null && open != null && state.boardApi is com.makefunstuff.herdr.core.board.BoardApi.Shp) {
+            ShpTaskScreen(
+                session, machineId, open, space = spaceName(open.space), busy = busy,
+                onBack = { if (alone && openId == openTask) nav.popBackStack() else openId = null },
+                backEnabled = true,
+                onMerge = { merge(open) },
+                onAnswer = { a -> answer(a, open) },
+            )
+        } else if (openId != null && open != null && open.chat.isNotEmpty()) {
             TaskChatScreen(
                 nav, session, machineId, open, space = spaceName(open.space), busy = busy,
                 onBack = { if (alone && openId == openTask) nav.popBackStack() else openId = null },
@@ -352,7 +380,11 @@ internal fun WorkBoardScreen(
         }
         acceptFor?.let { t ->
             val board by produceState<WorkBoard?>(null, machineId) { value = runCatching { session.awaitWorkBoard() }.getOrNull() }
-            AcceptSheet(
+            if (state.boardApi is com.makefunstuff.herdr.core.board.BoardApi.Shp) ShpAcceptSheet(
+                board, o?.tasks?.firstOrNull { it.id == t.id } ?: t, onDismiss = { acceptFor = null },
+                onAccepted = { context.toast(it); readNow.trySend(Unit) },
+                confirm = { run -> guard.run(Guarded.Merge, "Accept ${t.name}?", t.title) { view.confirmTap(); run() } },
+            ) else AcceptSheet(
                 board, o?.tasks?.firstOrNull { it.id == t.id } ?: t, onDismiss = { acceptFor = null },
                 onProof = { id -> nav.navigate(Routes.artifact(machineId, id, null)) },
                 onAccepted = { context.toast(it); readNow.trySend(Unit); container.changes.accepted(machineId, t) },
@@ -380,7 +412,7 @@ internal fun WorkBoardScreen(
             null -> {}
         }
         refusal?.let { r ->
-            BoardPanel("Shepherdr said no", onDismiss = { refusal = null }, accent = Herdr.colors.red, buttons = { PrimaryButton("OK") { refusal = null } }) {
+            BoardPanel("The board said no", onDismiss = { refusal = null }, accent = Herdr.colors.red, buttons = { PrimaryButton("OK") { refusal = null } }) {
                 MarkdownText(r)
             }
         }

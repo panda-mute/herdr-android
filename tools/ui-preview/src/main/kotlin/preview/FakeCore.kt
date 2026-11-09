@@ -30,6 +30,18 @@ class FakeCore(
     /** Keys and words the app sent, as (method, terminal, what): what a scene's answer pressed. */
     val sent = java.util.Collections.synchronizedList(ArrayList<Triple<String, String, String>>())
 
+    /** Tells the app's event subscription one event line; set once it subscribes. */
+    @Volatile private var push: ((JsonObject) -> Unit)? = null
+    private var seq = 40L
+
+    /** A terminal starts ([terminal], with its [screen]): in the list, and a `created` event to whoever subscribed. */
+    fun create(terminal: JsonObject, screen: String = "") {
+        val address = terminal.getValue("address").jsonPrimitive.content
+        screens = screens + (address to screen)
+        terminals = terminals + terminal
+        push?.invoke(obj("jsonrpc" to "2.0", "method" to "event", "params" to obj("seq" to ++seq, "type" to "created", "terminal" to address, "data" to terminal)))
+    }
+
     /** The probe's answer (HcDetection.probe): the default socket, the core holding its lock, and its executable. */
     fun probe(): CommandResult = CommandResult(
         0,
@@ -93,7 +105,10 @@ class FakeCore(
             val terminal = terminals.firstOrNull { it["address"]?.jsonPrimitive?.content == address }
             var attached: Int? = null
             val result: JsonElement? = when (method) {
-                "events.subscribe" -> obj("channel" to 1, "seq" to 40, "terminals" to JsonArray(terminals))
+                "events.subscribe" -> {
+                    push = { e -> send(1, HcFrames.DATA, (e.toString() + "\n").toByteArray()) }
+                    obj("channel" to 1, "seq" to seq, "terminals" to JsonArray(terminals))
+                }
                 "terminal.list" -> obj("terminals" to JsonArray(terminals), "machines" to arr(), "hidden_finished" to 0)
                 "terminal.get" -> terminal
                 "terminal.read" -> terminal?.let { obj("text" to Shell.plain(histories[address].orEmpty() + screens[address].orEmpty()), "complete" to true, "how" to "history") }

@@ -6,6 +6,7 @@ import androidx.compose.ui.graphics.RectangleShape
 import com.makefunstuff.herdr.core.terminal.LiveTerminal
 import com.makefunstuff.herdr.core.hc.HcTerminalStream
 import com.makefunstuff.herdr.core.hc.HcMapping
+import com.makefunstuff.herdr.ui.manage.shepherdrsPane
 import com.makefunstuff.herdr.ui.design.confirmTap
 import com.makefunstuff.herdr.core.chat.PasswordPrompt
 import com.makefunstuff.herdr.ui.common.PasswordCard
@@ -171,6 +172,7 @@ fun TerminalScreen(nav: NavController, machineId: String, paneId: String) {
     var fnPage by remember { mutableStateOf(false) }
     var editKeys by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
+    var confirmClose by remember { mutableStateOf(false) }
     var failure by remember { mutableStateOf<String?>(null) }
 
     // Scrollback extras: find, selection and resizing.
@@ -501,7 +503,16 @@ fun TerminalScreen(nav: NavController, machineId: String, paneId: String) {
                         { menu = false; scrollHost = !scrollHost },
                     )
                     MenuRow("Reconnect", HerdrIcons.RefreshCcw, { menu = false; generation++ })
+                    // A herdr-core terminal (one New › Terminal opened, say) closes here too; Shepherdr's agents close as Shepherdr closes them.
+                    if (core != null && !state.view.shepherdrsPane(paneId)) MenuRow("Close terminal", HerdrIcons.Trash2, { menu = false; confirmClose = true })
                     ChangeScreenRow { menu = false }
+                }
+                if (confirmClose) {
+                    val entry = nav.currentBackStackEntry
+                    com.makefunstuff.herdr.ui.manage.CloseHcTerminalDialog(session, paneId, pane?.displayName ?: paneId, onDismiss = { confirmClose = false }) {
+                        // Back from it, unless the person has gone elsewhere meanwhile.
+                        if (nav.currentBackStackEntry == entry) nav.popBackStack()
+                    }
                 }
             }
         },

@@ -34,6 +34,12 @@ interface ShepherdrTransport : Closeable {
     /** The live link (`/api/ws`) as best it can be had; [snapshots] false: one that needn't carry them (a chat's). */
     suspend fun live(snapshots: Boolean): LiveSocket = webSocket("/api/ws")
 
+    /**
+     * A task's browser, live (`/api/browser?…` at [path], [TaskBrowser]): its frames, which pile up behind a slow link,
+     * best through a relay on the machine that passes on only the newest.
+     */
+    suspend fun browser(path: String): LiveSocket = webSocket(path)
+
     /** Where there is no live link ([canStream] false): chat [key] as a `chat` event's JSON, read some other way. */
     suspend fun readChat(key: String, timeoutMs: Long): String = throw IOException("No way to read a chat here")
 
@@ -106,6 +112,20 @@ class ForwardTransport(
         return webSocket("/api/ws")
     }
 
+    override suspend fun browser(path: String): LiveSocket {
+        val start = relay
+        if (start != null && relays) {
+            try {
+                return LiveRelay.open(start(TaskBrowser.relayCommand(path)))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // No relay this time: Shepherdr's own socket, every frame it sends.
+            }
+        }
+        return webSocket(path)
+    }
+
     override fun close() = onClose()
 
     companion object {
@@ -138,6 +158,8 @@ class ForwardTransport(
  * read there ([AUTH]). No live link: the screens read the snapshot again every few seconds, through `bun` there.
  */
 class CurlTransport(
+    /** Starts a command on the machine that stays, both ways: a task's browser through a relay there. */
+    private val start: (suspend (command: String) -> Duplex)? = null,
     /** Runs a command on the machine with [stdin] as its input. */
     private val run: suspend (command: String, stdin: String, timeoutSeconds: Long) -> CommandResult,
 ) : ShepherdrTransport {
@@ -162,6 +184,12 @@ class CurlTransport(
 
     override suspend fun webSocket(path: String): WebSocketLink =
         throw IOException("The machine's SSH server doesn't forward ports: no live link, so the app reads again every few seconds")
+
+    /** Only through a relay on the machine, which `bun` (or `node`) there runs, as [readChat]. */
+    override suspend fun browser(path: String): LiveSocket {
+        val begin = start ?: throw IOException("The machine's SSH server doesn't forward ports, so its browser can't be watched from here")
+        return LiveRelay.open(begin(TaskBrowser.relayCommand(path)))
+    }
 
     /** Shepherdr 3 sends its snapshot only over its live link: one read there by the machine's `bun`, as [readChat]. */
     override suspend fun readSnapshot(timeoutMs: Long): String {

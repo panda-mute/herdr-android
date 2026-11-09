@@ -71,6 +71,8 @@ class V2WorkBoard(private val connect: suspend () -> ShepherdrClient, private va
 
     override suspend fun pullRequest(task: WorkTask): V2PrAnswer = connect().taskPr(task.id)
 
+    override suspend fun browser(task: WorkTask): TaskBrowser = connect().browser(task.id)
+
     /** Done with nothing merged (`herdr-task done`), by its chat key as the task's row menu sends it. */
     override suspend fun close(task: WorkTask): String {
         val o = connect().actRaw(V2Actions.close(task.chat.ifEmpty { V2Board.workerChat(task.id) }))
@@ -196,6 +198,10 @@ class V2WorkBoard(private val connect: suspend () -> ShepherdrClient, private va
         }
     }
 
+    override suspend fun newTerminal(space: String) {
+        connect().act(V2Actions.tabNew(space))
+    }
+
     override suspend fun renameTab(space: String, tab: WorkTab, name: String) {
         connect().act(V2Actions.tabRename(tab.id, space.takeIf { tab.id == null }, name.trim().take(80)))
     }
@@ -304,6 +310,8 @@ object V2Board {
                 emoji = p.emoji,
                 pilot = Autopilot.pilotOf(s, p),
                 tabs = tabs(s, p),
+                header = p.header.orEmpty(),
+                where = p.where.orEmpty(),
             )
         }
         return WorkOverview(spaces, tasks, s.artifacts, s.needs, Autopilot.settingsOf(s))
@@ -343,6 +351,8 @@ object V2Board {
         chat = t.agent?.chat.orEmpty(),
         agent = t.agent?.cli.orEmpty(),
         pinned = t.pinned != null,
+        running = t.agent?.running == true,
+        browser = t.browser,
     )
 
     /** Shepherdr's `capital`: its first letter up ("after HERD-3" → "After HERD-3"). */

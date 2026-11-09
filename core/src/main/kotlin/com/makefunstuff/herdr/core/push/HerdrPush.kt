@@ -3,6 +3,7 @@ package com.makefunstuff.herdr.core.push
 import com.makefunstuff.herdr.core.api.AgentStatus
 import com.makefunstuff.herdr.core.api.SessionSnapshot
 import com.makefunstuff.herdr.core.ssh.HerdrCommands.quote
+import com.makefunstuff.herdr.core.ssh.HostPython
 import com.makefunstuff.herdr.core.ssh.MachineConnection
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.Json
@@ -44,15 +45,13 @@ object HerdrPush {
     const val NO_PYTHON_EXIT = 127
 
     /**
-     * `herdr-push <args>`, run by python3 (found on the PATH, or by a login shell as the board's
-     * launcher is). Exits [NO_PYTHON_EXIT] without python3, [MISSING_EXIT] before herdr-push is there.
+     * `herdr-push <args>`, run by Python 3 ([HostPython]). Exits [NO_PYTHON_EXIT] without Python 3,
+     * [MISSING_EXIT] before herdr-push is there.
      */
     fun command(vararg args: String): String = "sh -c " + quote(
         "[ -f \"$FILE\" ] || exit $MISSING_EXIT; " +
-            "P=\"\$(command -v python3 2>/dev/null)\"; " +
-            "[ -n \"\$P\" ] || P=\"\$(\"\${SHELL:-/bin/sh}\" -lc 'command -v python3' </dev/null 2>/dev/null | tail -n 1)\"; " +
-            "[ -n \"\$P\" ] || { echo 'python3 is not installed' >&2; exit $NO_PYTHON_EXIT; }; " +
-            "exec \"\$P\" \"$FILE\" \"\$@\"",
+            HostPython.find(NO_PYTHON_EXIT) + "; " +
+            "exec \"\$P\" \$PA \"$FILE\" \"\$@\"",
     ) + " sh" + args.joinToString("") { " " + quote(it) }
 
     const val MISSING_EXIT = 126
@@ -128,7 +127,7 @@ object HerdrPush {
             else conn.run(command(*args), timeoutSeconds)
             if (r.exitStatus == MISSING_EXIT) throw MissingException()
             if (r.exitStatus == NO_PYTHON_EXIT && answer(r.stdout) == null) {
-                throw IOException("herdr-push needs python3 on $label, and it isn't installed")
+                throw IOException("herdr-push needs Python 3 on $label, and it isn't installed")
             }
             val o = answer(r.stdout) ?: throw IOException(problem(r.stderr, "herdr-push gave no answer on $label"))
             if ((o["ok"] as? JsonPrimitive)?.booleanOrNull != true) throw IOException(o.str("msg").ifEmpty { "herdr-push refused on $label" })

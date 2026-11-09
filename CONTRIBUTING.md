@@ -11,20 +11,20 @@ You need **JDK 17**. The app also needs the **Android SDK** (platform 36, with `
 ./gradlew :app:installDebug      # the same, installed on the phone adb sees
 ```
 
-A debug build is `com.makefunstuff.herdr.debug`, so it installs next to the release app instead of over it, with its own machines and SSH key. `./gradlew :app:assembleRelease` builds the release APK, signed with the debug key unless you set the signing variables (see [Signing key](README.md#signing-key-once-for-the-repo-owner)).
+A debug build is `com.makefunstuff.herdr.debug`, so it installs next to the release app instead of over it, with its own machines and SSH key. `./gradlew :app:assembleRelease` builds the release APK, signed with the debug key unless you set the signing variables (see [`docs/RELEASING.md`](docs/RELEASING.md)).
 
 ### The host side
 
-The app talks to [herdr](https://herdr.dev) over SSH, so you need a machine running herdr that your phone can reach by SSH: install herdr there and add the machine in the app ([Setting up a machine](README.md#setting-up-a-machine)). The host tools in `host/` (`herdr-push` for notifications, `herdr-usage` for the usage page and `herdr-logins` for the agent logins) are copied to a machine by the app when a feature needs them; each folder's README says how to run it by hand.
+The app talks to [herdr](https://herdr.dev) over SSH, so you need a machine running herdr that your phone can reach by SSH: install herdr there and add the machine in the app ([Set up a machine](README.md#set-up-a-machine)). The host tools in `host/` (`herdr-push` for notifications, `herdr-usage` for the usage page, `herdr-logins` for the agent logins and `herdr-app-build` for changing the app from the phone) are copied to a machine by the app when a feature needs them; each folder's README says how to run it by hand.
 
-Without a machine of your own, [`docs/screenshots/demo-host`](docs/screenshots/demo-host) starts throwaway herdr hosts in containers with made-up projects, the ones the README's screenshots come from.
+Without a machine of your own, the screen previews (below) show every screen against a fake machine with made-up projects; they are also where the README's screenshots come from ([how](tools/ui-preview/README.md#the-readmes-screenshots)).
 
 ## Tests
 
 ```sh
 ./gradlew -p core test                               # core: SSH, herdr API, board, transcripts, terminal, host tools
 ./gradlew :app:testDebugUnitTest                     # the app's JVM tests (needs the Android SDK)
-./gradlew -p tools/ui-preview render -Ponly=board    # screen previews of the screens you changed
+./gradlew -p tools/ui-preview render -Ponly=agents   # screen previews of the screens you changed
 ```
 
 The core tests run the host scripts themselves, so they want `python3` (and `sshd` and `ss` for a few); a test whose tool is missing is skipped, not failed. CI runs the core tests, builds the release APK and renders every screen on each push and pull request.
@@ -38,8 +38,8 @@ The core tests run the host scripts themselves, so they want `python3` (and `ssh
 - **`core/` is plain Kotlin/JVM**: SSH, the herdr API, parsing and logic go there, with tests. `app/` is the Android app and its Compose screens.
 - **The look lives in `ui/theme` and `ui/design`** ([`docs/DESIGN.md`](docs/DESIGN.md)). Screens use its colours, type, spacing and components and nothing else; a new one is added there first.
 - **Android-only calls stay out of shared code** the previews compile; see "When it doesn't compile" in [`tools/ui-preview/README.md`](tools/ui-preview/README.md).
-- **Host scripts** (`host/`) stay one file that needs nothing installed: `herdr-push`, `herdr-usage` and `herdr-logins` are Python 3.6+ with the standard library only. Raise a script's `version:` line near its top when you change it, so the app replaces older copies on machines.
-- **Words on screen and in docs are plain and short.** A feature users see is described in the README.
+- **Host scripts** (`host/`) stay one file that needs nothing installed: `herdr-push`, `herdr-usage`, `herdr-logins` and `herdr-app-build` are Python 3.6+ with the standard library only. Raise a script's `version:` line near its top when you change it, so the app replaces older copies on machines.
+- **Words on screen and in docs are plain and short.** A feature users see is described in the [user guide](docs/GUIDE.md).
 - **The repo is public**: no real hostnames, IPs, user names, emails or keys in code, tests, demo data or screenshots. Use the demo machines (`devbox`, `gpu-box`, `ci-runner`, user `demo`).
 
 ## Issues
@@ -65,7 +65,7 @@ CI must pass. Pull requests from forks build with the debug key, which is expect
 
 The repo is worked on with AI coding agents. [`AGENTS.md`](AGENTS.md) holds the instructions they read: which checks to run, and to check UI changes with the screen previews instead of an emulator. If you use an agent, point it there; you are still the one who reviews and stands behind what you send.
 
-The owner runs their own work through [herdr-projects](https://github.com/eliasstravik/herdr-projects), a work board for herdr: that is where the task names (`AND-55`) and `work/<n>-…` branches on its pull requests come from. Outside contributors don't need it; a normal fork and pull request is all it takes.
+The owner runs their own work through [simple-herdr-projects](https://github.com/makefunstuff/simple-herdr-projects), a work board for herdr: that is where the task names (`HERD-33`) and `task/<n>-…` branches on its pull requests come from. Outside contributors don't need it; a normal fork and pull request is all it takes.
 
 ## License
 

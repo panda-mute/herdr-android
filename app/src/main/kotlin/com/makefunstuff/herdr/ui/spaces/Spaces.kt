@@ -24,11 +24,13 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -44,14 +46,22 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import com.makefunstuff.herdr.Routes
 import com.makefunstuff.herdr.core.api.AgentInfo
 import com.makefunstuff.herdr.core.api.AgentStatus
 import com.makefunstuff.herdr.core.api.PaneInfo
 import com.makefunstuff.herdr.core.api.WorkspaceInfo
+import com.makefunstuff.herdr.core.board.TabMenus
 import com.makefunstuff.herdr.core.board.WorkOverview
 import com.makefunstuff.herdr.core.board.WorkSpace
 import com.makefunstuff.herdr.core.board.WorkTab
+import com.makefunstuff.herdr.core.hc.HcMapping
+import com.makefunstuff.herdr.core.hc.HcStart
 import com.makefunstuff.herdr.core.host.HostState
 import com.makefunstuff.herdr.core.push.Notify
 import com.makefunstuff.herdr.core.usage.UsageRules
@@ -76,6 +86,7 @@ import com.makefunstuff.herdr.ui.design.LocalInTab
 import com.makefunstuff.herdr.ui.design.MenuRow
 import com.makefunstuff.herdr.ui.design.MenuSection
 import com.makefunstuff.herdr.ui.design.SlotNumber
+import com.makefunstuff.herdr.ui.design.Toasts
 import com.makefunstuff.herdr.ui.design.chipFor
 import com.makefunstuff.herdr.ui.theme.Herdr
 import com.makefunstuff.herdr.ui.theme.Space
@@ -133,9 +144,13 @@ data class SpaceSlot(
                 val board = agents.firstNotNullOfOrNull { a -> a.shepherdrSpace?.let { id -> boardSpaces.firstOrNull { it.id == id } } }
                     ?: boardSpaces.firstOrNull { it.name.equals(name, ignoreCase = true) && it.id !in used }
                 board?.let { used += it.id }
-                SpaceSlot(host.machine.id, name, list, agents, view?.panes.orEmpty().filter { it.workspaceId in ids }, board)
+                // A space only its Assistant's terminal is in carries just its id there: Shepherdr's name for it.
+                val shown = board?.takeIf { b -> name == b.id || name.endsWith("/" + b.id) }?.let { if (it.home) "Home" else it.name } ?: name
+                SpaceSlot(host.machine.id, shown, list, agents, view?.panes.orEmpty().filter { it.workspaceId in ids }, board)
             }
-            val alone = boardSpaces.filter { it.id !in used && !it.unreachable }.map {
+            // A board space of its own (no terminal here) needs a chat to open: Shepherdr has its Assistant;
+            // simple-herdr-projects has none, and its spaces are in the Tasks tab instead.
+            val alone = boardSpaces.filter { host.onShepherdr && it.id !in used && !it.unreachable }.map {
                 SpaceSlot(host.machine.id, if (it.home) "Home" else it.name, emptyList(), emptyList(), emptyList(), it)
             }
             return alone.filter { it.board?.home == true } + slots + alone.filter { it.board?.home != true }
@@ -168,7 +183,9 @@ fun rememberSpaces(): List<Pair<HostState, List<SpaceSlot>>> {
 fun shownSpace(spaces: List<Pair<HostState, List<SpaceSlot>>>, chosen: String?): SpaceSlot? {
     val all = spaces.filter { it.first.online }.flatMap { it.second }
     return all.firstOrNull { it.key == chosen }
-        ?: all.firstOrNull { it.board != null } ?: all.firstOrNull { it.agents.isNotEmpty() } ?: all.firstOrNull()
+        // A board space with a chat (Shepherdr's Assistant, or an agent): shp's have none.
+        ?: all.firstOrNull { it.board != null && (it.board.chat.isNotEmpty() || it.agents.isNotEmpty()) }
+        ?: all.firstOrNull { it.agents.isNotEmpty() } ?: all.firstOrNull()
 }
 
 /**
@@ -269,7 +286,7 @@ private fun Bus(n: Int, host: HostState, onOpen: () -> Unit) {
     val c = Herdr.colors
     val online = host.online
     Row(
-        Modifier.fillMaxWidth().background(c.panel).heightIn(min = 40.dp)
+        Modifier.fillMaxWidth().background(c.panel).heightIn(min = 48.dp)
             .clickable(onClickLabel = "Open ${host.machine.label}", onClick = onOpen)
             .padding(start = Space.l, end = Space.m, top = Space.s),
         verticalAlignment = Alignment.CenterVertically,
@@ -335,7 +352,7 @@ private fun Slot(n: Int, slot: SpaceSlot, on: Boolean, off: Boolean, onHold: () 
     Row(
         Modifier.fillMaxWidth().background(if (on) c.selected else c.panel)
             .drawBehind { if (on) drawRect(c.accent, size = Size(3.dp.toPx(), size.height)) }
-            .heightIn(min = 44.dp)
+            .heightIn(min = 48.dp)
             .combinedClickable(onClickLabel = "Show its chat", onLongClickLabel = "Notify", onLongClick = onHold, onClick = onClick)
             .semantics(mergeDescendants = true) {
                 selected = on
@@ -347,16 +364,19 @@ private fun Slot(n: Int, slot: SpaceSlot, on: Boolean, off: Boolean, onHold: () 
         SlotNumber(n, on)
         Spacer(Modifier.width(Space.s))
         Text(
-            slot.name.caps(), style = MaterialTheme.typography.labelLarge, color = if (on) c.accent else if (off) c.muted else c.text,
+            // The name is read, not shouted: it stays sentence case as in 3.1, so a long one still reads
+            // before its ellipsis; the mono capitals belong to the labels around it.
+            slot.name, style = MaterialTheme.typography.titleMedium, color = if (on) c.accent else if (off) c.muted else c.strong,
             maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
         )
         if (off) {
             Icon(HerdrIcons.BellOff, null, tint = c.muted, modifier = Modifier.size(14.dp))
             Spacer(Modifier.width(Space.s))
         }
+        // Only an agent that is the space itself (not the Assistant every Shepherdr space has, whose chip
+        // was the same on every row) takes a chip; "ASSISTANT" on every row said nothing either.
         val program = slot.lead?.let { it.agent ?: it.displayName }
-        if (slot.board != null) Text("ASSISTANT", style = MaterialTheme.typography.labelSmall, color = c.muted, maxLines = 1)
-        else if (program != null) ChipIcon(chipFor(program), size = 16.dp)
+        if (program != null) ChipIcon(chipFor(program), size = 16.dp)
         Spacer(Modifier.width(Space.s))
         Led(status?.color() ?: c.line)
     }
@@ -377,6 +397,7 @@ fun ChatTab(nav: NavController) {
     val host = spaces.firstOrNull { it.first.machine.id == slot?.machineId }?.first
     var menu by remember { mutableStateOf(false) }
     val tabMenu = rememberTabMenu()
+    val terminals = rememberNewTerminal(nav)
     val more: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit = {
         if (slot != null) BarIcon(HerdrIcons.Layers, "Tabs and new", { menu = true })
     }
@@ -411,23 +432,104 @@ fun ChatTab(nav: NavController) {
             }
         }
     }
-    if (menu && slot != null && host != null) SpaceMenu(nav, slot, host, tabMenu) { menu = false }
+    if (menu && slot != null && host != null) SpaceMenu(nav, slot, host, tabMenu, terminals) { menu = false }
     TabMenuDialogs(tabMenu)
 }
 
 /** The tab the Chat tab shows, as Shepherdr's tab bar knows it: a Shepherdr space's chat is its Assistant's tab. */
 fun SpaceSlot.shownTab(host: HostState): WorkTab? = board?.takeIf { host.onShepherdr }?.tabs?.firstOrNull { it.assistant }
 
+/** The terminal the Chat tab's chat reads: the shown space's Assistant's, else its agent's. */
+fun SpaceSlot.shownTerminal(host: HostState): String? =
+    board?.takeIf { host.onShepherdr }?.let { TabMenus.assistantTerminal(host.view, it.id) } ?: lead?.paneId
+
 /**
- * The shown space's ⋯ on a phone (3.1's header menu): the shown tab's menu, its tabs (each agent's chat, each
- * terminal), then New task, the Assistant and Start an agent, and its machine.
+ * The + menu's Terminal: a shell as a new tab of a space, then its terminal. Shepherdr opens it in the space's folder
+ * (`tab-new`); on classic herdr it is a new tab of the space's workspace; on herdr-core (the desktop app) a new terminal
+ * (`hc run`) in the space's folder, labelled into the space as a tab of its own.
+ */
+@Stable
+class NewTerminal internal constructor(
+    private val container: com.makefunstuff.herdr.AppContainer,
+    private val scope: kotlinx.coroutines.CoroutineScope,
+) {
+    var opening by mutableStateOf(false)
+        private set
+
+    /** The terminal it opened, on its machine, for the screen to show: navigation moves on the UI's own thread. */
+    internal var opened by mutableStateOf<Pair<String, String>?>(null)
+
+    /** The space's workspace classic herdr has, where a new tab can open; null on herdr-core alone. */
+    private fun SpaceSlot.classic(): WorkspaceInfo? = workspaces.firstOrNull { !it.workspaceId.startsWith(HcMapping.PREFIX) }
+
+    /** The space's herdr-core space, where `hc run` can start a terminal; null where it has none. */
+    private fun SpaceSlot.core(): WorkspaceInfo? = workspaces.firstOrNull { it.workspaceId.startsWith(HcMapping.PREFIX) }
+
+    fun can(slot: SpaceSlot, host: HostState): Boolean = (slot.board != null && host.onShepherdr) || slot.classic() != null || slot.core() != null
+
+    fun open(slot: SpaceSlot, host: HostState) {
+        if (opening) return
+        opening = true
+        scope.launch {
+            runCatching {
+                val session = container.hosts.session(slot.machineId) ?: error("This machine isn't in the app any more")
+                val board = slot.board?.takeIf { host.onShepherdr }
+                if (board != null) {
+                    val before = session.state.value.view
+                    session.awaitWorkBoard().newTerminal(board.id)
+                    session.refresh()
+                    // It shows once the machine lists it; Shepherdr names its space as the board does.
+                    withTimeoutOrNull(10_000) {
+                        session.state.map { s -> TabMenus.newShell(before, s.view, slot.name) ?: TabMenus.newShell(before, s.view, board.name) }.filterNotNull().first()
+                    }
+                } else if (slot.classic() != null) {
+                    val ws = slot.classic()!!
+                    session.awaitApi(10_000).openShell(ws.workspaceId, "shell", slot.panes.firstOrNull()?.cwd).also { session.refresh() }
+                } else {
+                    // herdr-core alone: a shell in the space's folder, as a tab of its own; it shows once its core says so.
+                    val ws = slot.core() ?: error("This space has nowhere to open a terminal")
+                    val place = HcStart.place(ws.workspaceId, ws.label.ifBlank { slot.name }, "Terminal") ?: error("This space has nowhere to open a terminal")
+                    val cwd = slot.panes.firstOrNull { it.workspaceId == ws.workspaceId }?.cwd
+                    val pane = HcStart.shell(session.awaitHerdrCore(10_000, ws.workspaceId), place, cwd)
+                    withTimeoutOrNull(10_000) { session.state.map { s -> s.view?.panes?.any { it.paneId == pane } }.first { it == true } }
+                    pane
+                }
+            }.onSuccess { pane ->
+                if (pane != null) opened = slot.machineId to pane else Toasts.show("A terminal opened in ${slot.name}")
+            }.onFailure { Toasts.show(it.message ?: "The terminal didn't open") }
+            opening = false
+        }
+    }
+}
+
+@Composable
+fun rememberNewTerminal(nav: NavController): NewTerminal {
+    val container = LocalContainer.current
+    val scope = rememberCoroutineScope()
+    val terminals = remember(container, scope) { NewTerminal(container, scope) }
+    terminals.opened?.let { (machine, pane) ->
+        LaunchedEffect(machine, pane) {
+            terminals.opened = null
+            nav.navigate(Routes.terminal(machine, pane))
+        }
+    }
+    return terminals
+}
+
+/**
+ * The shown space's ⋯ on a phone (3.1's header menu): the shown tab's menu and its terminal (Show), its tabs (each
+ * agent's chat, each terminal), then a new Terminal, New task, the Assistant and Start an agent, and its machine.
  */
 @Composable
-private fun SpaceMenu(nav: NavController, slot: SpaceSlot, host: HostState, tabMenu: TabMenuState, onDismiss: () -> Unit) {
+private fun SpaceMenu(nav: NavController, slot: SpaceSlot, host: HostState, tabMenu: TabMenuState, terminals: NewTerminal, onDismiss: () -> Unit) {
     fun go(route: String) { onDismiss(); nav.navigate(route) }
     HerdrMenu(expanded = true, onDismissRequest = onDismiss, title = slot.name, subtitle = host.machine.label) {
         val board = slot.board
         slot.shownTab(host)?.let { tab -> if (board != null) TabMenuRows(tabMenu, slot.machineId, board, tab, onPicked = onDismiss) }
+        slot.shownTerminal(host)?.let { pane ->
+            MenuSection("Show")
+            MenuRow("Terminal", HerdrIcons.SquareTerminal, { go(Routes.terminal(slot.machineId, pane)) })
+        }
         if (slot.panes.isNotEmpty()) {
             MenuSection("Tabs")
             slot.panes.forEach { p ->
@@ -440,6 +542,9 @@ private fun SpaceMenu(nav: NavController, slot: SpaceSlot, host: HostState, tabM
             }
         }
         MenuSection("New")
+        if (terminals.can(slot, host)) {
+            MenuRow("Terminal", HerdrIcons.SquareTerminal, { onDismiss(); terminals.open(slot, host) }, enabled = host.online && !terminals.opening)
+        }
         if (host.onShepherdr) MenuRow("New task", HerdrIcons.SquarePen, { go(Routes.start(slot.machineId)) })
         if (host.onShepherdr && slot.board != null) MenuRow("Assistant", HerdrIcons.MessagesSquare, { go(Routes.coordinator(slot.machineId, slot.board.id)) })
         MenuRow("Start an agent", HerdrIcons.Bot, { go(Routes.start(slot.machineId)) }, enabled = host.online)
@@ -451,7 +556,7 @@ private fun SpaceMenu(nav: NavController, slot: SpaceSlot, host: HostState, tabM
 
 /**
  * The Artifacts tab: the shown space's artifacts, as 3.1's phone's third tab. Artifacts are
- * Shepherdr's: a space on a machine without it says so.
+ * Shepherdr's: a space on a machine without it shows the machine's docs (herdr.doc) instead.
  */
 @Composable
 fun ArtifactsTab(nav: NavController) {
@@ -464,6 +569,12 @@ fun ArtifactsTab(nav: NavController) {
         }
         return
     }
+    // No Shepherdr to keep artifacts: the machine's docs are its write-ups (herdr.doc, the desktop's Docs panel).
+    // Not before the board look answers, so a Shepherdr machine doesn't show its docs for a moment first.
+    if (slot != null && host != null && (host.boardChecked || !host.online)) {
+        androidx.compose.runtime.key(slot.machineId) { com.makefunstuff.herdr.ui.docs.DocsScreen(nav, slot.machineId, inTab = true) }
+        return
+    }
     Column(Modifier.fillMaxSize()) {
         HerdrTopBar("Artifacts")
         Box(Modifier.weight(1f)) {
@@ -471,7 +582,7 @@ fun ArtifactsTab(nav: NavController) {
             EmptyState(
                 "No artifacts here",
                 if (slot == null) "Pick a space in the drawer: its artifacts show here."
-                else "Artifacts are kept by Shepherdr, which ${host?.machine?.label ?: "this machine"} doesn't run.",
+                else "Looking for Shepherdr on ${host?.machine?.label ?: "this machine"}…",
                 icon = HerdrIcons.LayoutDashboard,
             )
         }

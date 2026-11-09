@@ -64,6 +64,7 @@ import com.makefunstuff.herdr.core.chat.ToolLine
 import com.makefunstuff.herdr.ui.code.AddedRemoved
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import com.makefunstuff.herdr.core.chat.SentMatch
 import com.makefunstuff.herdr.core.host.Images
 import com.makefunstuff.herdr.ui.images.MessageImages
 import com.makefunstuff.herdr.ui.common.CodeBlock
@@ -332,7 +333,8 @@ private fun UserBubble(item: ChatItem.User, pending: Boolean, queued: Boolean = 
     var expanded by rememberSaveable(item.id) { mutableStateOf(false) }
     // The pictures it names show as pictures, over the words.
     val split = remember(item.text) { Images.split(item.text) }
-    val text = split.text
+    // Pictures the agent keeps itself are counted under the words, not named in them as Claude Code's `[Image #1]`.
+    val text = remember(item.text, item.images) { if (item.images > 0) SentMatch.withoutMarks(split.text) else split.text }
     val long = text.length > 600 || text.count { it == '\n' } > 12
     Row(Modifier.fillMaxWidth().padding(start = 48.dp), horizontalArrangement = Arrangement.End) {
         // Your turn: a neutral raised card (`.chat-turn-user`), never a wall of colour.

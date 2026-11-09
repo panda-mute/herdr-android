@@ -5,6 +5,7 @@ import com.makefunstuff.herdr.core.api.IntegrationInfo
 import com.makefunstuff.herdr.core.api.SessionSnapshot
 import com.makefunstuff.herdr.core.host.HostSession
 import com.makefunstuff.herdr.core.ssh.HerdrCommands.quote
+import kotlinx.coroutines.async
 
 /**
  * Starting work from a sentence: what you want first, then how (a board task, or an agent now) and
@@ -92,8 +93,12 @@ object StartWork {
      * [KINDS] when neither can be read.
      */
     suspend fun installedOn(session: HostSession): List<String> {
-        val integrations = runCatching { session.awaitApi(10_000).integrations() }.getOrNull()
-        val probed = runCatching { probed(session.awaitConnection(10_000).run(probeCommand(), timeoutSeconds = 15).stdout) }.getOrNull()
+        // Both at once: on herdr-core alone (no classic herdr to ask) the probe answers while the integrations wait in vain.
+        val (integrations, probed) = kotlinx.coroutines.coroutineScope {
+            val integrations = async { if (session.state.value.classicMissing != null) null else runCatching { session.awaitApi(10_000).integrations() }.getOrNull() }
+            val probed = async { runCatching { probed(session.awaitConnection(10_000).run(probeCommand(), timeoutSeconds = 15).stdout) }.getOrNull() }
+            integrations.await() to probed.await()
+        }
         if (integrations == null && probed == null) return KINDS
         return installed(integrations.orEmpty(), probed.orEmpty()).ifEmpty { KINDS }
     }

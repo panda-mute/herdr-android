@@ -25,8 +25,10 @@ import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.isRoot
 import androidx.compose.ui.test.onFirst
+import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performScrollToIndex
@@ -70,6 +72,8 @@ class Scene(
     val key: IdentityStore.State = IdentityStore.State.Ready(Demo.PUBLIC_KEY),
     /** Changes the demo machines before the app starts. */
     val setup: SceneData.() -> Unit = {},
+    /** The space the Chat tab shows first (its key), as a tap in the drawer would pick it. */
+    val space: String? = null,
     /** Taps and types on the running app. */
     val actions: ComposeUiTest.(SceneContext) -> Unit = {},
     /** Shows this chat as its floating bubble's window does (BubbleRoot) instead of the whole app. */
@@ -275,7 +279,7 @@ fun render(scene: Scene, dark: Boolean, file: File) {
                     nav = rememberNavController()
                     Box(Modifier.size(size.value)) {
                         val chat = scene.bubble
-                        if (chat != null) BubbleRoot(container, chat, dark = dark, nav = nav) else HerdrRoot(container, dark = dark, nav = nav)
+                        if (chat != null) BubbleRoot(container, chat, dark = dark, nav = nav) else HerdrRoot(container, dark = dark, nav = nav, space = scene.space)
                         TalkBackOverlay(dark)
                     }
                 }
@@ -325,8 +329,35 @@ private fun ComposeUiTest.node(matcher: SemanticsMatcher) = onAllNodes(matcher, 
 /** Taps the first element showing [text] (exactly, or as its start when it is longer). */
 fun ComposeUiTest.tapText(text: String) { tap(node(hasText(text, substring = true))) }
 
+/** Fails the scene unless an element shows [text]: a scene that checks what a tap leads to. */
+fun ComposeUiTest.expectText(text: String) {
+    check(onAllNodes(hasText(text, substring = true), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()) { "\"$text\" isn't shown" }
+}
+
+/** Fails the scene if an element shows [text]: a screen a tap should have taken away. */
+fun ComposeUiTest.expectNoText(text: String) {
+    check(onAllNodes(hasText(text, substring = true), useUnmergedTree = true).fetchSemanticsNodes().isEmpty()) { "\"$text\" is still shown" }
+}
+
+/** Scrolls [text] into view in its list or strip (a tab off the strip's edge), then taps it. */
+fun ComposeUiTest.scrollToText(text: String) {
+    runOnUiThread { node(hasText(text, substring = true)).performScrollTo() }
+    settle()
+    tapText(text)
+}
+
 /** Taps the first element showing exactly [text] (a button, where a longer line also starts with its words). */
 fun ComposeUiTest.tapExact(text: String) { tap(node(hasText(text, substring = false))) }
+
+/** Taps the last element showing exactly [text] (a menu's lower row of the same words). */
+fun ComposeUiTest.tapLastExact(text: String) { tap(onAllNodes(hasText(text, substring = false), useUnmergedTree = true).onLast()) }
+
+/** Taps the lowest element on screen showing exactly [text] (a sheet's button over the screen's own of the same words). */
+fun ComposeUiTest.tapLowestExact(text: String) {
+    val all = onAllNodes(hasText(text, substring = false), useUnmergedTree = true)
+    val i = all.fetchSemanticsNodes().withIndex().maxBy { it.value.boundsInWindow.bottom }.index
+    tap(all[i])
+}
 
 /** Taps the first element whose content description (an icon button's label) is [label]. */
 fun ComposeUiTest.tapLabel(label: String) { tap(node(hasContentDescription(label))) }

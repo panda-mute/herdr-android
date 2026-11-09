@@ -476,6 +476,71 @@ class HerdrCoreTest {
         assertNull(HcDetection.parse("").binary)
     }
 
+    @Test
+    fun windowsHasNoSocketAndConnectsTheWayHcDoes() {
+        val out = """
+            windows
+            core	/c/Users/dev/AppData/Local/Programs/herdr-core/herdr-core	12660
+            bin	/c/Users/dev/AppData/Local/Programs/herdr-core/herdr-core	hc 0.1.18	core
+        """.trimIndent()
+        val p = HcDetection.parse(out)
+        assertTrue(p.windows)
+        assertTrue(p.running)
+        assertNull(p.socket)
+        assertEquals("/c/Users/dev/AppData/Local/Programs/herdr-core/herdr-core", p.binary!!.path)
+        assertEquals("0.1.18", p.binary!!.version)
+        assertEquals(
+            """sh -c '"${'$'}1" server status --json </dev/null >/dev/null 2>&1 || { echo '\''herdr-core stopped'\'' >&2; exit 3; }; exec "${'$'}1" connect' hc '/c/Users/dev/AppData/Local/Programs/herdr-core/herdr-core'""",
+            HcDetection.windowsConnectCommand(p.binary!!),
+        )
+        // herdr-core there, but no core answers `server status`.
+        assertFalse(HcDetection.parse("windows\n").running)
+        assertTrue(HcDetection.parse("windows\n").windows)
+    }
+
+    @Test
+    fun theProbeScriptAsksHcOnWindows() {
+        val home = Files.createTempDirectory("hc-win").toFile()
+        try {
+            // Git Bash's uname, and a herdr-core whose core runs while `up` exists.
+            val bin = File(home, "bin").apply { mkdirs() }
+            File(bin, "uname").apply { writeText("#!/bin/sh\necho MINGW64_NT-10.0-26100\n"); setExecutable(true) }
+            val up = File(home, "up")
+            val exe = File(bin, "herdr-core").apply {
+                writeText(
+                    "#!/bin/sh\n" +
+                        "case \"\$1\" in --version) echo 'hc 0.1.18';; " +
+                        "server) [ -f '${up.path}' ] || exit 5; echo '{\"holder\":{\"pid\":7},\"pid\":12660,\"version\":\"0.1.18\"}';; esac\n",
+                )
+                setExecutable(true)
+            }
+            // The command line as SSH hands it to the login shell, from a file so no quoting is in between.
+            val command = File(home, "probe.sh").apply { writeText(HcDetection.probe + "\n") }
+            fun run(): String {
+                val p = ProcessBuilder("sh", command.path)
+                    .apply { environment().apply { keys.removeAll { it.startsWith("HC_") }; put("HOME", home.path); put("PATH", "${bin.path}:/usr/bin:/bin") } }
+                    .redirectErrorStream(true)
+                    .start()
+                val out = p.inputStream.readBytes().toString(Charsets.UTF_8)
+                assertEquals(0, p.waitFor(), out)
+                return out
+            }
+            val stopped = HcDetection.parse(run())
+            assertTrue(stopped.windows)
+            assertFalse(stopped.running)
+            up.writeText("")
+            val out = run()
+            val found = HcDetection.parse(out)
+            assertTrue(found.running, out)
+            // The path as sh writes it (on Windows itself, `/tmp/…` for `C:\…\Temp\…`).
+            assertTrue(out.lines().any { it.startsWith("core\t") && it.endsWith("/bin/${exe.name}\t12660") }, out)
+            assertEquals(true, found.binary?.path?.endsWith("/bin/${exe.name}"), out)
+            assertEquals("0.1.18", found.binary?.version, out)
+        } finally {
+            home.deleteRecursively()
+        }
+    }
+
     /** [HcDetection.probe] in `sh` here, as SSH runs it there, with [home] as HOME and its own runtime and state folders. */
     private fun probe(home: File): String {
         val p = ProcessBuilder("sh", "-c", HcDetection.probe)

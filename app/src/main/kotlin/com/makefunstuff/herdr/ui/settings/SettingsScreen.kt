@@ -1,11 +1,14 @@
 package com.makefunstuff.herdr.ui.settings
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -18,6 +21,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -52,6 +56,8 @@ fun SettingsScreen(nav: NavHostController) {
     val context = LocalContext.current
     val keyState by container.identity.state.collectAsStateWithLifecycle()
     var dialog by remember { mutableStateOf<KeyDialog?>(null) }
+    // The key is not the first thing to change on most visits: it rests at the foot, folded until asked for.
+    var keyOpen by rememberSaveable { mutableStateOf(false) }
 
     val c = Herdr.colors
     Scaffold(
@@ -63,11 +69,28 @@ fun SettingsScreen(nav: NavHostController) {
             Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = Space.screen).padding(top = Space.xs, bottom = Space.xl),
             verticalArrangement = Arrangement.spacedBy(Space.m),
         ) {
+            QuietCard(padded = true) { GuardRow(onOpen = { nav.navigate(Routes.GUARD) }) }
+            QuietCard(padded = true) { NotificationsCard(onQuietHours = { nav.navigate(Routes.QUIET) }, onRules = { nav.navigate(Routes.RULES) }) }
+            QuietCard(padded = true) { BriefCard(onOpen = { nav.navigate(Routes.BRIEF) }, onSchedule = { nav.navigate(Routes.BRIEF_SETTINGS) }) }
+            AutopilotCard(onOpen = { nav.navigate(Routes.autopilot(it)) })
+            QuietCard(padded = true) { TextSizeCard() }
+            QuietCard(padded = true) { VoiceCard() }
+            QuietCard(padded = true) { QuickRepliesRow(onOpen = { nav.navigate(Routes.COMPOSER) }) }
+            ChangeAppCard(onOpen = { nav.navigate(Routes.CHANGE_APP) })
             QuietCard(padded = true) {
-                Column(verticalArrangement = Arrangement.spacedBy(Space.m)) {
-                    Text("SSH key", style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
+                Row(
+                    Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable { keyOpen = !keyOpen },
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("SSH key", style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
+                        Text("The key this phone signs in with", style = MaterialTheme.typography.bodySmall, color = c.muted)
+                    }
+                    Icon(if (keyOpen) HerdrIcons.ChevronUp else HerdrIcons.ChevronDown, if (keyOpen) "Hide" else "Show", tint = c.muted, modifier = Modifier.size(18.dp))
+                }
+                if (keyOpen) Column(verticalArrangement = Arrangement.spacedBy(Space.m), modifier = Modifier.padding(top = Space.m)) {
                     Text(
-                        "The app signs in to your machines with this key. Its private half is encrypted with a key kept in this phone's secure hardware, so it stays through app updates. Back it up to keep it when you reinstall the app or move to a new phone.",
+                        "The private half stays in the phone's secure hardware. Back it up to keep it when you reinstall the app or move to a new phone.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = c.muted,
                     )
@@ -100,14 +123,6 @@ fun SettingsScreen(nav: NavHostController) {
                     }
                 }
             }
-            QuietCard(padded = true) { GuardRow(onOpen = { nav.navigate(Routes.GUARD) }) }
-            QuietCard(padded = true) { QuickRepliesRow(onOpen = { nav.navigate(Routes.COMPOSER) }) }
-            QuietCard(padded = true) { TextSizeCard() }
-            QuietCard(padded = true) { VoiceCard() }
-            QuietCard(padded = true) { NotificationsCard(onQuietHours = { nav.navigate(Routes.QUIET) }, onRules = { nav.navigate(Routes.RULES) }) }
-            AutopilotCard(onOpen = { nav.navigate(Routes.autopilot(it)) })
-            ChangeAppCard(onOpen = { nav.navigate(Routes.CHANGE_APP) })
-            QuietCard(padded = true) { BriefCard(onOpen = { nav.navigate(Routes.BRIEF) }, onSchedule = { nav.navigate(Routes.BRIEF_SETTINGS) }) }
             QuietCard(padded = true) {
                 Column(verticalArrangement = Arrangement.spacedBy(Space.xs)) {
                     Text("About", style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })

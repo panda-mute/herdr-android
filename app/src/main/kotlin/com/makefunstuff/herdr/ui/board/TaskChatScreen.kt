@@ -30,6 +30,12 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import com.makefunstuff.herdr.LocalPanes
+import com.makefunstuff.herdr.core.api.AgentStatus
+import com.makefunstuff.herdr.core.chat.ChatHeader
+import com.makefunstuff.herdr.core.chat.ChatOwner
+import com.makefunstuff.herdr.ui.agents.ownRows
+import com.makefunstuff.herdr.ui.agents.rememberOwnTranscript
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -41,11 +47,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.makefunstuff.herdr.Routes
 import com.makefunstuff.herdr.core.board.CardAnswer
 import com.makefunstuff.herdr.core.board.CoordinatorThread
+import com.makefunstuff.herdr.core.board.TabMenus
 import com.makefunstuff.herdr.core.board.WorkStatus
 import com.makefunstuff.herdr.core.board.WorkTask
 import com.makefunstuff.herdr.core.board.WorkTaskDetails
@@ -88,6 +98,7 @@ import com.makefunstuff.herdr.ui.design.HerdrIcons
 import com.makefunstuff.herdr.ui.design.HerdrShapes
 import com.makefunstuff.herdr.ui.design.HerdrTopBar
 import com.makefunstuff.herdr.ui.design.InfoLine
+import com.makefunstuff.herdr.ui.design.Led
 import com.makefunstuff.herdr.ui.design.LoadingState
 import com.makefunstuff.herdr.ui.design.MenuRow
 import com.makefunstuff.herdr.ui.design.NewLine
@@ -124,8 +135,8 @@ private enum class TaskSheet { Menu, Said, Brief, Plan, Facts }
  * A Shepherdr 3 task as its agent's chat, as Shepherdr's own web UI has it: the task's chat live (its
  * agent's words, each turn's steps folded to a line, its question cards answered here), a strip under
  * the bar with where it stands, its pull request and the one thing it waits for (Merge), and a composer
- * to its agent. Under the strip, 3.1's task view tabs: Chat, then its folder's Files and Changes and its
- * Pull request with its checks ([TaskView]), each in the chat's place. What it did, its brief, plan and
+ * to its agent. Under the strip, 3.1's task view tabs: Chat, then its folder's Files and Changes, its
+ * Pull request with its checks and its live Browser ([TaskView]), each in the chat's place. What it did, its brief, plan and
  * facts, and Close, are in ⋯.
  */
 @Composable
@@ -241,6 +252,11 @@ internal fun TaskChatScreen(
     val attach = rememberAttacher(session, onAttached = { path -> draft = Attachments.withMention(draft, path) }, onImage = tray::add)
     var attachMenu by remember { mutableStateOf(false) }
     val kind = V2Board.agentKind(t.agent).ifEmpty { "the agent" }
+    // Its agent's terminal: where Shepherdr lost its log, its own transcript shows in place of "Can't find this conversation".
+    val worker = state.view?.agents?.let { ChatOwner.taskAgent(it, t.id) }
+    val own = rememberOwnTranscript(session, worker?.paneId?.takeIf { ChatOwner.readsOwn(th?.v2, worker) }, worker?.agentStatus ?: AgentStatus.Unknown)
+    val machines by container.hosts.hosts.collectAsStateWithLifecycle()
+    val panes = LocalPanes.current
 
     /** The screen is still open: a send that fails after it closed puts its words back in the saved draft instead. */
     var open by remember { mutableStateOf(true) }
@@ -300,15 +316,25 @@ internal fun TaskChatScreen(
     val callHere = call.machineId == machineId && call.task == t.id && (call.on || call.problem != null)
     val askMic = com.makefunstuff.herdr.voice.rememberVoiceMic()
     val canClose = t.status != WorkStatus.Done && t.status != WorkStatus.Merging
+    // Its agent's terminal, when it has one now: a tab in the strip and the way out of an empty chat.
+    val terminalPane = TabMenus.taskTerminal(state.view, t)
+    val openTerminal: (() -> Unit)? = terminalPane?.let { pane -> { nav.navigate(Routes.terminal(machineId, pane)) } }
     Box(Modifier.fillMaxSize()) {
         Scaffold(
             containerColor = c.ground,
             topBar = {
                 if (!typing) Column {
+                    // Whose chat (3.1's): the task, then its agent, space, machine when there are several, branch.
                     HerdrTopBar(
-                        "${t.name} ${t.title}",
-                        subtitle = listOfNotNull(kind.takeIf { t.agent.isNotEmpty() }, space.ifEmpty { null }).joinToString(" · ").ifEmpty { null },
+                        // The task's own title first, as 3.1's phone shows it: its key and branch go under it.
+                        t.title,
+                        subtitle = ChatHeader.line(
+                            t.name, kind.takeIf { t.agent.isNotEmpty() }, space, ChatHeader.machine(state.machine.label, machines.size),
+                            details?.branch?.ifBlank { null } ?: ChatHeader.folder(worker?.cwd),
+                        ).ifEmpty { null },
                         onBack = onBack, backLabel = "Back to the board",
+                        onTitle = if (t.space.isNotEmpty()) ({ panes.open(nav, Routes.coordinator(machineId, t.space)) }) else null,
+                        titleAction = "Open ${space.ifEmpty { "its space" }}'s Assistant",
                     ) {
                         if (t.chat.isNotEmpty() && t.status != WorkStatus.Done) BarIcon(
                             HerdrIcons.Phone, if (callHere && call.on) "End the call" else "Call ${t.name}",
@@ -322,13 +348,14 @@ internal fun TaskChatScreen(
                         BarIcon(HerdrIcons.Ellipsis, "Details and more", { sheet = TaskSheet.Menu })
                     }
                     TaskStrip(t, details, busy, onMerge, onPr = { picked = TaskView.PullRequest })
-                    TaskViewTabs(t, view) { picked = it }
+                    TaskViewTabs(t, view, onView = { picked = it }, onTerminal = openTerminal)
                 }
             },
         ) { padding ->
-            if (view != TaskView.Chat) Box(Modifier.padding(top = padding.calculateTopPadding()).fillMaxSize().navigationBarsPadding()) {
+            if (view != TaskView.Chat) Box(Modifier.padding(top = padding.calculateTopPadding()).fillMaxSize().imePadding().navigationBarsPadding()) {
                 when (view) {
                     TaskView.Files, TaskView.Changes -> TaskCode(nav, session, machineId, t, view)
+                    TaskView.Browser -> TaskBrowserView(session, t)
                     else -> TaskPullRequest(session, t)
                 }
             } else Column(Modifier.padding(top = padding.calculateTopPadding()).fillMaxSize().imePadding().navigationBarsPadding()) {
@@ -407,13 +434,32 @@ internal fun TaskChatScreen(
                                 }
                             }
                             val notice = th.v2?.let(com.makefunstuff.herdr.core.shepherdr.ChatNotice::of)
-                            if (items.isEmpty()) item(key = "empty") {
+                            if (own != null) {
+                                ownRows(own)
+                                item(key = "own-note") { Notice(ChatOwner.NOTE, null) }
+                            } else if (items.isEmpty()) item(key = "empty") {
                                 Box(Modifier.fillParentMaxSize(), contentAlignment = Alignment.Center) {
+                                    val finished = t.status == WorkStatus.Ready || t.status == WorkStatus.Done || t.status == WorkStatus.Merging
                                     if (notice != null) ChatEmpty(HerdrIcons.SquareTerminal, notice.first, notice.second.orEmpty())
+                                    else if (finished && openTerminal != null) ChatEmpty(
+                                        HerdrIcons.SquareTerminal, "No chat was kept",
+                                        "Its agent worked in its terminal, which is still open.",
+                                        action = {
+                                            PrimaryButton(openTerminal) {
+                                                Icon(HerdrIcons.SquareTerminal, null, Modifier.size(18.dp))
+                                                Spacer(Modifier.width(Space.s))
+                                                Text("Open terminal")
+                                            }
+                                        },
+                                    )
+                                    else if (finished) ChatEmpty(
+                                        HerdrIcons.SquareTerminal, "No chat was kept",
+                                        "Its agent worked in its terminal, which has ended.",
+                                    )
                                     else ChatEmpty(HerdrIcons.MessagesSquare, "Nothing said yet", "Its agent writes here as it works. You can write to it too.")
                                 }
                             } else if (notice != null) item(key = "notice") { Notice(listOfNotNull(notice.first, notice.second).joinToString(". "), null) }
-                            items(items.asReversed(), key = { it.id }) { item ->
+                            if (own == null) items(items.asReversed(), key = { it.id }) { item ->
                                 Column(verticalArrangement = Arrangement.spacedBy(Space.m)) {
                                     if (item.id == stick.unread) NewLine()
                                     Box(Modifier.lit(item.id, find, jump)) { ChatItem(
@@ -441,6 +487,10 @@ internal fun TaskChatScreen(
         when (sheet) {
             TaskSheet.Menu -> BoardPanel("${t.name} · ${t.title}", onDismiss = { sheet = null }) {
                 Column {
+                    // Its agent's terminal, the screen the chat reads.
+                    TabMenus.taskTerminal(state.view, t)?.let { pane ->
+                        MenuRow("Terminal", HerdrIcons.SquareTerminal, { sheet = null; nav.navigate(Routes.terminal(machineId, pane)) })
+                    }
                     if (!d?.summary.isNullOrEmpty()) MenuRow("What it did", HerdrIcons.FileText, { sheet = TaskSheet.Said })
                     if (!d?.brief.isNullOrEmpty()) MenuRow("Brief", HerdrIcons.FileText, { sheet = TaskSheet.Brief })
                     if (!d?.plan.isNullOrEmpty()) MenuRow("Plan", HerdrIcons.ListChecks, { sheet = TaskSheet.Plan })
@@ -483,8 +533,11 @@ private fun TaskStrip(t: WorkTask, d: WorkTaskDetails?, busy: String?, onMerge: 
             Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(start = Space.screen, end = Space.screen, top = Space.xs, bottom = Space.xs),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // At work, the chat's own working line says so: the status shows here only when it says something else.
-            if (t.status != WorkStatus.Work) StatusBadge(t.status.label, t.status.color())
+            // Its status once: a Ready one says it with its Accept button, so only its light shows; every
+            // other state keeps its word because nothing else on the strip says it.
+            if (t.status == WorkStatus.Ready) Led(
+                t.status.color(), Modifier.semantics { contentDescription = "Ready" },
+            ) else if (t.status != WorkStatus.Work) StatusBadge(t.status.label, t.status.color())
             prNumberOf(t.pr)?.let { n ->
                 Spacer(Modifier.width(Space.s))
                 Row(

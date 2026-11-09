@@ -66,7 +66,7 @@ fun TextSizeCard() {
                 larger = steps.getOrNull(step + 1)?.let { { store.setChat(it) } },
             ) {
                 Text(
-                    "Pull to refresh is in; 44 tests pass.",
+                    "The deploy is running; I'll tell you when it lands.",
                     style = MaterialTheme.typography.bodyLarge.let { it.copy(fontSize = it.fontSize * sizes.chat, lineHeight = it.lineHeight * sizes.chat) },
                     color = c.text, maxLines = 2, overflow = TextOverflow.Ellipsis,
                 )

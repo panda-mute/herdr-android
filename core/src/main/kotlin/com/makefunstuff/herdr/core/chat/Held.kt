@@ -7,7 +7,9 @@ import kotlinx.serialization.Serializable
  * A message written while the agent worked: it waits above the composer, held on the phone, until
  * you send it (Send now) or take it back (Discard). Nothing held goes by itself, so a thought half
  * typed during the agent's work never lands in the middle of it, and one left behind while you
- * were away never goes later without you.
+ * were away never goes later without you. One exception: the sentence Start work holds for an agent it
+ * just started on herdr-core goes by itself once that agent reports it waits (within 20 s,
+ * [com.makefunstuff.herdr.core.hc.HcStart.deliver]), unless you sent or discarded it first.
  */
 @Serializable
 data class HeldMessage(

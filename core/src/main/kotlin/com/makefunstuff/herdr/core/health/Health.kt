@@ -61,6 +61,9 @@ data class HealthSample(
     val loadPercent: Double get() = if (cores > 0) load1 * 100.0 / cores else 0.0
 
     fun own(p: Proc): Boolean = p.uid == uid
+
+    /** Whether this is a Windows machine (Git Bash reports MINGW, MSYS or CYGWIN as its system). */
+    val windows: Boolean get() = listOf("MINGW", "MSYS", "CYGWIN").any { os.startsWith(it) }
 }
 
 /** One point of the last hour's chart. Percentages 0–100; [at] in seconds, the machine's clock. */

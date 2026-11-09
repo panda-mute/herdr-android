@@ -107,11 +107,17 @@ import kotlinx.coroutines.flow.receiveAsFlow
 
 /** The whole app: theme, container, navigation and toasts. [nav] and [dark] are given by the desktop preview's scenes. */
 @Composable
-fun HerdrRoot(container: AppContainer, dark: Boolean = isSystemInDarkTheme(), nav: NavHostController = rememberNavController()) {
+fun HerdrRoot(
+    container: AppContainer,
+    dark: Boolean = isSystemInDarkTheme(),
+    nav: NavHostController = rememberNavController(),
+    /** The space the Chat tab shows first (the preview's scenes); null picks the first one as the app does. */
+    space: String? = null,
+) {
     CompositionLocalProvider(LocalContainer provides container) {
         HerdrTheme(dark) {
             Box {
-                com.makefunstuff.herdr.ui.common.GuardHost(container.guard) { AppNav(nav) }
+                com.makefunstuff.herdr.ui.common.GuardHost(container.guard) { AppNav(nav, space) }
                 com.makefunstuff.herdr.ui.design.ToastHost()
             }
         }
@@ -184,6 +190,10 @@ object Routes {
     const val ARTIFACTS = "artifacts/{mid}?space={space}"
     /** One artifact full screen, at its latest or at version [v]. */
     const val ARTIFACT = "artifact/{mid}/{id}?v={v}"
+    /** A machine's herdr.doc documents (`~/.herdr/docs`), newest first. */
+    const val DOCS = "docs/{mid}"
+    /** One document full screen ([path], its file on the machine). */
+    const val DOC = "doc/{mid}?path={path}"
 
     fun machine(id: String) = "machine/$id"
     fun edit(id: String? = null) = if (id == null) "edit" else "edit?id=$id"
@@ -195,6 +205,8 @@ object Routes {
     fun ask(to: String) = "ask/$to"
     fun artifacts(mid: String, space: String? = null) = "artifacts/$mid" + (space?.let { "?space=" + Uri.encode(it) } ?: "")
     fun artifact(mid: String, id: String, v: Int? = null) = "artifact/$mid/${Uri.encode(id)}" + (v?.let { "?v=$it" } ?: "")
+    fun docs(mid: String) = "docs/$mid"
+    fun doc(mid: String, path: String) = "doc/$mid?path=" + Uri.encode(path)
     fun board(mid: String, task: String? = null, alone: Boolean = false, accept: Boolean = false) =
         if (task == null) "board/$mid" else "board/$mid?task=${Uri.encode(task)}" + (if (alone) "&alone=1" else "") + if (accept) "&accept=1" else ""
     fun health(mid: String) = "health/$mid"
@@ -224,7 +236,7 @@ object Routes {
 }
 
 @Composable
-private fun AppNav(nav: NavHostController) {
+private fun AppNav(nav: NavHostController, startSpace: String? = null) {
     val container = LocalContainer.current
     val entry by nav.currentBackStackEntryAsState()
     val route = entry?.destination?.route
@@ -233,14 +245,14 @@ private fun AppNav(nav: NavHostController) {
     val triage by container.triage.state.collectAsStateWithLifecycle()
     val push by container.push.state.collectAsStateWithLifecycle()
     val homeBoards = rememberBoards()
-    // The Tasks tab's badge: everything on its Needs you list, Shepherdr 3's tasks too.
+    // The Tasks tab's badge: what waits for an answer, not the Ready tasks (their Accept is on the list).
     val waiting = rememberNeedsYou(homeBoards)
-    val needsYou = waiting.size
+    val needsYou = waiting.count { it !is Waiting.Task || it.task.status != com.makefunstuff.herdr.core.board.WorkStatus.Ready }
     val keyState by container.identity.state.collectAsStateWithLifecycle()
     var keySetupDismissed by rememberSaveable { mutableStateOf(false) }
     // The Tasks list's scroll, kept here: it stays as the window crosses the wide line.
     val tasksList = rememberLazyListState()
-    val space = rememberSaveable(saver = SpaceChoice.Saver) { SpaceChoice() }
+    val space = rememberSaveable(saver = SpaceChoice.Saver) { SpaceChoice(startSpace) }
     val drawer = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
 
@@ -266,10 +278,10 @@ private fun AppNav(nav: NavHostController) {
         val panes = remember(wide) { Panes(wide) }
         val current by rememberUpdatedState(panes)
         LaunchedEffect(nav) { Links.flow.collect { current.link(nav, it) } }
-        // A space picked in the drawer shows in the Chat tab.
+        // A space picked in the drawer (or the sidebar) shows in the Chat tab.
         fun pick(slot: SpaceSlot) {
             space.key = slot.key
-            nav.goTop(Routes.CHAT)
+            nav.showSpace()
         }
         val openDrawer: () -> Unit = { scope.launch { drawer.open() } }
         val lineColor = Herdr.colors.lineStrong
@@ -393,6 +405,10 @@ internal fun NavGraphBuilder.screens(nav: NavHostController, tasks: @Composable 
     composable(Routes.COORDINATOR) {
         CoordinatorScreen(nav, it.arguments?.getString("mid").orEmpty(), it.arguments?.getString("space")?.let(Uri::decode)?.ifEmpty { null })
     }
+    composable(Routes.DOCS) { com.makefunstuff.herdr.ui.docs.DocsScreen(nav, it.arguments?.getString("mid").orEmpty()) }
+    composable(Routes.DOC) {
+        com.makefunstuff.herdr.ui.docs.DocScreen(nav, it.arguments?.getString("mid").orEmpty(), it.arguments?.getString("path")?.let(Uri::decode).orEmpty())
+    }
     composable(Routes.ARTIFACTS) {
         com.makefunstuff.herdr.ui.artifacts.ArtifactsScreen(nav, it.arguments?.getString("mid").orEmpty(), it.arguments?.getString("space")?.let(Uri::decode)?.ifEmpty { null })
     }
@@ -440,6 +456,22 @@ private fun AppNavBar(nav: NavHostController, needsYou: Int) {
 @Composable
 private fun PaneEdge() {
     Box(Modifier.width(1.dp).fillMaxHeight().background(Herdr.colors.line))
+}
+
+/**
+ * The Chat tab's own screen, for a space just picked: not what the tab had open over it (that was the last space's
+ * terminal or chat). A phone's drawer opens only over a tab's own screen; the sidebar is there over any (issue #101).
+ */
+private fun NavHostController.showSpace() {
+    if (currentDestination?.route == Routes.CHAT) return
+    val open = currentBackStack.value.any { it.destination.route == Routes.CHAT }
+    // Left for another tab, the Chat tab's screens were kept to come back to: they go.
+    if (!open) clearBackStack(Routes.CHAT)
+    navigate(Routes.CHAT) {
+        // Open, they go too; another tab's are kept, as a tab's switch keeps them.
+        popUpTo(graph.findStartDestination().id) { saveState = !open }
+        launchSingleTop = true
+    }
 }
 
 private fun NavHostController.goTop(route: String) {

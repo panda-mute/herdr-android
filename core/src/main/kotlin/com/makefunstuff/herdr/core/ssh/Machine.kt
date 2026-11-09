@@ -22,10 +22,21 @@ data class Machine(
     val enabled: Boolean = true,
     /** Whether herdr may copy helper scripts (herdr-usage, herdr-push, etc.) to this host. */
     val allowHostScripts: Boolean = true,
+    /**
+     * Which task source the app shows: null (auto: simple-herdr-projects where shp is there, else Shepherdr 3),
+     * [TASK_SHEPHERDR] or [TASK_SHP].
+     */
+    val taskSource: String? = null,
 ) {
     val target: String get() = if (port == 22) "$user@$host" else "$user@$host:$port"
 
     companion object {
+        /** simple-herdr-projects is on the machine: the board is its tasks, read over SSH. */
+        const val TASK_SHP = "shp"
+
+        /** The machine's board is Shepherdr 3's, even where shp is there too. */
+        const val TASK_SHEPHERDR = "shepherdr"
+
         /** Parses `user@host`, `user@host:port`, or `ssh://user@host:port`. */
         fun parseTarget(raw: String): Triple<String?, String, Int>? {
             var t = raw.trim().removePrefix("ssh://").trimEnd('/')
@@ -150,6 +161,14 @@ object HerdrCommands {
     fun resolveSshAlias(alias: String) = "ssh -G ${quote(alias)}"
 
     fun quote(s: String): String = "'" + s.replace("'", "'\\''") + "'"
+
+    /**
+     * Runs [command] in the machine's login shell: tools the person installed (`shp`, `hc`, `gh`) often live in
+     * `~/.local/bin` or Homebrew's folder, which an SSH exec's PATH lacks. Its standard input is empty unless
+     * [input]: a command that reads what the app sends (`gh api --input -`) keeps it.
+     */
+    fun login(command: String, input: Boolean = false): String =
+        "sh -c " + quote("exec \"\${SHELL:-/bin/sh}\" -lc \"\$1\"" + if (input) "" else " </dev/null") + " sh " + quote(command)
 }
 
 /** One herdr executable found on a machine by [HerdrCommands.probe]. */

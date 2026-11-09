@@ -194,12 +194,14 @@ class ShepherdrRelayTest {
 }
 
 /** A stand-in for Shepherdr's live link on a loopback port, whatever its Host header: one scripted socket at a time. */
-private class MiniShepherdr : AutoCloseable {
+internal class MiniShepherdr : AutoCloseable {
     private val server = ServerSocket(0, 50, java.net.InetAddress.getByName("127.0.0.1"))
     val port: Int get() = server.localPort
     @Volatile var script: (Ws) -> Unit = {}
     /** The last link's Authorization header. */
     @Volatile var authorization: String? = null
+    /** The last link's path. */
+    @Volatile var path: String? = null
     val errors = CopyOnWriteArrayList<Throwable>()
 
     init {
@@ -209,7 +211,9 @@ private class MiniShepherdr : AutoCloseable {
                 thread(isDaemon = true) {
                     try {
                         val input = BufferedInputStream(s.getInputStream())
-                        val headers = generateSequence { line(input) }.takeWhile { it.isNotEmpty() }.drop(1)
+                        val head = generateSequence { line(input) }.takeWhile { it.isNotEmpty() }.toList()
+                        path = head.firstOrNull()?.split(' ')?.getOrNull(1)
+                        val headers = head.drop(1)
                             .associate { it.substringBefore(':').trim().lowercase() to it.substringAfter(':').trim() }
                         authorization = headers["authorization"]
                         val accept = Wire.acceptFor(headers.getValue("sec-websocket-key"))

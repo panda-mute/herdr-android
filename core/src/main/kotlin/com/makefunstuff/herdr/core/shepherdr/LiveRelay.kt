@@ -117,10 +117,12 @@ object LiveRelay {
     /**
      * The relay for `bun` (or `node`, 22 or later, which has WebSocket too) through a login shell, where PATH finds
      * them, linked to Shepherdr at [url]. Lines on its stdin go to Shepherdr as they are (a `watch`, a `ping`).
+     * Of the events of each type in [newest], only the newest waiting is passed on.
      */
-    fun command(snapshots: Boolean, url: String = "ws://${Wire.HOST}/api/ws"): String {
-        val run = "if command -v bun >/dev/null 2>&1; then exec bun -e ${quote(script(snapshots, url))}; " +
-            "else exec node -e ${quote(script(snapshots, url))}; fi"
+    fun command(snapshots: Boolean, url: String = "ws://${Wire.HOST}/api/ws", newest: List<String> = NEWEST): String {
+        val js = script(snapshots, url, newest)
+        val run = "if command -v bun >/dev/null 2>&1; then exec bun -e ${quote(js)}; " +
+            "else exec node -e ${quote(js)}; fi"
         return "sh -c ${quote("exec \"\${SHELL:-/bin/sh}\" -lc \"\$1\"")} sh ${quote(run)}"
     }
 
@@ -135,11 +137,16 @@ object LiveRelay {
             "return new WebSocket($u,t?{headers:{authorization:'Bearer '+t}}:undefined)})()"
     }
 
+    /** The live link's events of which only the newest matters: a whole snapshot, the build, an update. */
+    val NEWEST = listOf("snapshot", "build", "update")
+
     /**
-     * The relay itself. Each event waits under its key (a chat's key, `snapshot`, `build`; anything else is passed
-     * on as it is) and only its newest is written, once stdout takes more, unless it is just what was written last.
+     * The relay itself. Each event waits under its key (a chat's key, or its type where the type is in [newest];
+     * anything else is passed on as it is) and only its newest is written, once stdout takes more, unless it is just
+     * what was written last.
      */
-    fun script(snapshots: Boolean, url: String): String {
+    fun script(snapshots: Boolean, url: String, newest: List<String> = NEWEST): String {
+        val types = kotlinx.serialization.json.JsonArray(newest.map { kotlinx.serialization.json.JsonPrimitive(it) }).toString()
         return "if(typeof WebSocket==='undefined'){console.error('No WebSocket here');process.exit(5)}" +
             "const out=process.stdout,pending=new Map(),last=new Map(),early=[];let busy=false,closing=false,n=0;" +
             "out.on('error',()=>process.exit(0));" +
@@ -152,7 +159,7 @@ object LiveRelay {
             "ws.onmessage=e=>{const s=String(e.data);if(!$snapshots&&s.startsWith('{\"type\":\"snapshot\"'))return;" +
             "if(s.startsWith('{\"type\":\"view\"'))return;" +
             "let m;try{m=JSON.parse(s)}catch{return}const t=m&&m.type;if(t==='snapshot'&&!$snapshots)return;" +
-            "const k=t==='chat'&&m.chat?'chat:'+m.chat.key:t==='terminal'?'terminal:'+m.chat:(t==='snapshot'||t==='build'||t==='update')?t:'once:'+(n++);" +
+            "const k=t==='chat'&&m.chat?'chat:'+m.chat.key:t==='terminal'?'terminal:'+m.chat:$types.includes(t)?t:'once:'+(n++);" +
             "pending.delete(k);pending.set(k,s);pump()};" +
             "ws.onopen=()=>{for(const l of early.splice(0))ws.send(l)};" +
             "ws.onerror=()=>console.error('Shepherdr refused the live link');" +

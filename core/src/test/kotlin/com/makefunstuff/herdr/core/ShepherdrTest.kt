@@ -472,6 +472,8 @@ class ShepherdrTest {
             val tab = com.makefunstuff.herdr.core.board.WorkTab(id = "tb1", name = "Claude", chat = "t:t4", agent = "claude", live = true)
             assertEquals(listOf("Claude Code", "Pi"), board.tabAgents("sp1").map { it.name })
             assertEquals("""{"type":"tab-agents","place":"sp1"}""", last())
+            board.newTerminal("sp1")
+            assertEquals("""{"type":"tab-new","place":"sp1"}""", last())
             board.renameTab("sp1", tab, "  Review  ")
             assertEquals("""{"type":"tab-rename","tab":"tb1","name":"Review"}""", last())
             board.renameTab("sp1", tab.copy(id = null, assistant = true), "")

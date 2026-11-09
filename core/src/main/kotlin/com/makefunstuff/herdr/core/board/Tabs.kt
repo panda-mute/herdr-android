@@ -1,5 +1,6 @@
 package com.makefunstuff.herdr.core.board
 
+import com.makefunstuff.herdr.core.api.SessionSnapshot
 import com.makefunstuff.herdr.core.hc.HcMapping
 
 /**
@@ -114,5 +115,33 @@ object TabMenus {
         val chat = "t:$address"
         for (s in spaces) s.tabs.firstOrNull { !it.assistant && it.chat == chat }?.let { return s to it }
         return null
+    }
+
+    /**
+     * The terminal [task]'s agent runs in, as [view] has it: the one Shepherdr labelled with the task, else its chat's
+     * (`t:<address>`); null before its agent starts or where the machine doesn't show it.
+     */
+    fun taskTerminal(view: SessionSnapshot?, task: WorkTask): String? {
+        view ?: return null
+        view.agents.firstOrNull { it.shepherdrTask == task.id }?.let { return it.paneId }
+        val address = task.chat.takeIf { it.startsWith("t:") }?.removePrefix("t:") ?: return null
+        return HcMapping.paneId(address).takeIf { view.pane(it) != null }
+    }
+
+    /** The terminal the Assistant of space [space] (its [WorkSpace.id]) runs in, as [view] has it; null while none runs. */
+    fun assistantTerminal(view: SessionSnapshot?, space: String): String? =
+        view?.agents?.firstOrNull { it.shepherdrSpace == space }?.paneId
+
+    /**
+     * The shell [after] shows that [before] didn't, in the space named [name] (a workspace of that label): the tab the
+     * + menu's Terminal opened. Null until it shows.
+     */
+    fun newShell(before: SessionSnapshot?, after: SessionSnapshot?, name: String): String? {
+        after ?: return null
+        val had = before?.panes.orEmpty().map { it.paneId }.toSet()
+        return after.panes.firstOrNull { p ->
+            p.paneId !in had && after.agents.none { it.paneId == p.paneId } &&
+                (after.workspace(p.workspaceId)?.label?.ifBlank { null } ?: p.workspaceId).equals(name, ignoreCase = true)
+        }?.paneId
     }
 }

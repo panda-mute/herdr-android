@@ -4,6 +4,7 @@ import com.makefunstuff.herdr.core.api.AgentStatus
 import com.makefunstuff.herdr.core.api.WorkspaceInfo
 import com.makefunstuff.herdr.core.board.WorkStatus
 import com.makefunstuff.herdr.core.board.WorkTask
+import com.makefunstuff.herdr.core.hc.HcMapping
 import com.makefunstuff.herdr.core.home.Home
 import com.makefunstuff.herdr.core.home.HomeAgent
 import com.makefunstuff.herdr.core.home.HomeBoard
@@ -55,6 +56,9 @@ data class WorkspaceHit(
     val branch: String? = null,
 ) {
     val name: String get() = workspace.label.ifBlank { workspace.workspaceId }
+
+    /** Whether the phone can open a terminal in it: only classic herdr opens one, herdr-core doesn't. */
+    val opensTerminal: Boolean get() = !workspace.workspaceId.startsWith(HcMapping.PREFIX)
 }
 
 /** What one query found across the machines, best first in each kind. */
@@ -70,7 +74,7 @@ data class SearchResults(
 }
 
 /**
- * One box for everything the app holds: the machines' agents and workspaces (their last snapshots),
+ * One box for everything the app holds: the machines' agents and workspaces (their last views, herdr-core's too),
  * the boards' tasks (as last read), and the machines. Every word of the query has to be somewhere in
  * an item; a word at the start of its name counts most. An empty query lists what is there, the
  * agents and tasks waiting for you first.
@@ -102,7 +106,7 @@ object Search {
             .filter { words.isNotEmpty() || it.first.task.status.needsYou }
         val machineScores = if (words.isEmpty()) emptyList() else inScope.map(::MachineHit).score(words) { h -> listOf(h.host.machine.label, h.host.machine.target) }
         val workspaces = if (words.isEmpty()) emptyList() else inScope.flatMap { s ->
-            val snap = s.snapshot ?: return@flatMap emptyList()
+            val snap = s.view ?: return@flatMap emptyList()
             snap.workspaces.map { ws ->
                 val folder = ws.worktree?.checkoutPath?.ifEmpty { null } ?: snap.panes.firstOrNull { it.workspaceId == ws.workspaceId }?.cwd
                 WorkspaceHit(s.machine.id, s.machine.label, ws, folder, s.workspaceMeta[ws.workspaceId]?.get("branch")?.ifEmpty { null })

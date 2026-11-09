@@ -134,6 +134,12 @@ fun SceneData.shepherdr3() {
     host(Demo.DEVBOX).transcripts += "4304" to Demo.resource("claude-api.jsonl")
 }
 
+/** Shepherdr answers chat [key] with "Can't find this conversation" (`notice: none`), as 3.1.2 did on a real machine. */
+fun SceneData.lostChat(key: String) {
+    val sh = host(Demo.DEVBOX).shepherdr!!
+    sh.chats = sh.chats + (key to obj("key" to key, "messages" to kotlinx.serialization.json.JsonArray(emptyList()), "notice" to "none", "cli" to "claude"))
+}
+
 /**
  * [shepherdr3], with herdr-android's tabs as Shepherdr 3.1's tab bar has them: its Assistant's (`tb-herdr-android`)
  * and a Claude Code of its own beside it (`hc:t8`, tab `tb-and-claude`), stuck on a long test run: what the tab
@@ -155,6 +161,26 @@ fun SceneData.shepherdr3Tabs() {
         DemoV2.TAB_ASSISTANT,
         """[{"id":"tb-and-claude","name":"Claude Code","named":false,"term":"t:t8","cli":"claude","agent":"claude","state":"working","where":"~/src/herdr-android","prog":"Claude Code"}]""",
     )
+}
+
+/**
+ * [shepherdr3], where the + menu's Terminal opens a shell (`hc:t9`) as a new tab of the space, as Shepherdr's window
+ * does; AND-19's worker shows its screen in its terminal.
+ */
+fun SceneData.shepherdr3Terminals() {
+    shepherdr3()
+    val core = host(Demo.DEVBOX).core!!
+    core.screens = core.screens + ("t1" to Demo.resource("screen-claude-app.txt")) + ("t4" to Demo.resource("screen-claude-api.txt"))
+    host(Demo.DEVBOX).shepherdr!!.onNewTerminal = { place ->
+        val prompt = "\u001b[1;32mdemo@devbox\u001b[0m:\u001b[1;34m~/src/herdr-android\u001b[0m$ "
+        core.create(
+            FakeCore.terminal(
+                "t9", listOf("zsh"), "/home/demo/src/herdr-android", Demo.NOW,
+                labels = mapOf("herdr.space" to place, "herdr.tab" to "tb-shell", "where" to "herdr-android / Terminal"),
+            ),
+            screen = prompt,
+        )
+    }
 }
 
 /** devbox runs the desktop app's herdr-core next to classic herdr; mac-mini runs only the desktop app. */

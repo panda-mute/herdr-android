@@ -17,14 +17,14 @@ import com.makefunstuff.herdr.ui.common.LocalContainer
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.withTimeoutOrNull
 
-/** The Shepherdr boards of the connected machines, as last read, in the machines' order. */
+/** The task boards of the connected machines (Shepherdr 3's or simple-herdr-projects'), as last read, in their order. */
 @Composable
 fun rememberBoards(): List<HomeBoard> {
     val container = LocalContainer.current
     val hosts by container.hosts.hosts.collectAsStateWithLifecycle()
     val lists by container.boards.lists.collectAsStateWithLifecycle()
     return remember(hosts, lists) {
-        hosts.filter { it.online && it.onShepherdr }.mapNotNull { h -> lists[h.machine.id]?.work?.let { HomeBoard(h.machine.id, h.machine.label, it) } }
+        hosts.filter { it.online && it.hasBoard }.mapNotNull { h -> lists[h.machine.id]?.work?.let { HomeBoard(h.machine.id, h.machine.label, it) } }
     }
 }
 
@@ -40,7 +40,7 @@ fun rememberNeedsYou(boards: List<HomeBoard> = rememberBoards()): List<Waiting> 
     return remember(hosts, boards, seen) { Home.of(HomeAgent.of(hosts), boards, seen).needsYou }
 }
 
-/** The Shepherdr boards of the connected machines, as last read, by machine id: their spaces and tasks. */
+/** The task boards of the connected machines, as last read, by machine id: their spaces and tasks. */
 @Composable
 fun rememberWorkBoards(): Map<String, WorkOverview> {
     val boards = rememberBoards()
@@ -54,7 +54,7 @@ fun rememberBoardProblems(): List<Pair<String, String>> {
     val hosts by container.hosts.hosts.collectAsStateWithLifecycle()
     val lists by container.boards.lists.collectAsStateWithLifecycle()
     return remember(hosts, lists) {
-        hosts.filter { it.online && it.onShepherdr }.mapNotNull { h -> lists[h.machine.id]?.problem?.let { h.machine.label to it } }
+        hosts.filter { it.online && it.hasBoard }.mapNotNull { h -> lists[h.machine.id]?.problem?.let { h.machine.label to it } }
     }
 }
 
@@ -67,7 +67,7 @@ fun ReadBoards(readNow: Channel<Unit>, everyMs: Long = 15_000) {
     val container = LocalContainer.current
     val owner = LocalLifecycleOwner.current
     val hosts by container.hosts.hosts.collectAsStateWithLifecycle()
-    val ids = hosts.filter { it.online && it.onShepherdr }.joinToString(",") { it.machine.id }
+    val ids = hosts.filter { it.online && it.hasBoard }.joinToString(",") { it.machine.id }
     LaunchedEffect(ids) {
         if (ids.isEmpty()) return@LaunchedEffect
         owner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {

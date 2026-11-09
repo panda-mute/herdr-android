@@ -137,4 +137,33 @@ class PortForwardTest {
             }
         }
     }
+
+    @Test
+    fun aChannelClosedAtOnceEndsTheConnectionNotTheApp() {
+        // Windows' sshd forwarding to a port nothing listens on: the channel opens, then ends at once.
+        val crashes = java.util.Collections.synchronizedList(mutableListOf<Throwable>())
+        val before = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { _, e -> crashes += e }
+        try {
+            val closed = { _: String, _: Int ->
+                object : Duplex {
+                    override val input: InputStream = java.io.ByteArrayInputStream(ByteArray(0))
+                    override val output: OutputStream = OutputStream.nullOutputStream()
+                    override fun close() = Unit
+                }
+            }
+            PortForward("127.0.0.1", 7788, preferred = 0, open = closed).use { fwd ->
+                repeat(200) {
+                    Socket("127.0.0.1", fwd.localPort).use { s ->
+                        s.soTimeout = 5000
+                        assertEquals(-1, s.getInputStream().read())
+                    }
+                }
+            }
+            Thread.sleep(500)
+            assertEquals(emptyList(), crashes.toList())
+        } finally {
+            Thread.setDefaultUncaughtExceptionHandler(before)
+        }
+    }
 }

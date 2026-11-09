@@ -15,6 +15,7 @@ import com.makefunstuff.herdr.core.board.WorkStatus
 import com.makefunstuff.herdr.core.board.WorkTask
 import com.makefunstuff.herdr.core.chat.ChatSearch
 import com.makefunstuff.herdr.core.home.HomeBoard
+import com.makefunstuff.herdr.core.host.HerdrCoreState
 import com.makefunstuff.herdr.core.host.HostState
 import com.makefunstuff.herdr.core.host.HostStatus
 import com.makefunstuff.herdr.core.search.Search
@@ -31,6 +32,7 @@ import java.nio.file.Files
 import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -105,6 +107,26 @@ class SearchTest {
     }
 
     @Test
+    fun findsWorkspacesOfHerdrCoreToo() {
+        val core = HerdrCoreState(
+            "0.1.14", "devbox", "/home/dev/.local/bin/herdr-core",
+            SessionSnapshot(workspaces = listOf(WorkspaceInfo("hc:w1", label = "docs-site")), panes = listOf(PaneInfo("hc:t1", workspaceId = "hc:w1", tabId = "hc:w1:t1", cwd = "/home/dev/docs-site"))),
+        )
+        val both = devbox.copy(herdrCore = core)
+        val hit = Search.of("docs-site", listOf(both), boards).workspaces.single()
+        assertEquals("/home/dev/docs-site", hit.folder)
+        // herdr-core opens no terminal from the phone, so its row offers none.
+        assertFalse(hit.opensTerminal)
+        // Online for herdr-core alone: only its workspaces.
+        val alone = devbox.copy(snapshot = null, herdrCore = core)
+        assertEquals(listOf("docs-site"), Search.of("docs", listOf(alone), boards).workspaces.map { it.name })
+        // Classic herdr's still show next to them.
+        val classic = Search.of("herdr-android", listOf(both), boards).workspaces
+        assertEquals(listOf("herdr-android"), classic.map { it.name })
+        assertTrue(classic.single().opensTerminal)
+    }
+
+    @Test
     fun aChipShowsOnlyItsAgentsAndTasks() {
         val r = Search.of("jobs", listOf(devbox, ci), boards, SearchFilter.Working)
         assertEquals(listOf("Batch the /jobs export"), r.agents.map { it.title })
@@ -154,13 +176,13 @@ class ChatSearchTest {
 
     private fun search(dir: java.nio.file.Path) {
         val file = dir.resolve("api.jsonl").toFile().apply { writeText(transcript + "\n") }
-        val command = ChatSearch.command(
+        val command = ChatSearch.commands(
             "JOBS",
             listOf(
                 ChatSearch.Chat("w2:p1", AgentSessionRef(agent = "claude", kind = "path", value = file.path)),
                 ChatSearch.Chat("w9:p1", AgentSessionRef(agent = "claude", kind = "path", value = dir.resolve("gone.jsonl").toString())),
             ),
-        )!!
+        ).single()
         val p = ProcessBuilder("sh", "-c", command).redirectErrorStream(true).start()
         val out = p.inputStream.bufferedReader().readText()
         assertTrue(p.waitFor(10, TimeUnit.SECONDS))
@@ -184,7 +206,7 @@ class ChatSearchTest {
                 )
             }
             fun hits(q: String): List<ChatSearch.Hit> {
-                val command = ChatSearch.command(q, listOf(ChatSearch.Chat("w1:p1", AgentSessionRef(agent = "claude", kind = "path", value = file.path))))!!
+                val command = ChatSearch.commands(q, listOf(ChatSearch.Chat("w1:p1", AgentSessionRef(agent = "claude", kind = "path", value = file.path)))).single()
                 val p = ProcessBuilder("sh", "-c", command).redirectErrorStream(true).start()
                 val out = p.inputStream.bufferedReader().readText()
                 assertTrue(p.waitFor(10, TimeUnit.SECONDS))
@@ -202,9 +224,9 @@ class ChatSearchTest {
     @Test
     fun aShortQueryOrAChatItCantReadAsksNothing() {
         val chat = ChatSearch.Chat("w1:p1", AgentSessionRef(agent = "claude", kind = "id", value = "abc"))
-        assertNull(ChatSearch.command("jo", listOf(chat)))
-        assertNull(ChatSearch.command("jobs", listOf(chat.copy(session = chat.session.copy(agent = "gemini")))))
-        assertNull(ChatSearch.command("jobs", emptyList()))
+        assertTrue(ChatSearch.commands("jo", listOf(chat)).isEmpty())
+        assertTrue(ChatSearch.commands("jobs", listOf(chat.copy(session = chat.session.copy(agent = "gemini")))).isEmpty())
+        assertTrue(ChatSearch.commands("jobs", emptyList()).isEmpty())
     }
 
     @Test

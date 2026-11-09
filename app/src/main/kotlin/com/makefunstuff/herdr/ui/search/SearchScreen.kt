@@ -118,8 +118,8 @@ fun SearchScreen(nav: NavController, machineId: String? = null, initial: String 
     // Words in the chats: asked of the machines a moment after typing stops, each in its own time.
     val chatHits = remember { mutableStateMapOf<String, List<ChatSearch.Hit>>() }
     var looking by remember { mutableStateOf(0) }
-    val online = hosts.filter { it.online && it.snapshot != null && (scoped == null || it.machine.id == scoped) }
-    val chatKey = online.joinToString(",") { h -> h.machine.id + ":" + h.snapshot!!.agents.joinToString { it.paneId + it.agentSession?.value.orEmpty() } }
+    val online = hosts.filter { it.online && it.view != null && (scoped == null || it.machine.id == scoped) }
+    val chatKey = online.joinToString(",") { h -> h.machine.id + ":" + h.view!!.agents.joinToString { it.paneId + it.agentSession?.value.orEmpty() } }
     LaunchedEffect(query.trim(), chatKey) {
         chatHits.clear()
         val q = query.trim()
@@ -128,13 +128,16 @@ fun SearchScreen(nav: NavController, machineId: String? = null, initial: String 
         coroutineScope {
             online.map { h ->
                 async {
-                    val chats = h.snapshot!!.agents.mapNotNull { a -> a.agentSession?.let { ChatSearch.Chat(a.paneId, it) } }
-                    val command = ChatSearch.command(q, chats) ?: return@async
+                    val chats = h.view!!.agents.mapNotNull { a -> a.agentSession?.let { ChatSearch.Chat(a.paneId, it) } }
+                    val commands = ChatSearch.commands(q, chats).ifEmpty { return@async }
                     looking++
                     try {
                         val session = container.hosts.session(h.machine.id) ?: return@async
-                        val out = runCatching { session.awaitConnection(10_000).run(command, timeoutSeconds = 15).stdout }.getOrNull() ?: return@async
-                        val kinds = h.snapshot!!.agents.associate { it.paneId to (it.agentSession?.agent ?: it.agent.orEmpty()) }
+                        val out = runCatching {
+                            val conn = session.awaitConnection(10_000)
+                            buildString { for (c in commands) append(conn.run(c, timeoutSeconds = 15).stdout).append('\n') }
+                        }.getOrNull() ?: return@async
+                        val kinds = h.view!!.agents.associate { it.paneId to (it.agentSession?.agent ?: it.agent.orEmpty()) }
                         chatHits[h.machine.id] = ChatSearch.parse(out, q, kinds)
                     } finally {
                         looking--
@@ -262,7 +265,7 @@ fun SearchScreen(nav: NavController, machineId: String? = null, initial: String 
                         modifier = Modifier.padding(horizontal = Space.screen + Space.xs, vertical = Space.l),
                     )
                 }
-                val ws = results.workspaces.firstOrNull()
+                val ws = results.workspaces.firstOrNull { it.opensTerminal }
                 actions(
                     listOfNotNull(
                         Action("New task about “${query.trim()}”…", "Add it to a board, or start an agent now", HerdrIcons.Plus, accent = true) { startWork(query) },
@@ -345,7 +348,7 @@ private fun WorkspaceRow(w: WorkspaceHit, showMachine: Boolean, opening: Boolean
         leading = { IconTile(if (w.workspace.worktree != null) HerdrIcons.FolderGit2 else HerdrIcons.Folder, size = 36.dp) },
         trailing = {
             if (opening) Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) { Spinner(size = 20.dp) }
-            else BarIcon(HerdrIcons.SquareTerminal, "Open a terminal in ${w.name}", onTerminal)
+            else if (w.opensTerminal) BarIcon(HerdrIcons.SquareTerminal, "Open a terminal in ${w.name}", onTerminal)
         },
         onClickLabel = "Open its machine",
         onClick = onOpen,

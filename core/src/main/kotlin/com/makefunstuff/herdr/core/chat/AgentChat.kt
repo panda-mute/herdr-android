@@ -211,18 +211,8 @@ class AgentChat(private val host: HostSession, val paneId: String, private val s
     }
 
     /** Drops pending prompts once the transcript shows another user message like each. */
-    private fun unseen(pending: List<SentMatch.Pending>, items: List<ChatItem>): List<SentMatch.Pending> {
-        if (pending.isEmpty()) return pending
-        val users = items.filterIsInstance<ChatItem.User>()
-        val texts = users.map { it.text }
-        val now = System.currentTimeMillis()
-        return SentMatch.unconfirmed(pending) { p ->
-            // A matching message that wasn't in the transcript at send time is the new one, even
-            // when older copies have slid out of a tail-only read; the count covers ids that repeat.
-            val fresh = users.count { it.id !in p.known && SentMatch.same(p.text, it.text) }
-            maxOf(p.baseline + fresh, SentMatch.slid(p, SentMatch.count(p.text, texts), now))
-        }
-    }
+    private fun unseen(pending: List<SentMatch.Pending>, items: List<ChatItem>): List<SentMatch.Pending> =
+        SentMatch.unseen(pending, items.filterIsInstance<ChatItem.User>(), System.currentTimeMillis())
 
     private suspend fun watchScreen() {
         while (true) {

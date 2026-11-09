@@ -262,7 +262,13 @@ data class V2Task(
     val base: String? = null,
     /** Its latest news (ms). */
     val at: Double? = null,
+    /** Its browser, live ([TaskBrowser]): none where its machine's service has no Browser. */
+    val browser: V2Browser? = null,
 )
+
+/** Whether a task's browser can be watched through this service: [ready], else why not ([hint]: another machine's). */
+@Serializable
+data class V2Browser(val ready: Boolean = false, val hint: String? = null)
 
 @Serializable
 data class V2Choice(val label: String, val description: String? = null, val recommended: Boolean = false)

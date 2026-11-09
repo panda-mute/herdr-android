@@ -2,6 +2,7 @@ package com.makefunstuff.herdr.core.activity
 
 import com.makefunstuff.herdr.core.chat.TranscriptFollower
 import com.makefunstuff.herdr.core.ssh.HerdrCommands.quote
+import com.makefunstuff.herdr.core.ssh.HostPython
 
 /**
  * The shell commands the timeline reads with, over the machine's SSH connection. Both only read.
@@ -56,7 +57,7 @@ object ActivityCommands {
     // pruned lines, the lines it gets from then on, raw, until the app closes the channel (the trailing `cat`).
     private val SCRIPT = """
         bytes="${'$'}1"; follow="${'$'}2"; shift 2
-        py=${'$'}(command -v python3 2>/dev/null)
+        ${HostPython.find(null)}
         last=""; lastsize=0; lastvalue=""
         while [ ${'$'}# -ge 3 ]; do
           agent="${'$'}1"; kind="${'$'}2"; value="${'$'}3"; shift 3; f=""
@@ -74,7 +75,7 @@ object ActivityCommands {
           if [ -z "${'$'}f" ] || [ ! -f "${'$'}f" ]; then echo "$MARK missing ${'$'}agent ${'$'}value"; continue; fi
           size=${'$'}(wc -c < "${'$'}f" | tr -d ' ')
           echo "$MARK session ${'$'}agent ${'$'}size ${'$'}value"
-          if [ -n "${'$'}py" ] && head -c "${'$'}size" "${'$'}f" | "${'$'}py" -c "${'$'}PRUNE" "${'$'}bytes"; then :
+          if [ -n "${'$'}P" ] && head -c "${'$'}size" "${'$'}f" | "${'$'}P" ${'$'}PA -c "${'$'}PRUNE" "${'$'}bytes"; then :
           elif [ "${'$'}size" -gt "${'$'}bytes" ]; then echo "$MARK cut raw"; head -c "${'$'}size" "${'$'}f" | tail -c "${'$'}bytes"; echo
           else head -c "${'$'}size" "${'$'}f"; echo
           fi

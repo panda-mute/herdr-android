@@ -3,6 +3,7 @@ package com.makefunstuff.herdr.core.logins
 import com.makefunstuff.herdr.core.ssh.CommandResult
 import com.makefunstuff.herdr.core.ssh.Duplex
 import com.makefunstuff.herdr.core.ssh.HerdrCommands.quote
+import com.makefunstuff.herdr.core.ssh.HostPython
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -38,13 +39,11 @@ object HerdrLogins {
     const val MISSING_EXIT = 126
     const val NO_PYTHON_EXIT = 127
 
-    /** `herdr-logins <args>` by python3, as herdr-usage is run ([com.makefunstuff.herdr.core.usage.HerdrUsage.command]). */
+    /** `herdr-logins <args>` by Python 3 ([HostPython]), as herdr-usage is run ([com.makefunstuff.herdr.core.usage.HerdrUsage.command]). */
     fun command(vararg args: String): String = "sh -c " + quote(
         "[ -f \"$FILE\" ] || exit $MISSING_EXIT; " +
-            "P=\"\$(command -v python3 2>/dev/null)\"; " +
-            "[ -n \"\$P\" ] || P=\"\$(\"\${SHELL:-/bin/sh}\" -lc 'command -v python3' </dev/null 2>/dev/null | tail -n 1)\"; " +
-            "[ -n \"\$P\" ] || { echo 'python3 is not installed' >&2; exit $NO_PYTHON_EXIT; }; " +
-            "exec \"\$P\" \"$FILE\" \"\$@\"",
+            HostPython.find(NO_PYTHON_EXIT) + "; " +
+            "exec \"\$P\" \$PA \"$FILE\" \"\$@\"",
     ) + " sh" + args.joinToString("") { " " + quote(it) }
 
     /**
@@ -66,7 +65,7 @@ object HerdrLogins {
                 install()
                 r = run(command("status"), 90)
             }
-            if (r.exitStatus == NO_PYTHON_EXIT) throw IOException("Reading the logins needs python3 on $label, and it isn't installed")
+            if (r.exitStatus == NO_PYTHON_EXIT) throw IOException("Reading the logins needs Python 3 on $label, and it isn't installed")
             if (r.exitStatus == null && LoginsReader.answer(r.stdout) == null) throw IOException("Reading $label's logins took too long")
             if (LoginsReader.answer(r.stdout) == null) throw IOException(problem(r.stderr, "herdr-logins gave no answer on $label"))
             return LoginsReader.parse(r.stdout)

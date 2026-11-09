@@ -182,4 +182,23 @@ class HcScreensTest {
         assertFalse(stopped.agentsKnown)
         assertTrue(both.copy(herdrCoreLooked = true).agentsKnown)
     }
+
+    @Test
+    fun aMachineIsSettledOnceItsLookIsOver() {
+        val machine = Machine(id = "m1", label = "devbox", host = "devbox", user = "dev")
+        val core = HerdrCoreState("0.1.14", "devbox", "/home/dev/.local/bin/herdr-core", HcMapping.snapshot(list.terminals, "0.1.14"))
+        val missing = "herdr isn't installed on devbox"
+        // Classic herdr answers, or herdr-core alone does.
+        assertTrue(HostState(machine, status = HostStatus.Online, snapshot = classic).settled)
+        assertTrue(HostState(machine, status = HostStatus.Online, herdrCore = core, classicMissing = missing, herdrCoreLooked = true).settled)
+        // herdr-core alone answered for its first session, but not every session was looked at yet.
+        assertFalse(HostState(machine, status = HostStatus.Online, herdrCore = core, classicMissing = missing).settled)
+        // herdr-core was found but has not answered yet: classic herdr's absence is not the machine's end.
+        assertFalse(HostState(machine, status = HostStatus.Attention(missing, HostStatus.Attention.Kind.Herdr), classicMissing = missing).settled)
+        // Neither is there, or the key was refused: that won't change by waiting.
+        assertTrue(HostState(machine, status = HostStatus.Attention(missing, HostStatus.Attention.Kind.Herdr)).settled)
+        assertTrue(HostState(machine, status = HostStatus.Attention("Authentication failed", HostStatus.Attention.Kind.Auth)).settled)
+        assertFalse(HostState(machine, status = HostStatus.Connecting).settled)
+        assertFalse(HostState(machine, status = HostStatus.Reconnecting("Connection reset", 5)).settled)
+    }
 }

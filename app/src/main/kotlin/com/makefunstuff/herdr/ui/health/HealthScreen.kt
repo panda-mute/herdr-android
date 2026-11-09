@@ -510,7 +510,7 @@ private fun ConfirmDialog(c: Confirm, machine: String, model: HealthModel, onDon
         is Confirm.Stop -> Triple(
             "Stop ${c.title}?",
             c.procs.joinToString("\n") { "${it.name} · ${Sizes.kb(it.proc.rssKb)} · pid ${it.proc.pid}" } +
-                "\n\nEach gets SIGTERM on $machine, and SIGKILL if it still runs after 5 seconds. Unsaved work in them is lost.",
+                "\n\n" + stopNote(machine, model.windows),
             "Stop",
         )
         Confirm.Gradle -> Triple(
