@@ -127,12 +127,18 @@ fun MessageImages(paths: List<String>, modifier: Modifier = Modifier) {
     if (paths.isEmpty()) return
     val images = LocalChatImages.current
     var open by remember { mutableStateOf<String?>(null) }
+    // Decoded at the pixels they are shown at (as Alma does): a tall screenshot fit to 720px and
+    // stretched to a 300dp tile on a dense screen drew its text soft and grainy.
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val singleEdge = with(density) { 300.dp.roundToPx() }
+    // A grid square crops the picture's short side to 88dp: its long side can be twice that and more.
+    val gridEdge = with(density) { 88.dp.roundToPx() } * 3
     FlowRow(modifier, horizontalArrangement = Arrangement.spacedBy(Space.xs), verticalArrangement = Arrangement.spacedBy(Space.xs)) {
         paths.forEachIndexed { i, remote ->
             val found = rememberSent(images, remote)
             val name = remote.substringAfterLast('/')
             val single = paths.size == 1
-            val bitmap = rememberImage((found as? Found.Here)?.file?.path, if (single) 720 else 320)
+            val bitmap = rememberImage((found as? Found.Here)?.file?.path, if (single) singleEdge else gridEdge)
             // One picture as it is shaped, within 220×300dp; several as a grid of squares.
             val tile = when {
                 !single -> Modifier.size(88.dp)
@@ -149,7 +155,7 @@ fun MessageImages(paths: List<String>, modifier: Modifier = Modifier) {
                 contentAlignment = Alignment.Center,
             ) {
                 when {
-                    bitmap != null -> Image(bitmap, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                    bitmap != null -> Image(bitmap, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, filterQuality = androidx.compose.ui.graphics.FilterQuality.Medium)
                     found is Found.Gone -> Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(Space.xs)) {
                         Icon(HerdrIcons.Image, null, tint = Herdr.colors.muted, modifier = Modifier.size(20.dp))
                         Text(name, style = MaterialTheme.typography.labelSmall, color = Herdr.colors.muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -196,6 +202,7 @@ fun ImageViewer(path: String?, name: String, onDismiss: () -> Unit) {
                         image, name,
                         Modifier.fillMaxSize().graphicsLayer { scaleX = scale; scaleY = scale; translationX = offset.x; translationY = offset.y },
                         contentScale = ContentScale.Fit,
+                        filterQuality = androidx.compose.ui.graphics.FilterQuality.Medium,
                     )
                 } else Spinner()
             }
