@@ -392,6 +392,12 @@ fun AgentScreen(nav: NavController, machineId: String, paneId: String) {
         if (!blocked || tell != null) chat.addPending(text)
         // What you just said is the newest line: bring the chat to its end, also if you had scrolled up.
         stick.sent()
+        // The box empties at once, as the other chats' do: waiting for the machine to take the words
+        // left them standing there a second or more. A send that fails puts them back.
+        if (reply == null) {
+            draft = DraftStore.afterSend(draft, typed)
+            tray.sent(pictures)
+        }
         scope.launch {
             runCatching {
                 val api = session.awaitAgent(paneId)
@@ -401,14 +407,12 @@ fun AgentScreen(nav: NavController, machineId: String, paneId: String) {
                     else -> AgentInput.send(api, paneId, text, named = agent != null, blocked = blocked)
                 }
             }.onSuccess {
-                if (reply == null) {
-                    draft = DraftStore.afterSend(draft, typed)
-                    tray.sent(pictures)
-                }
                 telling = null
                 amending = false
             }.onFailure {
                 if (!blocked || tell != null) chat.dropPending(text)
+                // Not lost: back in the box (with its pictures named), in front of anything typed since.
+                if (reply == null) draft = if (draft.isBlank()) text else text + "\n" + draft
                 context.toast(it.message ?: "Couldn't send")
             }
             sending = false
