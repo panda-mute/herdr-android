@@ -2,7 +2,13 @@ package com.makefunstuff.herdr.ui.design
 
 import androidx.compose.ui.graphics.RectangleShape
 
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
+import com.makefunstuff.herdr.core.chat.SentRecall
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.RowScope
@@ -131,6 +137,10 @@ val ReplyBubbleShape = RectangleShape
  * you are ([RecordingLevels]) and the left of the controls to the time and how to cancel
  * ([RecordingInfo]); Send then sends the recording, as letting go of the mic does. The draft stays as
  * it was. A refused microphone, or a recording that failed, says so over the card ([MicNotice]).
+ *
+ * [sent] (your messages in the chat, oldest first) come back into the box as a shell's history does
+ * ([SentRecall], as in Alma): a quick swipe up on the box (or Up on a keyboard) brings the one before,
+ * a swipe down (Down) goes back towards the newest and then the empty box. A draft stays as it is.
  */
 @Composable
 fun ChatComposer(
@@ -156,6 +166,7 @@ fun ChatComposer(
     completion: (@Composable (query: Completions.Query, accept: (String) -> Unit) -> Unit)? = null,
     voice: VoiceRecorder? = null,
     dictation: Dictation? = null,
+    sent: List<String> = emptyList(),
 ) {
     val c = Herdr.colors
     val view = LocalView.current
@@ -195,6 +206,17 @@ fun ChatComposer(
         TextFieldValue(draft, TextRange(cursor.coerceIn(0, draft.length)))
     }
     SideEffect { if (value != field) field = value }
+    // What you sent before, brought back into the box: how far back it is (0 the newest), null for none.
+    val history = remember(sent) { SentRecall.history(sent) }
+    var recalled by remember { mutableStateOf<Int?>(null) }
+    fun recall(older: Boolean): Boolean {
+        val step = (if (older) SentRecall.older(history, draft, recalled) else SentRecall.newer(history, draft, recalled)) ?: return false
+        recalled = step.at
+        field = TextFieldValue(step.text, TextRange(step.text.length))
+        onDraft(step.text)
+        return true
+    }
+    val latestRecall by rememberUpdatedState(::recall)
     // A tap on the mic talks to type: the words go where the cursor was (in place of a selection), then the
     // cursor stands after them in the box, to edit and send.
     val latestValue by rememberUpdatedState(value)
@@ -296,15 +318,50 @@ fun ChatComposer(
                         interactionSource = focus,
                         modifier = Modifier.fillMaxWidth().heightIn(max = textMax)
                             .focusRequester(focusRequester)
-                            .onPreviewKeyEvent { e ->
-                                // A hardware keyboard: Ctrl/⌘+Enter sends, Enter stays a new line.
-                                val enter = e.key == Key.Enter || e.key == Key.NumPadEnter
-                                if (enter && (e.isCtrlPressed || e.isMetaPressed)) {
-                                    if (e.type == KeyEventType.KeyDown) send()
-                                    true
-                                } else false
+                            // A quick swipe up or down on the box steps through what you sent; the lift that
+                            // ends it is no tap (no cursor moved, no keyboard opened).
+                            .pointerInput(history.isNotEmpty()) {
+                                if (history.isEmpty()) return@pointerInput
+                                val far = 40.dp.toPx()
+                                awaitEachGesture {
+                                    val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                                    while (true) {
+                                        val e = awaitPointerEvent(PointerEventPass.Initial)
+                                        val ch = e.changes.firstOrNull { it.id == down.id } ?: break
+                                        if (ch.pressed) continue
+                                        val moved = ch.position - down.position
+                                        val quick = ch.uptimeMillis - down.uptimeMillis < 400
+                                        val upright = kotlin.math.abs(moved.y) > far && kotlin.math.abs(moved.y) > 2 * kotlin.math.abs(moved.x)
+                                        if (quick && upright && latestRecall(moved.y < 0)) {
+                                            view.confirmTap()
+                                            ch.consume()
+                                        }
+                                        break
+                                    }
+                                }
                             }
-                            .semantics { if (sending) stateDescription = "Sending" },
+                            .onPreviewKeyEvent { e ->
+                                // A hardware keyboard: Ctrl/⌘+Enter sends, Enter stays a new line; Up and Down
+                                // step through what you sent while the box is free.
+                                val enter = e.key == Key.Enter || e.key == Key.NumPadEnter
+                                val arrow = e.key == Key.DirectionUp || e.key == Key.DirectionDown
+                                when {
+                                    enter && (e.isCtrlPressed || e.isMetaPressed) -> {
+                                        if (e.type == KeyEventType.KeyDown) send()
+                                        true
+                                    }
+                                    arrow && history.isNotEmpty() && SentRecall.free(history, draft, recalled) ->
+                                        if (e.type == KeyEventType.KeyDown) latestRecall(e.key == Key.DirectionUp) else true
+                                    else -> false
+                                }
+                            }
+                            .semantics {
+                                if (sending) stateDescription = "Sending"
+                                if (history.isNotEmpty()) customActions = listOf(
+                                    CustomAccessibilityAction("Earlier message you sent") { recall(true) },
+                                    CustomAccessibilityAction("Later message you sent") { recall(false) },
+                                )
+                            },
                         decorationBox = { inner ->
                             Box(Modifier.padding(start = Space.l, end = Space.l, top = Space.m + Space.xxs, bottom = Space.xs)) {
                                 if (draft.isEmpty()) {

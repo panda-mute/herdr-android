@@ -586,6 +586,7 @@ fun AgentScreen(nav: NavController, machineId: String, paneId: String) {
                     ChatComposer(
                         draft = draft,
                         onDraft = { draft = it },
+                        sent = remember(state.items) { state.items.filterIsInstance<com.makefunstuff.herdr.core.chat.ChatItem.User>().map { it.text } },
                         placeholder = when {
                             status == AgentStatus.Blocked && telling != null -> "Tell it what to do instead…"
                             status == AgentStatus.Blocked && amending -> "Add to your answer…"

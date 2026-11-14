@@ -66,6 +66,7 @@ import com.makefunstuff.herdr.ui.artifacts.LocalChatArtifacts
 import com.makefunstuff.herdr.core.host.HostSession
 import com.makefunstuff.herdr.core.shepherdr.OutgoingLine
 import com.makefunstuff.herdr.core.shepherdr.SpaceChat
+import com.makefunstuff.herdr.core.shepherdr.SpaceChatItem
 import com.makefunstuff.herdr.core.shepherdr.V2Board
 import androidx.compose.runtime.rememberUpdatedState
 import com.makefunstuff.herdr.core.shepherdr.ChatFind
@@ -383,6 +384,7 @@ internal fun TaskChatScreen(
                             ChatComposer(
                                 draft = draft,
                                 onDraft = { draft = it },
+                                sent = remember(items) { items.filterIsInstance<SpaceChatItem.Words>().filter { it.you }.map { it.text } },
                                 placeholder = "Message $kind",
                                 onSend = ::sendDraft,
                                 // Not waiting for its chat to be read: what you write goes to the agent all the same.

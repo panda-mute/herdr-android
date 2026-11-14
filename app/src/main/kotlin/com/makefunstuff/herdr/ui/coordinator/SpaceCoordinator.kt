@@ -433,6 +433,7 @@ internal fun SpaceCoordinator(nav: NavController, machineId: String, session: Ho
                         ChatComposer(
                             draft = draft,
                             onDraft = { draft = it },
+                            sent = remember(items) { items.filterIsInstance<SpaceChatItem.Words>().filter { it.you }.map { it.text } },
                             placeholder = "Message the Assistant",
                             onSend = ::sendDraft,
                             enabled = state.online && board != null && space != null,
