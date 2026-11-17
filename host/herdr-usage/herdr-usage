@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# version: 1
+# version: 2
 """herdr-usage: what the AI providers a machine uses have left, read on that machine.
 
 Herdr for Android copies it to a machine over SSH and runs it there, so the phone sees each
@@ -39,7 +39,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "1"
+VERSION = "2"
 
 HOME = os.path.expanduser("~")
 CACHE = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.join(HOME, ".cache"), "herdr-usage")
@@ -56,6 +56,9 @@ API_BASE = os.environ.get("HERDR_USAGE_API", "").rstrip("/")
 # (but not twice within FRESH_MIN: a pull to refresh shouldn't hammer a usage API).
 LIVE_TTL = float(os.environ.get("HERDR_USAGE_TTL", "240"))
 FRESH_MIN = min(20, LIVE_TTL)
+# A cached time further ahead of the clock than this was written while the clock ran fast: it is
+# never taken as fresh (its age would stay under any limit until the clock caught up with it).
+FUTURE_SLACK = 60.0
 # The days the chart shows, and how long a pass over the session records may take before it stops
 # and goes on from there the next time.
 DAYS = 7
@@ -68,6 +71,16 @@ OPENCODE_GO_LIMITS = (("5h", "5-hour", 5 * 3600, 12.0), ("week", "Weekly", 7 * 8
 
 def now():
     return time.time()
+
+
+def in_future(at, t):
+    """A cached time stamped ahead of the clock, past FUTURE_SLACK."""
+    return num(at) - t > FUTURE_SLACK
+
+
+def age_of(at, t):
+    """How old a cached time is; one stamped in the future is as old as can be."""
+    return float("inf") if in_future(at, t) else t - num(at)
 
 
 # ---- files and the cache -------------------------------------------------------------------------
@@ -497,6 +510,7 @@ class Scanner:
         jobs.sort(key=lambda j: -os.path.getmtime(j[0]) if os.path.exists(j[0]) else 0)
         keep = {}
         tally = Tally({})
+        clock = now()
         for path, size, kind in jobs:
             c = self.file(path, size, kind)
             keep[path] = c
@@ -507,7 +521,8 @@ class Scanner:
                     t[1] += r[1]
                     t[2] += r[2]
             lim = (c.get("state") or {}).get("limits")
-            if kind == "codex" and lim and (self.codex_limits is None or lim[0] > self.codex_limits[0]):
+            # A session stamped in the future (the clock ran fast) doesn't outrank the ones written since.
+            if kind == "codex" and lim and not in_future(lim[0], clock) and (self.codex_limits is None or lim[0] > self.codex_limits[0]):
                 self.codex_limits = lim
         self.opencode(tally)
         # Files not seen any more (older than the week, or gone) leave the cache.
@@ -825,11 +840,14 @@ def live(fresh):
     auth = providers.auth
     oc = opencode_auth()
     scan_limits = read_json(os.path.join(CACHE, "codex-limits.json"))
+    well_formed = isinstance(scan_limits, list) and len(scan_limits) == 2 and isinstance(scan_limits[1], dict)
+    if not well_formed or in_future(scan_limits[0], t):
+        scan_limits = None
     out = []
 
     def cached(pid, fn):
         c = cache.get(pid)
-        age = t - num((c or {}).get("at"))
+        age = age_of((c or {}).get("at"), t)
         if c and (age < LIVE_TTL or (fresh and age < FRESH_MIN)) and not c.get("failed"):
             return c["p"]
         try:
@@ -840,9 +858,14 @@ def live(fresh):
             return p
         except Exception as e:  # noqa: BLE001
             old = (c or {}).get("p") or (c or {}).get("last")
+            # An error from when the clock ran fast (a login "expired" by that clock) isn't a last good answer.
+            if old and in_future((c or {}).get("at"), t) and old.get("error") and not old.get("limits"):
+                old = None
             if old:
                 old = dict(old, stale=True, note="Couldn't read it now: " + why(e))
-            cache[pid] = {"at": t, "p": old, "failed": True, "last": (c or {}).get("p") or (c or {}).get("last")}
+                if num(old.get("readAt")) > t:
+                    old["readAt"] = int(t)
+            cache[pid] = {"at": t, "p": old, "failed": True, "last": old and ((c or {}).get("p") or (c or {}).get("last"))}
             if (c or {}).get("failed") and age < LIVE_TTL / 4 and c.get("p"):
                 return c["p"]
             return old if old else {"id": pid, "error": why(e)}
@@ -993,8 +1016,13 @@ def scan(full=True):
     tally = s.run()
     try:
         write_json(path, cache)
+        limits_path = os.path.join(CACHE, "codex-limits.json")
         if s.codex_limits:
-            write_json(os.path.join(CACHE, "codex-limits.json"), s.codex_limits)
+            write_json(limits_path, s.codex_limits)
+        else:
+            old = read_json(limits_path)
+            if isinstance(old, list) and old and in_future(old[0], now()):
+                os.remove(limits_path)
     except OSError:
         pass
     return tally, s.partial

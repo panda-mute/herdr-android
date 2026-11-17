@@ -2,6 +2,7 @@ package com.makefunstuff.herdr.push
 
 import com.makefunstuff.herdr.core.host.HostSession
 import com.makefunstuff.herdr.core.push.HerdrPush
+import com.makefunstuff.herdr.core.ssh.HostScript
 import com.makefunstuff.herdr.core.usage.HerdrUsage
 import com.makefunstuff.herdr.data.HostManager
 import com.makefunstuff.herdr.data.MachineStore
@@ -119,12 +120,14 @@ class PushHosts(
         // A subscription that still follows the old one-shot watches' agents is made again without them.
         if (m.sentTo == endpoint && m.version == HerdrPush.version && m.live == live && m.watching.isNullOrEmpty()) {
             val status = runCatching { HerdrPush.status(client.run("ensure"), subscriber(id)) }.getOrNull()
-            if (status != null && status.subscribed && !status.gone && status.version == HerdrPush.version) {
+            // A newer herdr-push there (another phone's newer build put it) is kept: copying ours would downgrade it.
+            if (status != null && status.subscribed && !status.gone && !HostScript.older(status.version, HerdrPush.version)) {
                 store.machine(id) { it.copy(problem = status.error?.let { e -> "Its last push didn't go through: $e" }) }
                 return
             }
         }
         if (!session.machine.allowHostScripts) return
+        // Each install keeps a newer script already there ([HostScript]): it copies over an older one only.
         client.install()
         // herdr-usage beside it: herdr-push reads the providers' limits with it, to warn near one.
         runCatching {

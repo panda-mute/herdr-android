@@ -55,7 +55,7 @@ What works there: agents in herdr-core (read through `herdr-core connect`, only 
 
 | Path | What |
 | --- | --- |
-| `~/.local/share/herdr-push/herdr-push` | the watcher (the app replaces it when the app carries a newer version) |
+| `~/.local/share/herdr-push/herdr-push` | the watcher (the app replaces it when the app carries a newer version, never with an older one) |
 | `~/.config/herdr-push/subscribers.json` | the subscriptions, one per phone and machine in the app (two machines in the app on this host, say two herdr sessions, are two): each one's push address, key and herdr session (mode 600) |
 | `~/.local/state/herdr-push/` | `state.json` (what it saw last, so a restart doesn't repeat itself), `journal.json` (the last week of what agents did, for the brief), `health.json` (the last hour of RAM, swap and CPU readings), `herdr-push.log`, `run.lock` |
 | `~/.config/systemd/user/herdr-push.service` | Linux with systemd: a user service, `Restart=always` |

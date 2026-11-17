@@ -4,6 +4,7 @@ import com.makefunstuff.herdr.core.api.AgentStatus
 import com.makefunstuff.herdr.core.api.SessionSnapshot
 import com.makefunstuff.herdr.core.ssh.HerdrCommands.quote
 import com.makefunstuff.herdr.core.ssh.HostPython
+import com.makefunstuff.herdr.core.ssh.HostScript
 import com.makefunstuff.herdr.core.ssh.MachineConnection
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.Json
@@ -37,10 +38,8 @@ object HerdrPush {
 
     val version: String by lazy { versionOf(script) }
 
-    /** Writes stdin to the machine as herdr-push, replacing an older one in one step. */
-    fun installCommand(): String = "sh -c " + quote(
-        "mkdir -p \"$DIR\" && cat > \"$FILE.new\" && chmod 755 \"$FILE.new\" && mv -f \"$FILE.new\" \"$FILE\"",
-    )
+    /** Writes stdin to the machine as herdr-push, replacing an older one in one step (never a newer one: [HostScript]). */
+    fun installCommand(): String = HostScript.installCommand(DIR, FILE, version)
 
     const val NO_PYTHON_EXIT = 127
 

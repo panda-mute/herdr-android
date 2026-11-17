@@ -1,6 +1,6 @@
 # herdr-logins
 
-Which agent CLIs are signed in on a machine, and signing them in or out there. Herdr for Android copies it there over SSH (as it first opens the machine's **Agent logins**) and runs it. Every login stays on the machine: what comes back is whether each CLI is signed in, how and until when, **never a token or a key**.
+Which agent CLIs are signed in on a machine, and signing them in or out there. Herdr for Android copies it there over SSH (as it first opens the machine's **Agent logins**, and again when it carries a newer version, never over a newer one) and runs it. Every login stays on the machine: what comes back is whether each CLI is signed in, how and until when, **never a token or a key**.
 
 It is one Python 3 file (3.6 or newer), standard library only.
 

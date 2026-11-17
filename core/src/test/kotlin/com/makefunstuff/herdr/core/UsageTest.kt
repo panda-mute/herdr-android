@@ -383,6 +383,135 @@ class UsageTest {
         }
     }
 
+    /** The clock ran fast for a while and was set right: what was cached then is stamped in the future. */
+    @Test
+    fun herdrUsageAsksAgainWhenItsCacheIsStampedInTheFuture() {
+        assumeTrue(python(), "python3 isn't installed")
+        val dir = Files.createTempDirectory("herdr-usage-clock").toFile()
+        val asked = ConcurrentHashMap<String, Int>()
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/api.anthropic.com/api/oauth/usage") { ex ->
+            asked.merge("claude", 1, Int::plus)
+            val bytes = """{"five_hour":{"utilization":82.0,"resets_at":"2026-10-18T08:59:59+00:00"}}""".toByteArray()
+            ex.sendResponseHeaders(200, bytes.size.toLong())
+            ex.responseBody.use { it.write(bytes) }
+        }
+        // Codex's usage API can't be asked here: its reading falls back on what its sessions wrote.
+        server.createContext("/chatgpt.com/backend-api/wham/usage") { ex ->
+            asked.merge("codex", 1, Int::plus)
+            ex.sendResponseHeaders(503, -1)
+            ex.close()
+        }
+        server.start()
+        try {
+            val t = System.currentTimeMillis() / 1000
+            fun write(path: String, text: String) = File(dir, path).apply { parentFile.mkdirs(); writeText(text) }
+            write(".claude/.credentials.json", """{"claudeAiOauth":{"accessToken":"tok","expiresAt":${(t + 86400) * 1000},"subscriptionType":"max"}}""")
+            fun usage(vararg args: String): UsageReport {
+                val pb = ProcessBuilder(listOf("python3", usageScript.path) + args).directory(dir)
+                pb.environment().putAll(
+                    mapOf(
+                        "HOME" to dir.path, "XDG_CACHE_HOME" to File(dir, "cache").path, "XDG_DATA_HOME" to File(dir, "data").path,
+                        "HERDR_USAGE_API" to "http://127.0.0.1:${server.address.port}",
+                    ),
+                )
+                listOf("ANTHROPIC_API_KEY", "ANTHROPIC_ADMIN_KEY", "DEEPSEEK_API_KEY", "OPENROUTER_API_KEY", "OPENCODE_API_KEY", "CLAUDE_CONFIG_DIR", "CODEX_HOME",
+                    "PI_CODING_AGENT_DIR", "HERDR_PROJECTS_DATA", "OPENCODE_GO_API_KEY", "HERDR_USAGE_TTL").forEach {
+                    pb.environment().remove(it)
+                }
+                val p = pb.redirectErrorStream(true).start()
+                val out = p.inputStream.readBytes().toString(Charsets.UTF_8)
+                assertTrue(p.waitFor(90, TimeUnit.SECONDS))
+                return UsageReader.parse(out)
+            }
+            fun limits(vararg args: String) = usage("limits", *args)
+            fun cache(at: Long, reading: String) = write("cache/herdr-usage/live.json", """{"claude":{"at":$at,"p":$reading}}""")
+            val expired = """{"id":"claude","name":"Claude Code","kind":"subscription","error":"Claude Code's login has expired","readAt":%d}"""
+
+            // Cached about two hours ahead of the clock: asked again, with or without --fresh, and kept under the real time.
+            for (args in listOf(emptyArray(), arrayOf("--fresh"))) {
+                asked.clear()
+                cache(t + 6500, expired.format(t + 6500))
+                val claude = limits(*args).providers.single { it.id == "claude" }
+                assertEquals(1, asked["claude"], "asked again (${args.joinToString()})")
+                assertEquals("", claude.error)
+                assertEquals(listOf(82.0), claude.limits.map { it.percent })
+                assertTrue(claude.readAt in t - 5..t + 60, "read at ${claude.readAt}, now $t")
+                assertFalse(File(dir, "cache/herdr-usage/live.json").readText().contains("expired"))
+            }
+
+            // That answer is within its four minutes: the provider isn't asked twice.
+            asked.clear()
+            assertEquals(listOf(82.0), limits().providers.single { it.id == "claude" }.limits.map { it.percent })
+            assertNull(asked["claude"])
+
+            // So is one written a moment ago, and one a few seconds ahead (two clocks never agree to the second).
+            for (at in listOf(t - 100, t + 30)) {
+                cache(at, """{"id":"claude","name":"Claude Code","kind":"subscription","readAt":$at,"limits":[{"id":"session","name":"5-hour session","percent":11.0}]}""")
+                assertEquals(listOf(11.0), limits().providers.single { it.id == "claude" }.limits.map { it.percent }, "cached at ${at - t}s")
+                assertNull(asked["claude"])
+            }
+
+            // Past its four minutes it is asked again, as before.
+            cache(t - 300, expired.format(t - 300))
+            assertEquals("", limits().providers.single { it.id == "claude" }.error)
+            assertEquals(1, asked["claude"])
+
+            // The provider can't be asked: the reading from the future is kept as the last one, marked older, never dated ahead.
+            File(dir, ".claude/.credentials.json").writeText("""{"claudeAiOauth":{"accessToken":"tok","expiresAt":${(t + 86400) * 1000}}}""")
+            server.removeContext("/api.anthropic.com/api/oauth/usage")
+            cache(t + 6500, """{"id":"claude","name":"Claude Code","kind":"subscription","readAt":${t + 6500},"limits":[{"id":"session","name":"5-hour session","percent":11.0}]}""")
+            val kept = limits().providers.single { it.id == "claude" }
+            assertTrue(kept.stale)
+            assertEquals(listOf(11.0), kept.limits.map { it.percent })
+            assertTrue(kept.readAt <= t + 60, "read at ${kept.readAt}, now $t")
+            // But not an error from then (a login "expired" by the fast clock): it says why it can't be read now.
+            cache(t + 6500, expired.format(t + 6500))
+            val unread = limits().providers.single { it.id == "claude" }
+            assertFalse(unread.error.contains("expired"), unread.error)
+            assertTrue(unread.error.isNotEmpty())
+            assertFalse(File(dir, "cache/herdr-usage/live.json").readText().contains("expired"))
+
+            // Codex's limits as its sessions wrote them stand in for its usage API, but not ones stamped in the future.
+            val jwt = "x." + Base64.getUrlEncoder().withoutPadding().encodeToString("""{"exp":${t + 86400}}""".toByteArray()) + ".y"
+            write(".codex/auth.json", """{"auth_mode":"chatgpt","tokens":{"access_token":"$jwt"}}""")
+            fun sessionLimits(at: Long) {
+                File(dir, "cache/herdr-usage/live.json").delete()
+                write("cache/herdr-usage/codex-limits.json", """[$at,{"primary":{"used_percent":40.0,"window_minutes":300,"resets_at":${t + 3600}}}]""")
+            }
+            sessionLimits(t - 600)
+            val codex = limits().providers.single { it.id == "codex" }
+            assertEquals(listOf(40.0), codex.limits.map { it.percent })
+            assertEquals(t - 600, codex.readAt)
+            sessionLimits(t + 6500)
+            val ahead = limits().providers.single { it.id == "codex" }
+            assertTrue(ahead.limits.isEmpty(), "${ahead.limits}")
+            assertTrue(ahead.error.isNotEmpty())
+
+            // Reading the sessions: one written while the clock ran fast doesn't outrank the one written since.
+            fun session(name: String, at: Long, percent: Double) = write(
+                ".codex/sessions/2026/11/14/rollout-$name.jsonl",
+                """{"timestamp":"${Instant.ofEpochSecond(at)}","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"cached_input_tokens":0,"output_tokens":200,"total_tokens":1200}},"rate_limits":{"primary":{"used_percent":$percent,"window_minutes":300,"resets_at":${t + 3600}}}}}""" + "\n",
+            )
+            session("fast-clock", t + 6500, 90.0)
+            session("since", t - 600, 40.0)
+            File(dir, "cache/herdr-usage").deleteRecursively()
+            val read = usage("read").providers.single { it.id == "codex" }
+            assertEquals(listOf(40.0), read.limits.map { it.percent })
+            assertEquals(t - 600, read.readAt)
+            assertTrue(File(dir, "cache/herdr-usage/codex-limits.json").readText().startsWith("[${t - 600}"))
+            // With only the fast clock's session left, its limits aren't kept on disk.
+            File(dir, ".codex/sessions/2026/11/14/rollout-since.jsonl").delete()
+            File(dir, "cache/herdr-usage/live.json").delete()
+            write("cache/herdr-usage/codex-limits.json", """[${t + 6500},{"primary":{"used_percent":90.0,"window_minutes":300}}]""")
+            assertTrue(usage("read").providers.single { it.id == "codex" }.limits.isEmpty())
+            assertFalse(File(dir, "cache/herdr-usage/codex-limits.json").exists())
+        } finally {
+            server.stop(0)
+            dir.deleteRecursively()
+        }
+    }
+
     // ---- herdr-push's warnings -----------------------------------------------------------------------
 
     @Test

@@ -1,6 +1,6 @@
 # herdr-app-build
 
-Builds the phone's update of Herdr for Android on the machine picked in **Settings › Change the app** (see the main README's "Changing the app from the phone"). One Python 3 file (3.6 or newer), standard library only. The app copies it to `~/.local/share/herdr-android/herdr-app-build` over SSH and runs `check` and `state` there; `build` is run by the herdr-android space's Assistant in its own Herdr terminal, because herdr-secret hands the release key only to an agent there.
+Builds the phone's update of Herdr for Android on the machine picked in **Settings › Change the app** (see the main README's "Changing the app from the phone"). One Python 3 file (3.6 or newer), standard library only. The app copies it to `~/.local/share/herdr-android/herdr-app-build` over SSH (over an older version only, never a newer one) and runs `check` and `state` there; `build` is run by the herdr-android space's Assistant in its own Herdr terminal, because herdr-secret hands the release key only to an agent there.
 
 ```sh
 P=~/.local/share/herdr-android/herdr-app-build

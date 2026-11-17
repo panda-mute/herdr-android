@@ -4,6 +4,7 @@ import com.makefunstuff.herdr.core.ssh.CommandResult
 import com.makefunstuff.herdr.core.ssh.Duplex
 import com.makefunstuff.herdr.core.ssh.HerdrCommands.quote
 import com.makefunstuff.herdr.core.ssh.HostPython
+import com.makefunstuff.herdr.core.ssh.HostScript
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -31,10 +32,8 @@ object HerdrLogins {
             ?: error("herdr-logins isn't bundled")
     }
 
-    /** Writes stdin to the machine as herdr-logins, replacing an older one in one step. */
-    fun installCommand(): String = "sh -c " + quote(
-        "mkdir -p \"$DIR\" && cat > \"$FILE.new\" && chmod 755 \"$FILE.new\" && mv -f \"$FILE.new\" \"$FILE\"",
-    )
+    /** Writes stdin to the machine as herdr-logins, replacing an older one in one step (never a newer one). */
+    fun installCommand(): String = HostScript.installCommand(DIR, FILE, VERSION)
 
     const val MISSING_EXIT = 126
     const val NO_PYTHON_EXIT = 127
@@ -79,9 +78,10 @@ object HerdrLogins {
         suspend fun begin(cli: String, action: LoginAction, provider: String? = null, credential: String? = null): LoginRun =
             LoginRun(start(command(*listOfNotNull("run", cli, action.key, provider, credential?.takeIf { provider != null }).toTypedArray())))
 
+        /** The machine's copy is older than the app's; a newer one is used as it is ([HostScript]). */
         private fun outdated(r: CommandResult): Boolean {
-            val v = (LoginsReader.answer(r.stdout)?.get("version") as? JsonPrimitive)?.content ?: return false
-            return v != VERSION
+            val answer = LoginsReader.answer(r.stdout) ?: return false
+            return HostScript.older((answer["version"] as? JsonPrimitive)?.content, VERSION)
         }
 
         suspend fun install() {

@@ -108,7 +108,7 @@ UI changes are checked with the [screen previews](tools/ui-preview/README.md): t
 - `core/`: plain Kotlin: SSH, the herdr API, herdr-core ([`docs/HERDR_CORE.md`](docs/HERDR_CORE.md)), Shepherdr and simple-herdr-projects, transcripts, the terminal emulator, code and pull requests.
 - `app/`: the Android app. Its look is in `ui/theme` and `ui/design` ([`docs/DESIGN.md`](docs/DESIGN.md)).
 - `tools/ui-preview/`: the screen previews.
-- `host/`: small Python scripts the app copies to a machine: [`herdr-push`](host/herdr-push/README.md) (notifications, pairing), [`herdr-usage`](host/herdr-usage/README.md) (AI usage), [`herdr-logins`](host/herdr-logins/README.md) (agent logins) and [`herdr-app-build`](host/herdr-app-build/README.md) (builds the app's updates).
+- `host/`: small Python scripts the app copies to a machine: [`herdr-push`](host/herdr-push/README.md) (notifications, pairing), [`herdr-usage`](host/herdr-usage/README.md) (AI usage), [`herdr-logins`](host/herdr-logins/README.md) (agent logins) and [`herdr-app-build`](host/herdr-app-build/README.md) (builds the app's updates). The app copies one over an older version only, never over a newer one: a phone on an older build leaves a newer script as it is and uses it.
 
 ## Contributing
 

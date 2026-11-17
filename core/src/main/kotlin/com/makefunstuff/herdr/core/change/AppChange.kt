@@ -7,6 +7,7 @@ import com.makefunstuff.herdr.core.host.Attachments
 import com.makefunstuff.herdr.core.ssh.CommandResult
 import com.makefunstuff.herdr.core.ssh.HerdrCommands.quote
 import com.makefunstuff.herdr.core.ssh.HostPython
+import com.makefunstuff.herdr.core.ssh.HostScript
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -183,7 +184,7 @@ private fun JsonObject.str(key: String): String? = (this[key] as? JsonPrimitive)
  * its `check` and `state`; `build` runs in the Assistant's terminal ([AppChange.buildMessage]).
  */
 object HerdrAppBuild {
-    /** The script's `# version:` line; the app copies its own over one that says otherwise. */
+    /** The script's `# version:` line; the app copies its own over an older one, never a newer one ([HostScript]). */
     const val VERSION = "1"
 
     const val DIR = "\$HOME/.local/share/herdr-android"
@@ -195,10 +196,8 @@ object HerdrAppBuild {
             ?: error("herdr-app-build isn't bundled")
     }
 
-    /** Writes stdin to the machine as herdr-app-build, replacing an older one in one step. */
-    fun installCommand(): String = "sh -c " + quote(
-        "mkdir -p \"$DIR\" && cat > \"$FILE.new\" && chmod 755 \"$FILE.new\" && mv -f \"$FILE.new\" \"$FILE\"",
-    )
+    /** Writes stdin to the machine as herdr-app-build, replacing an older one in one step (never a newer one). */
+    fun installCommand(): String = HostScript.installCommand(DIR, FILE, VERSION)
 
     const val MISSING_EXIT = 126
     const val NO_PYTHON_EXIT = 127
@@ -247,9 +246,10 @@ object HerdrAppBuild {
             return answer(r.stdout) ?: throw IOException(problem(r.stderr, "herdr-app-build gave no answer on $label"))
         }
 
+        /** The machine's copy is older than the app's; a newer one is used as it is ([HostScript]). */
         private fun outdated(r: CommandResult): Boolean {
-            val v = (answer(r.stdout)?.get("version") as? JsonPrimitive)?.contentOrNull ?: return false
-            return v != VERSION
+            val answer = answer(r.stdout) ?: return false
+            return HostScript.older((answer["version"] as? JsonPrimitive)?.contentOrNull, VERSION)
         }
 
         private fun problem(stderr: String, fallback: String) = stderr.trim().lines().lastOrNull { it.isNotBlank() }?.removePrefix("herdr-app-build: ") ?: fallback
