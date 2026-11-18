@@ -9,6 +9,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -28,6 +29,26 @@ import java.util.Base64
 
 /** A decoded `terminal.frame` record. */
 data class TerminalFrame(val seq: Long, val width: Int, val height: Int, val full: Boolean, val bytes: ByteArray)
+
+internal suspend fun writeObserverInput(input: ReceiveChannel<ByteArray>, type: suspend (ByteArray) -> Unit) {
+    var pending: ByteArray? = null
+    while (true) {
+        val first = pending ?: input.receiveCatching().getOrNull() ?: break
+        pending = null
+        var repeats = 0
+        if (first.size == 1 && first[0] == 0x7f.toByte()) {
+            while (repeats < 255) {
+                val next = input.tryReceive().getOrNull() ?: break
+                if (!next.contentEquals(first)) {
+                    pending = next
+                    break
+                }
+                repeats++
+            }
+        }
+        type(if (repeats == 0) first else ByteArray(repeats + 1) { first[0] })
+    }
+}
 
 object FrameCodec {
     /** Parses one line of `herdr terminal session control` output. Returns null for other records. */
@@ -127,7 +148,7 @@ class TerminalStream(
                     // Typed bytes, in order, through the API: the observer's stream takes no input.
                     val type = typeInto!!
                     try {
-                        for (bytes in typed) runCatching { type(bytes) }
+                        writeObserverInput(typed) { bytes -> runCatching { type(bytes) } }
                     } catch (_: Throwable) {
                     }
                 } else scope.launch(Dispatchers.IO) {

@@ -3,12 +3,32 @@ package com.makefunstuff.herdr.core
 import com.makefunstuff.herdr.core.ssh.HerdrCommands
 import com.makefunstuff.herdr.core.ssh.Machine
 import com.makefunstuff.herdr.core.terminal.PhoneHistory
+import com.makefunstuff.herdr.core.terminal.writeObserverInput
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class PhoneHistoryTest {
+    @Test
+    fun `backspaces queued during a host reply travel together before later typing`() = runBlocking {
+        val input = Channel<ByteArray>(Channel.UNLIMITED)
+        val writes = mutableListOf<String>()
+        input.trySend(byteArrayOf(127))
+        writeObserverInput(input) { bytes ->
+            writes += bytes.decodeToString()
+            if (writes.size == 1) {
+                repeat(18) { input.trySend(byteArrayOf(127)) }
+                input.trySend("猫".encodeToByteArray())
+                input.trySend(byteArrayOf(127))
+                input.close()
+            }
+        }
+        assertEquals(listOf("\u007f", "\u007f".repeat(18), "猫", "\u007f"), writes)
+    }
+
     @Test
     fun `history is as tall as its wrapped lines, last line at the bottom`() {
         val emu = PhoneHistory.build("one\n\u001B[31mtwo\u001B[0m\n" + "x".repeat(25) + "\n\n\n", cols = 10)

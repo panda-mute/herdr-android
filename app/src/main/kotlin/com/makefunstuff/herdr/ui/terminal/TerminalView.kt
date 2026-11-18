@@ -374,11 +374,19 @@ class TerminalView(context: Context) : View(context) {
                 if (start < 0) return false
                 val left = min(beforeLength, if (codePoints) Character.codePointCount(buffer, 0, start) else start)
                 val right = min(afterLength, if (codePoints) Character.codePointCount(buffer, end, buffer.length) else buffer.length - end)
-                buffer.delete(end, if (codePoints) Character.offsetByCodePoints(buffer, end, right) else end + right)
-                buffer.delete(if (codePoints) Character.offsetByCodePoints(buffer, start, -left) else start - left, start)
-                publish()
-                repeat(beforeLength - left) { onInput(Keys.BACKSPACE) }
-                repeat(afterLength - right) { onInput("\u001b[3~") }
+                if (right > 0) buffer.delete(end, if (codePoints) Character.offsetByCodePoints(buffer, end, right) else end + right)
+                if (left > 0) buffer.delete(if (codePoints) Character.offsetByCodePoints(buffer, start, -left) else start - left, start)
+                if (left + right > 0) publish()
+                fun sendRepeated(key: String, count: Int) {
+                    var remaining = count
+                    while (remaining > 0) {
+                        val chunk = min(remaining, 256)
+                        onInput(key.repeat(chunk))
+                        remaining -= chunk
+                    }
+                }
+                sendRepeated(Keys.BACKSPACE, beforeLength - left)
+                sendRepeated("\u001b[3~", afterLength - right)
                 return true
             }
 
