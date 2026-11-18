@@ -6,6 +6,7 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Typeface
 import android.text.InputType
+import android.text.Selection
 import android.view.GestureDetector
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -313,40 +314,83 @@ class TerminalView(context: Context) : View(context) {
         // keyboards to English only.
         outAttrs.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
         outAttrs.imeOptions = EditorInfo.IME_FLAG_NO_EXTRACT_UI or EditorInfo.IME_FLAG_NO_FULLSCREEN or EditorInfo.IME_ACTION_NONE
-        setComposing("")
-        return object : BaseInputConnection(this, false) {
+        outAttrs.initialSelStart = composing.length
+        outAttrs.initialSelEnd = composing.length
+        val generation = ++imeGeneration
+        return object : BaseInputConnection(this, true) {
+            init {
+                if (composing.isNotEmpty()) super.setComposingText(composing, 1)
+            }
+
+            private fun publish() {
+                val buffer = editable ?: return
+                setComposing(buffer.toString())
+                val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+                imm.updateSelection(this@TerminalView, Selection.getSelectionStart(buffer), Selection.getSelectionEnd(buffer),
+                    getComposingSpanStart(buffer), getComposingSpanEnd(buffer))
+            }
+
+            private fun flushText() {
+                val buffer = editable ?: return
+                val text = buffer.toString()
+                buffer.clear()
+                publish()
+                typeText(text)
+            }
+
             // Text the keyboard is still composing (pinyin before it becomes 你好) stays on the
             // phone, drawn at the cursor; only what it commits goes to the pane.
             override fun commitText(text: CharSequence, newCursorPosition: Int): Boolean {
-                setComposing("")
-                typeText(text.toString())
+                if (generation != imeGeneration) return false
+                super.commitText(text, newCursorPosition)
+                flushText()
                 return true
             }
 
             override fun setComposingText(text: CharSequence, newCursorPosition: Int): Boolean {
-                setComposing(text.toString())
+                if (generation != imeGeneration) return false
+                super.setComposingText(text, newCursorPosition)
+                publish()
                 return true
             }
 
             override fun finishComposingText(): Boolean {
+                if (generation != imeGeneration) return true
                 // The keyboard keeps what it composed as it is.
-                val text = composing
-                setComposing("")
-                typeText(text)
+                super.finishComposingText()
+                flushText()
                 return true
             }
 
-            override fun deleteSurroundingText(beforeLength: Int, afterLength: Int): Boolean {
-                if (composing.isNotEmpty()) {
-                    setComposing(composing.dropLast(beforeLength))
-                    return true
-                }
-                repeat(max(1, beforeLength)) { onInput(Keys.BACKSPACE) }
+            override fun deleteSurroundingText(beforeLength: Int, afterLength: Int) = delete(beforeLength, afterLength, false)
+
+            override fun deleteSurroundingTextInCodePoints(beforeLength: Int, afterLength: Int) = delete(beforeLength, afterLength, true)
+
+            private fun delete(beforeLength: Int, afterLength: Int, codePoints: Boolean): Boolean {
+                if (generation != imeGeneration || beforeLength < 0 || afterLength < 0) return false
+                val buffer = editable ?: return false
+                val start = min(Selection.getSelectionStart(buffer), Selection.getSelectionEnd(buffer))
+                val end = max(Selection.getSelectionStart(buffer), Selection.getSelectionEnd(buffer))
+                if (start < 0) return false
+                val left = min(beforeLength, if (codePoints) Character.codePointCount(buffer, 0, start) else start)
+                val right = min(afterLength, if (codePoints) Character.codePointCount(buffer, end, buffer.length) else buffer.length - end)
+                buffer.delete(end, if (codePoints) Character.offsetByCodePoints(buffer, end, right) else end + right)
+                buffer.delete(if (codePoints) Character.offsetByCodePoints(buffer, start, -left) else start - left, start)
+                publish()
+                repeat(beforeLength - left) { onInput(Keys.BACKSPACE) }
+                repeat(afterLength - right) { onInput("\u001b[3~") }
                 return true
             }
 
             override fun sendKeyEvent(event: KeyEvent): Boolean {
-                if (event.action == KeyEvent.ACTION_DOWN) onKeyDown(event.keyCode, event)
+                if (generation != imeGeneration) return false
+                if (event.action == KeyEvent.ACTION_DOWN) {
+                    if (event.keyCode == KeyEvent.KEYCODE_DEL && composing.isNotEmpty()) {
+                        return deleteSurroundingTextInCodePoints(1, 0)
+                    }
+                    if (composing.isNotEmpty()) finishComposingText()
+                    onKeyDown(event.keyCode, event)
+                }
                 return true
             }
         }
@@ -354,6 +398,7 @@ class TerminalView(context: Context) : View(context) {
 
     /** What the keyboard is composing, not yet sent; drawn over the grid at the cursor. */
     private var composing = ""
+    private var imeGeneration = 0L
 
     private fun setComposing(text: String) {
         if (text == composing) return
