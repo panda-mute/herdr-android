@@ -2,7 +2,8 @@ package com.makefunstuff.herdr.ui.agents
 
 import androidx.compose.ui.graphics.RectangleShape
 
-import androidx.compose.animation.animateContentSize
+import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.delay
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -105,7 +106,7 @@ fun PromptCard(
         // Framed in the blocked red: the chat's status line over it already says it needs you.
         border = BorderStroke(1.dp, c.red),
         shape = shape,
-        modifier = modifier.fillMaxWidth().animateContentSize(),
+        modifier = modifier.fillMaxWidth(),
     ) {
         Column(Modifier.padding(Space.l), verticalArrangement = Arrangement.spacedBy(Space.s)) {
             val tag = remember(prompt) { prompt?.let { PromptTag.of(it) } }
@@ -124,7 +125,10 @@ fun PromptCard(
                 }
             }
             if (prompt == null) {
-                UnreadMenu(screen, onPress)
+                var showKeys by remember { mutableStateOf(false) }
+                LaunchedEffect(Unit) { delay(350); showKeys = true }
+                if (showKeys) UnreadMenu(screen, onPress)
+                else Text("Reading choices…", style = MaterialTheme.typography.bodyMedium, color = c.muted)
                 return@Column
             }
             if (prompt.steps.isNotEmpty()) Steps(prompt.steps)
@@ -218,42 +222,30 @@ private fun Details(lines: List<String>) {
     }
 }
 
-/**
- * Yes first and filled, the permanent allow beside it (with the fingerprint when that asks), then
- * a row of the rest: "No, tell it…", a plain no, any other option, and the footer's keys (Amend,
- * Cancel). Each is a 48dp button; long labels take two lines.
- */
+/** Keep the terminal's numbering and order so each tap maps to the choice shown there. */
 @Composable
 private fun Approval(p: BlockedPrompt, answering: Boolean, alwaysGuarded: Boolean, onPress: (PromptPress) -> Unit) {
-    val yes = p.approveIndex!!
-    val always = p.options.indices.filter { it != yes && p.role(it) == OptionRole.Always }
-    val rest = p.options.indices.filter { it != yes && it !in always }
-    val keys = p.hintKeys
     Column(Modifier.padding(top = Space.xs), verticalArrangement = Arrangement.spacedBy(Space.s)) {
-        ButtonRow {
-            PrimaryButton(onClick = { onPress(PromptPress.Option(yes)) }, modifier = Modifier.weight(1f), enabled = !answering, contentPadding = Tight) {
-                Icon(HerdrIcons.Check, null, Modifier.size(16.dp)); Label(p.shortLabel(yes))
-            }
-            always.forEach { i ->
-                SecondaryButton(
-                    onClick = { onPress(PromptPress.Option(i)) }, enabled = !answering, contentPadding = Tight,
-                    modifier = Modifier.weight(1f).semantics { if (alwaysGuarded) stateDescription = "Asks for your fingerprint" },
-                ) {
-                    Icon(if (alwaysGuarded) HerdrIcons.FingerprintPattern else HerdrIcons.ShieldCheck, null, Modifier.size(16.dp)); Label(p.shortLabel(i))
+        p.options.indices.chunked(2).forEach { indices ->
+            ButtonRow {
+                indices.forEach { i ->
+                    val role = p.role(i)
+                    val label = p.shortLabel(i)
+                    val number = p.options[i].number
+                    val content: @Composable RowScope.() -> Unit = {
+                        if (number != null) Text("$number.", style = MaterialTheme.typography.labelMedium)
+                        if (role == OptionRole.Always && alwaysGuarded) Icon(HerdrIcons.FingerprintPattern, null, Modifier.size(16.dp))
+                        Label(label)
+                    }
+                    val click = { onPress(if (role == OptionRole.TellInstead) PromptPress.Tell(i) else PromptPress.Option(i)) }
+                    if (i == p.approveIndex) PrimaryButton(click, Modifier.weight(1f), !answering, Tight, content)
+                    else SecondaryButton(click, Modifier.weight(1f).semantics {
+                        if (role == OptionRole.Always && alwaysGuarded) stateDescription = "Asks for your fingerprint"
+                    }, !answering, Tight, content)
                 }
             }
         }
-        val others = buildList<@Composable RowScope.() -> Unit> {
-            rest.forEach { i ->
-                when (p.role(i)) {
-                    OptionRole.TellInstead -> add { Choice(p.shortLabel(i), HerdrIcons.Reply, answering) { onPress(PromptPress.Tell(i)) } }
-                    OptionRole.No -> add { Choice(p.shortLabel(i), HerdrIcons.CircleX, answering) { onPress(PromptPress.Option(i)) } }
-                    else -> add { Choice(p.shortLabel(i), null, answering) { onPress(PromptPress.Option(i)) } }
-                }
-            }
-            keys.forEach { k -> add { KeyChoice(k, answering, onPress) } }
-        }
-        others.chunked(3).forEach { row -> ButtonRow { row.forEach { it() } } }
+        p.hintKeys.chunked(3).forEach { keys -> ButtonRow { keys.forEach { KeyChoice(it, answering, onPress) } } }
     }
 }
 

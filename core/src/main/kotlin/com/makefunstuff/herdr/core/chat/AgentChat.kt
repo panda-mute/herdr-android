@@ -17,9 +17,11 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * The conversation with one agent, kept live while a chat screen is open.
@@ -253,15 +255,20 @@ class AgentChat(private val host: HostSession, val paneId: String, private val s
             } else if (_state.value.prompt != null) {
                 _state.update { it.copy(prompt = null) }
             }
-            delay(
-                when {
+            val interval = when {
                     blocked -> 1_200L
                     source == Source.Screen && status == AgentStatus.Working -> 1_500L
                     streams -> 1_000L
                     source == Source.Screen -> 3_000L
                     else -> 700L
-                },
-            )
+                }
+            withTimeoutOrNull(interval) {
+                host.state.first { state ->
+                    val view = state.view
+                    val next = view?.agents?.firstOrNull { it.paneId == paneId }?.agentStatus ?: view?.pane(paneId)?.agentStatus
+                    (next == AgentStatus.Blocked) != blocked
+                }
+            }
         }
     }
 }
