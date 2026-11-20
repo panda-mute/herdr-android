@@ -239,8 +239,8 @@ class FakeMachine(
                     out.flush()
                 }
             }
-            w.containsAll(listOf("terminal", "session", "control")) -> stream { _, out ->
-                val pane = w[w.indexOf("control") + 1]
+            w.containsAll(listOf("terminal", "session")) && ("control" in w || "observe" in w) -> stream { _, out ->
+                val pane = w[w.indexOf("session") + 2]
                 val cols = w.getOrNull(w.indexOf("--cols") + 1)?.toIntOrNull() ?: 80
                 val rows = w.getOrNull(w.indexOf("--rows") + 1)?.toIntOrNull() ?: 24
                 val screen = "\u001b[H\u001b[2J" + screens[pane].orEmpty().replace("\n", "\r\n")

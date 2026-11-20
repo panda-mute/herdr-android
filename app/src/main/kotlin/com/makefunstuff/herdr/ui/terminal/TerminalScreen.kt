@@ -155,7 +155,8 @@ fun TerminalScreen(nav: NavController, machineId: String, paneId: String) {
     val sizes by container.textSizes.state.collectAsStateWithLifecycle()
     // The pane is resized to fit the phone; "Desktop size" only watches it (the computer keeps its
     // size and nothing is taken over) and pans instead.
-    var keepHost by remember(paneId) { mutableStateOf(false) }
+    var desktopOverride by remember(machineId, paneId) { mutableStateOf<Boolean?>(null) }
+    val keepHost = desktopOverride ?: (core == null && (pane == null || pane.agent.equals("codex", ignoreCase = true)))
     // Swipes scroll the phone's own copy of the history ([PhoneHistory]), not the pane: herdr's
     // viewport is shared, and a full-screen agent scrolls its own view, so the computer would scroll
     // along. "Scroll on the computer" sends them to the pane as before.
@@ -188,14 +189,14 @@ fun TerminalScreen(nav: NavController, machineId: String, paneId: String) {
     val searchFocus = remember { FocusRequester() }
 
     val keep = keepHost
-    val ready = (keep && hostSize != null) || grid != null
-    LaunchedEffect(generation, ready, keep) {
+    val ready = if (keep) pane != null || hostSize != null else grid != null
+    LaunchedEffect(machineId, paneId, generation, ready, keep) {
         if (!ready) return@LaunchedEffect
         var retryAttempt = 0
         while (true) {
             val opened = runCatching {
                 val conn = session.awaitConnection(timeoutMs = 30_000)
-                val (cols, rows) = grid ?: (80 to 24)
+                val (cols, rows) = (if (keep) hostSize else grid) ?: (80 to 24)
                 val live: LiveTerminal = if (core != null) HcTerminalStream(session.awaitHerdrCore(30_000, paneId), core, cols, rows, container.scope)
                 else TerminalStream(
                     conn, session.state.value.herdrMachine, paneId, cols, rows, container.scope,
@@ -496,7 +497,7 @@ fun TerminalScreen(nav: NavController, machineId: String, paneId: String) {
                     MenuRow("Edit key bar…", HerdrIcons.Keyboard, { menu = false; editKeys = true })
                     MenuRow(if (bar.keepScreenOn) "Let the screen sleep" else "Keep screen on", HerdrIcons.Sun, { menu = false; container.keyBar.setKeepScreenOn(!bar.keepScreenOn) })
                     // herdr-core's size is the last active viewer's, the phone's own once it attached: no desktop size to keep.
-                    if (core == null) MenuRow(if (keepHost) "Fit to phone" else "Desktop size", if (keepHost) HerdrIcons.Smartphone else HerdrIcons.Monitor, { menu = false; keepHost = !keepHost })
+                    if (core == null) MenuRow(if (keepHost) "Fit to phone" else "Desktop size", if (keepHost) HerdrIcons.Smartphone else HerdrIcons.Monitor, { menu = false; desktopOverride = !keepHost })
                     if (core == null) MenuRow(
                         if (scrollHost) "Scroll on this phone" else "Scroll on the computer",
                         if (scrollHost) HerdrIcons.Smartphone else HerdrIcons.Monitor,

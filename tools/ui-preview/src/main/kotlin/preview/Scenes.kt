@@ -951,6 +951,7 @@ fun scenes(): List<Scene> = listOf(
 
     // A pane as a live terminal.
     Scene("terminal", route = Routes.terminal(DEVBOX, APP_SHELL)),
+    Scene("terminal-codex", route = Routes.terminal(DEVBOX, Demo.SITE_AGENT)),
     // A swipe back: the phone's own copy of the history, the computer's window left where it is.
     Scene("terminal-history", route = Routes.terminal(DEVBOX, APP_SHELL), actions = { scrollBack() }),
     // Its ⋯: find, select, copy, the key bar, keep the screen on, reconnect.
