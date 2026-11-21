@@ -1,0 +1,1 @@
+{"timestamp":"2026-10-16T09:14:09.000Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"AgentMessage","id":"table","content":[{"type":"text","text":"播放列表的分组如下：\n\n| 平台 | 聚合 M3U/TXT 的分组名 | 单平台 M3U/TXT 的默认分组 |\n| --- | --- | --- |\n| 澳门莲花卫视（lotustv） | 澳门莲花卫视 | 澳门 |\n| HOY TV（hoytv） | HOY TV | 香港 |\n\nM3U 里对应 `group-title`。"}]}}}

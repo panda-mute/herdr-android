@@ -499,6 +499,9 @@ fun scenes(): List<Scene> = listOf(
     Scene("prompt-question", route = Routes.agent(DEVBOX, API_AGENT), setup = { host(DEVBOX).screens += API_AGENT to Demo.resource("screen-claude-question.txt") }),
     Scene("prompt-checks", route = Routes.agent(DEVBOX, API_AGENT), setup = { host(DEVBOX).screens += API_AGENT to Demo.resource("screen-claude-checks.txt") }),
     Scene("chat-codex", route = Routes.agent(DEVBOX, SITE_AGENT)),
+    Scene("chat-markdown-table", route = Routes.agent(DEVBOX, SITE_AGENT), setup = {
+        host(DEVBOX).transcripts += Demo.SITE_SESSION to Demo.resource("codex-table.jsonl")
+    }),
     // Back from the lock screen with a long model name: while it reconnects, "Not connected" keeps to one line.
     Scene("chat-reconnecting", route = Routes.agent(DEVBOX, SITE_AGENT), widthDp = 360, heightDp = 780, setup = {
         host(DEVBOX).transcripts = host(DEVBOX).transcripts.mapValues { it.value.replace("\"gpt-5.5\"", "\"remote-magpie/zhishu/gpt-6.1-sol\"") }

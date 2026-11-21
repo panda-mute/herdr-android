@@ -12,7 +12,7 @@ import com.makefunstuff.herdr.ui.theme.Herdr
 import com.makefunstuff.herdr.ui.theme.Radius
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.TextButton
 import androidx.compose.ui.Alignment
@@ -158,22 +158,27 @@ fun CodeBlock(text: String, modifier: Modifier = Modifier, maxLines: Int = Int.M
 private fun TableBlock(rows: List<List<String>>) {
     val columns = rows.maxOfOrNull { it.size } ?: return
     val line = Herdr.colors.line
-    Column(
-        Modifier.horizontalScroll(rememberScrollState())
-            .border(1.dp, line, RectangleShape).clip(RectangleShape),
-    ) {
-        rows.forEachIndexed { r, row ->
-            if (r > 0) HorizontalDivider(color = line)
-            Row(Modifier.height(IntrinsicSize.Min).then(if (r == 0) Modifier.background(Herdr.colors.card) else Modifier)) {
-                for (c in 0 until columns) {
-                    if (c > 0) Box(Modifier.width(1.dp).fillMaxHeight().background(line))
-                    Text(
-                        row.getOrNull(c).orEmpty(),
-                        style = MaterialTheme.typography.bodySmall,
-                        fontWeight = if (r == 0) FontWeight.SemiBold else null,
-                        color = if (r == 0) Herdr.colors.strong else Color.Unspecified,
-                        modifier = Modifier.widthIn(min = 56.dp, max = 220.dp).padding(horizontal = 10.dp, vertical = 6.dp),
-                    )
+    if (columns == 0) return
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val cellWidth = ((maxWidth - (columns - 1).dp) / columns).coerceIn(96.dp, 220.dp)
+        Column(
+            Modifier.horizontalScroll(rememberScrollState())
+                .width(cellWidth * columns + (columns - 1).dp)
+                .border(1.dp, line, RectangleShape).clip(RectangleShape),
+        ) {
+            rows.forEachIndexed { r, row ->
+                if (r > 0) HorizontalDivider(color = line)
+                Row(Modifier.height(IntrinsicSize.Min).then(if (r == 0) Modifier.background(Herdr.colors.card) else Modifier)) {
+                    for (c in 0 until columns) {
+                        if (c > 0) Box(Modifier.width(1.dp).fillMaxHeight().background(line))
+                        Text(
+                            row.getOrNull(c).orEmpty(),
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = if (r == 0) FontWeight.SemiBold else null,
+                            color = if (r == 0) Herdr.colors.strong else Color.Unspecified,
+                            modifier = Modifier.width(cellWidth).padding(horizontal = 10.dp, vertical = 6.dp),
+                        )
+                    }
                 }
             }
         }
