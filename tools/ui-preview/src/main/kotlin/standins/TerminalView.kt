@@ -104,6 +104,7 @@ class TerminalView(context: Context) : View(context) {
 
     /** Shows the grid's last line when it is taller than the view (the phone's own history). */
     private var atBottom = false
+    fun shiftPanByRows(rows: Int) { invalidate() }
     fun panToBottom() { atBottom = true; invalidate() }
 
     fun clearSelection() {

@@ -11,6 +11,18 @@ package com.makefunstuff.herdr.core.terminal
 object PhoneHistory {
     /** Enough rows for anything a phone screen would scroll through. */
     const val LINES = 2000
+    const val FIRST_PAGE = 256
+
+    /** Freeze the newer end at the original snapshot. Ambiguous/repainted text isn't an anchor. */
+    fun extend(previous: String, recent: String): String? {
+        val old = previous.trimEnd('\n', '\r')
+        if (old.isBlank()) return null
+        val text = "\n" + recent.trimEnd('\n', '\r') + "\n"
+        val needle = "\n$old\n"
+        val index = text.indexOf(needle)
+        if (index <= 0 || text.indexOf(needle, index + 1) >= 0) return null
+        return text.substring(1, index + needle.length - 1)
+    }
 
     /**
      * An emulator [cols] wide and as tall as [ansiText] needs once wrapped, with the text in it.

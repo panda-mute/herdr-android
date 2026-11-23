@@ -28,6 +28,16 @@ class ChatRowsTest {
     private fun rows(turns: List<ChatTurn>, live: ChatRow.Live? = null, opened: Map<String, Boolean> = emptyMap(), thinking: String? = null) =
         chatRows(turns, steps, live, opened, now = 200_000, thinking = thinking) { "t$it" }
 
+    @Test fun changesOpenWithoutOpeningTheToolsAndOnlyIncludeCompletedEdits() {
+        val diff = com.makefunstuff.herdr.core.code.UnifiedDiff.parse("diff --git a/file b/file\n--- a/file\n+++ b/file\n@@ -1 +1 @@\n-old\n+new").single()
+        val done = ChatItem.Tool("edit", "Edit", "file", state = ToolState.Done, diffs = listOf(diff))
+        val turn = turn("u", 1, 2).copy(work = listOf(done, done, done.copy(id = "running", state = ToolState.Running), done.copy(id = "failed", state = ToolState.Failed)))
+        val r = rows(listOf(turn), opened = mapOf("changes/u" to true))
+        assertEquals(listOf(diff), r.filterIsInstance<ChatRow.Changes>().single().diffs)
+        assertEquals(diff, r.filterIsInstance<ChatRow.Diff>().single().diff)
+        assertTrue(r.none { it is ChatRow.Tools })
+    }
+
     @Test fun aSettledTurnFoldsItsWorkAndKeepsItsAnswerOut() {
         val r = rows(listOf(turn("u1", 1_000, 157_000, failed = 1)))
         assertEquals(listOf("u1", "head/u1", "u1/a"), r.map { it.key })

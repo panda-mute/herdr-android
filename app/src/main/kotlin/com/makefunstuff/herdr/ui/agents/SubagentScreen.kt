@@ -90,7 +90,7 @@ fun SubagentScreen(nav: NavController, machineId: String, paneId: String, agentI
                         modifier = Modifier.fillMaxSize(),
                     ) {
                         items(rows.asReversed(), key = { it.key }) { row ->
-                            ChatRowView(row, onToggle = { head -> toggled[head.turn] = !head.open }, onThought = { t -> toggled[t.key] = !t.open })
+                            ChatRowView(row, onChanges = { toggled[it.key] = !it.open }, onToggle = { head -> toggled[head.turn] = !head.open }, onThought = { t -> toggled[t.key] = !t.open })
                         }
                     }
                 }

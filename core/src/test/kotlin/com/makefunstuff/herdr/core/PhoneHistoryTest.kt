@@ -40,6 +40,13 @@ class PhoneHistoryTest {
     }
 
     @Test
+    fun `loading older output preserves the frozen tail and rejects ambiguous or redrawn snapshots`() {
+        assertEquals("old\nfirst\nsecond", PhoneHistory.extend("first\nsecond\n", "old\nfirst\nsecond\nnew"))
+        assertEquals(null, PhoneHistory.extend("one\ntwo", "old\none\ntwo\none\ntwo"))
+        assertEquals(null, PhoneHistory.extend("one\ntwo", "old\none\nchanged"))
+    }
+
+    @Test
     fun `wide characters count twice when wrapping`() {
         assertEquals(4, PhoneHistory.visibleWidth("\u001B[1m中文\u001B[0m"))
         assertEquals(2, PhoneHistory.build("中文中文中文", cols = 6).rows)

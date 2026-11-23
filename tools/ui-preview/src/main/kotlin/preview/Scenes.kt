@@ -275,6 +275,7 @@ fun scenes(): List<Scene> = listOf(
     // agents at work as one line with a bar, finished ones new until seen. The tall one shows all of it; then answering
     // from the card, the filter row, Mark seen, the + menu, and the agent's long-press sheet.
     Scene("agents", setup = { home() }),
+    Scene("agents-later", setup = { home() }, actions = { tapExact("Later") }),
     Scene("agents-all", heightDp = 1500, setup = { home() }),
     // devbox on Shepherdr 3: its tasks that ask or are ready wait on Needs you too, answered or accepted from the card.
     Scene("agents-v2", heightDp = 1700, setup = { home(); v2() }),
@@ -513,6 +514,7 @@ fun scenes(): List<Scene> = listOf(
     // An edit opened: its file and its lines removed and added, while Claude's runs; Codex's patch of a page; a
     // whole new file, folded to its first lines until "Show all".
     Scene("chat-edit", route = Routes.agent(DEVBOX, APP_AGENT), actions = { tapExact("Edit") }),
+    Scene("chat-turn-changes", route = Routes.agent(DEVBOX, SITE_AGENT), actions = { tapExact("Changed files") }),
     Scene("chat-codex-edit", route = Routes.agent(DEVBOX, SITE_AGENT), actions = { tapText("Worked for"); tapExact("Edit") }),
     // A script that applies a patch and runs a check: its diff, and its script and output beside it.
     Scene("chat-codex-exec", route = Routes.agent(DEVBOX, SITE_AGENT), setup = {

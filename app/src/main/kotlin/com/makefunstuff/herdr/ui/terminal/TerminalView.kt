@@ -149,6 +149,11 @@ class TerminalView(context: Context) : View(context) {
         invalidate()
     }
 
+    fun shiftPanByRows(rows: Int) {
+        panY += rows * cellH
+        invalidate()
+    }
+
     fun clearSelection() {
         selecting = false
         selection = null

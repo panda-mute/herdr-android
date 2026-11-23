@@ -478,6 +478,7 @@ fun AgentScreen(nav: NavController, machineId: String, paneId: String) {
     val zone = remember { container.briefWork.zone() }
     val turns = remember(state.items, state.turns) { ChatTurns.of(state.items, state.turns) }
     val steps = remember(state.turns) { ChatTurns.Steps(state.turns) }
+    val changes = remember(turns, steps) { turnChanges(turns, steps) }
     // The turns are timed on the machine's clock: one running ahead of the phone's shows as steps from the future.
     var ahead by remember(machineId) { mutableLongStateOf(0L) }
     LaunchedEffect(state.turns) { ahead = maxOf(ahead, ChatTurns.ahead(state.turns, container.clock())) }
@@ -514,7 +515,7 @@ fun AgentScreen(nav: NavController, machineId: String, paneId: String) {
             if (state.truncated) add(ChatRow.Info("truncated", "Earlier messages aren't loaded"))
             when (state.source) {
                 AgentChat.Source.Transcript -> addAll(
-                    chatRows(turns, steps, live, opened, machineNow, state.thinking) { at -> clock(at - ahead, now, zone) },
+                    chatRows(turns, steps, live, opened, machineNow, state.thinking, changes) { at -> clock(at - ahead, now, zone) },
                 )
                 AgentChat.Source.Screen -> {
                     add(ChatRow.Info("screen-note", "No transcript for this agent, so this is its screen"))
@@ -701,7 +702,7 @@ fun AgentScreen(nav: NavController, machineId: String, paneId: String) {
                         items(rows.asReversed(), key = { it.key }) { row ->
                             Column(verticalArrangement = Arrangement.spacedBy(Space.m)) {
                                 if (row.key == stick.unread) NewLine()
-                                ChatRowView(row, onToggle = { head -> opened[head.turn] = !head.open }, onThought = { t -> opened[t.key] = !t.open })
+                                ChatRowView(row, onChanges = { opened[it.key] = !it.open }, onToggle = { head -> opened[head.turn] = !head.open }, onThought = { t -> opened[t.key] = !t.open })
                             }
                         }
                     } }

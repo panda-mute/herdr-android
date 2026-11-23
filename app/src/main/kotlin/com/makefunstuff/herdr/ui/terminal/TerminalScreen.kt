@@ -162,6 +162,8 @@ fun TerminalScreen(nav: NavController, machineId: String, paneId: String) {
     // along. "Scroll on the computer" sends them to the pane as before.
     var scrollHost by remember(paneId) { mutableStateOf(false) }
     var history by remember(paneId) { mutableStateOf<TerminalEmulator?>(null) }
+    var historyText by remember(machineId, paneId) { mutableStateOf("") }
+    var nextPage by remember(machineId, paneId) { mutableIntStateOf(PhoneHistory.FIRST_PAGE) }
     var loadingHistory by remember(paneId) { mutableStateOf(false) }
     var grid by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var stream by remember { mutableStateOf<LiveTerminal?>(null) }
@@ -451,14 +453,26 @@ fun TerminalScreen(nav: NavController, machineId: String, paneId: String) {
     }
 
     /** Opens the phone's own copy of the pane's recent output, at its last line. */
-    fun openHistory() {
-        if (loadingHistory || history != null) return
+    fun openHistory(older: Boolean = false) {
+        val previous = history
+        if (loadingHistory || older != (previous != null) || (older && nextPage == 0)) return
+        val lines = if (older) nextPage else PhoneHistory.FIRST_PAGE
+        val anchor = historyText
         loadingHistory = true
         scope.launch {
             try {
-                val text = session.awaitApi().readPane(paneId, source = "recent", lines = PhoneHistory.LINES, ansi = true).text
-                val cols = stream?.emulator?.cols ?: grid?.first ?: 80
-                history = withContext(Dispatchers.Default) { PhoneHistory.build(text, cols) }
+                val text = session.awaitApi().readPane(paneId, source = "recent", lines = lines, ansi = true).text
+                val cols = previous?.cols ?: stream?.emulator?.cols ?: grid?.first ?: 80
+                val snapshot = if (older) PhoneHistory.extend(anchor, text) else text
+                val page = snapshot?.let { withContext(Dispatchers.Default) { PhoneHistory.build(it, cols) } }
+                if (history === previous) {
+                    nextPage = if (page != null && lines < PhoneHistory.LINES && text.lineSequence().take(lines).count() >= lines)
+                        (lines * 2).coerceAtMost(PhoneHistory.LINES) else 0
+                    if (page != null) {
+                        historyText = snapshot
+                        history = page
+                    }
+                }
             } catch (e: Throwable) {
                 context.toast(plain(e))
             }
@@ -600,6 +614,7 @@ fun TerminalScreen(nav: NavController, machineId: String, paneId: String) {
                 history?.let { h ->
                     HistoryOverlay(
                         history = h,
+                        onOlder = { openHistory(older = true) },
                         // An agent with no more history than its screen draws full screen and keeps the rest itself.
                         ownHistory = pane?.agent != null && h.rows <= (stream?.emulator?.rows ?: 0),
                         fontSp = sizes.terminal,
@@ -784,6 +799,7 @@ internal fun selectedText(e: TerminalEmulator, a: CellPoint, b: CellPoint): Stri
 @Composable
 private fun HistoryOverlay(
     history: TerminalEmulator,
+    onOlder: () -> Unit,
     ownHistory: Boolean,
     fontSp: Float,
     palette: com.makefunstuff.herdr.core.terminal.TerminalPalette,
@@ -838,9 +854,11 @@ private fun HistoryOverlay(
             },
             update = { v ->
                 v.setColors(palette, selectionColor)
+                v.onScroll = { if (it > 0) onOlder() }
                 if (v.emulator !== history) {
+                    val added = history.rows - (v.emulator?.rows ?: history.rows)
                     v.emulator = history
-                    v.panToBottom()
+                    v.shiftPanByRows(added)
                 }
             },
             modifier = Modifier.weight(1f).fillMaxWidth(),

@@ -296,14 +296,16 @@ fun TasksScreen(
     val taskWithAgent = agentRows.mapNotNull { r -> r.task?.let { r.agent.machineId to it.id } }.toSet()
     val agentTitles = agentRows.map { titleOf(it.agent, it.task) }.toSet() + askedTitles
     val ready = needsYou.filter { it is Waiting.Task && it.task.status == WorkStatus.Ready && hit(it.task.title, it.task.name, it.task.listName) }
-    val waiting = (needsYou - ready.toSet()).filter { w ->
+    var deferred by rememberSaveable { mutableStateOf(arrayListOf<String>()) }
+    fun ticket(w: Waiting) = "${w.key}/${sig(w)}"
+    val (later, waiting) = (needsYou - ready.toSet()).filter { w ->
         when (w) {
             is Waiting.Task -> hit(w.task.title, w.task.name, w.task.listName)
             is Waiting.Question -> hit(w.task?.title, w.task?.name, w.agent.agent.displayName, w.agent.agent.subtitle)
             is Waiting.Secret -> hit(w.task?.title, w.task?.name, w.space?.name, w.ask.name)
             is Waiting.Coordinator -> hit(w.space.name)
         }
-    }
+    }.partition { ticket(it) in deferred }
     // Tasks no agent row carries, by status: Shepherdr's own rows.
     fun tasks(vararg st: WorkStatus) = boards.flatMap { b ->
         b.tasks.filter { t ->
@@ -405,6 +407,11 @@ fun TasksScreen(
                 @Composable
                 fun card(w: Waiting) = WaitingRow(
                     w, showMachine, busy = busy[w.key],
+                    deferred = w in later,
+                    onLater = if (w !is Waiting.Question) null else ({
+                        val id = ticket(w)
+                        deferred = ArrayList(if (id in deferred) deferred - id else deferred.filter { old -> needsYou.any { ticket(it) == old } } + id)
+                    }),
                     space = (w.task?.space?.takeIf { it.isNotEmpty() }?.let { id ->
                         boards.firstOrNull { it.machineId == w.machineId }?.work?.spaces?.firstOrNull { it.id == id }?.name
                     }).orEmpty(),
@@ -427,6 +434,10 @@ fun TasksScreen(
                     more = (w as? Waiting.Question)?.let { sheetActions(it.agent, it.task) }.orEmpty(),
                 )
                 if (on(TaskFilter.NeedsYou)) items(waiting, key = { it.key }) { card(it) }
+                if (on(TaskFilter.NeedsYou) && later.isNotEmpty()) {
+                    item(key = "h-later") { SectionHeading("Later · ${later.size}", Modifier.padding(horizontal = Space.screen), top = Space.m) }
+                    items(later, key = { it.key }) { card(it) }
+                }
                 if (on(TaskFilter.Ready) && ready.isNotEmpty()) {
                     item(key = "h-ready") { SectionHeading("Ready · ${ready.size}", Modifier.padding(horizontal = Space.screen), top = Space.l, color = Herdr.colors.done) }
                     items(ready, key = { it.key }) { card(it) }

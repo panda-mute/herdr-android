@@ -61,6 +61,7 @@ import com.makefunstuff.herdr.core.chat.ChatTurn
 import com.makefunstuff.herdr.core.chat.ChatTurns
 import com.makefunstuff.herdr.core.chat.EditCalls
 import com.makefunstuff.herdr.core.chat.ToolLine
+import com.makefunstuff.herdr.core.code.FileDiff
 import com.makefunstuff.herdr.ui.code.AddedRemoved
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
@@ -100,6 +101,10 @@ sealed interface ChatRow {
     data class Tools(val tools: List<ChatItem.Tool>, val lines: Map<String, ToolLine> = emptyMap()) : ChatRow {
         override val key get() = "tools/" + tools.first().id
     }
+    data class Changes(val turn: String, val diffs: List<FileDiff>, val open: Boolean) : ChatRow {
+        override val key get() = "changes/$turn"
+    }
+    data class Diff(override val key: String, val diff: FileDiff) : ChatRow
     data class Notice(val item: ChatItem.Notice) : ChatRow { override val key get() = item.id }
     data class Screen(val text: String) : ChatRow { override val key get() = "screen" }
     data class Info(override val key: String, val text: String) : ChatRow
@@ -143,6 +148,7 @@ fun chatRows(
     opened: Map<String, Boolean>,
     now: Long,
     thinking: String? = null,
+    changes: Map<String, List<FileDiff>> = turnChanges(turns, steps),
     time: (Long) -> String?,
 ): List<ChatRow> {
     val rows = mutableListOf<ChatRow>()
@@ -159,6 +165,11 @@ fun chatRows(
                 else -> turn.took?.let { "Worked for ${ChatTurns.duration(it)}" } ?: "Worked"
             }
             rows += ChatRow.Head(turn.key, title, turn.counts.summary, turn.failed, running, open, started)
+            changes[turn.key]?.takeIf { it.isNotEmpty() }?.let { diffs ->
+                val changesRow = ChatRow.Changes(turn.key, diffs, opened["changes/${turn.key}"] == true)
+                rows += changesRow
+                if (changesRow.open) diffs.forEachIndexed { index, diff -> rows += ChatRow.Diff("${changesRow.key}/$index", diff) }
+            }
             if (open) rows += workRows(turn.work, steps, quiet = running == null, opened)
         } else {
             started?.let { rows += ChatRow.Time("time/${turn.key}", it) }
@@ -184,6 +195,11 @@ fun chatRows(
         }
     }
     return rows
+}
+
+internal fun turnChanges(turns: List<ChatTurn>, steps: ChatTurns.Steps) = turns.associate { turn ->
+    turn.key to turn.work.filterIsInstance<ChatItem.Tool>().filter { it.state == ToolState.Done }
+        .distinctBy { it.id }.flatMap { tool -> ChatTurns.line(tool, steps).let { if (it.added == null) emptyList() else it.diffs } }
 }
 
 /** A thought's row, and its pieces when opened by hand ([opened] by its row's key). */
@@ -216,7 +232,7 @@ private fun workRows(items: List<ChatItem>, steps: ChatTurns.Steps, quiet: Boole
 }
 
 @Composable
-fun ChatRowView(row: ChatRow, onToggle: (ChatRow.Head) -> Unit = {}, onThought: (ChatRow.Thought) -> Unit = {}) {
+fun ChatRowView(row: ChatRow, onToggle: (ChatRow.Head) -> Unit = {}, onThought: (ChatRow.Thought) -> Unit = {}, onChanges: (ChatRow.Changes) -> Unit = {}) {
     when (row) {
         is ChatRow.User -> {
             val path = VoiceNotes.mentioned(row.item.text)
@@ -228,6 +244,15 @@ fun ChatRowView(row: ChatRow, onToggle: (ChatRow.Head) -> Unit = {}, onThought: 
             // Narration in a settled turn is a quiet row again, under the answer's voice.
             if (row.quiet) MarkdownText(row.item.text, Modifier.fillMaxWidth().padding(horizontal = Space.xs), style = MaterialTheme.typography.bodySmall, color = Herdr.colors.muted)
             else MarkdownText(row.item.text, Modifier.fillMaxWidth().padding(end = Space.s), style = MaterialTheme.typography.bodyLarge)
+        is ChatRow.Changes -> Row(
+            Modifier.fillMaxWidth().clickable { onChanges(row) }.heightIn(min = 44.dp).padding(horizontal = Space.xs),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(if (row.open) HerdrIcons.ChevronDown else HerdrIcons.ChevronRight, null, Modifier.size(16.dp), tint = Herdr.colors.muted)
+            Text("Changed files", Modifier.weight(1f).padding(start = Space.s), style = MaterialTheme.typography.bodySmall, color = Herdr.colors.text)
+            AddedRemoved(row.diffs.sumOf { it.added }, row.diffs.sumOf { it.removed })
+        }
+        is ChatRow.Diff -> EditDiff(row.diff, row.key)
         is ChatRow.Tools -> ToolGroup(row.tools, row.lines)
         is ChatRow.Notice -> NoticeLine(row.item.text)
         is ChatRow.Screen -> SelectionContainer { CodeBlock(row.text) }

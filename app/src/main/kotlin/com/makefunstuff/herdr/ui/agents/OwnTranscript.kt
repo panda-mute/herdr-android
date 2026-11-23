@@ -25,7 +25,7 @@ class OwnTranscript(val rows: List<ChatRow>, internal val opened: MutableMap<Str
 /** [own]'s rows, newest first, for a chat list laid out from the bottom. */
 fun LazyListScope.ownRows(own: OwnTranscript) {
     items(own.rows.asReversed(), key = { "own/" + it.key }) { row ->
-        ChatRowView(row, onToggle = { head -> own.opened[head.turn] = !head.open }, onThought = { t -> own.opened[t.key] = !t.open })
+        ChatRowView(row, onChanges = { own.opened[it.key] = !it.open }, onToggle = { head -> own.opened[head.turn] = !head.open }, onThought = { t -> own.opened[t.key] = !t.open })
     }
 }
 

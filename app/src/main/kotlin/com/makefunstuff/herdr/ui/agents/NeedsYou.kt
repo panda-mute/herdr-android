@@ -69,6 +69,7 @@ import com.makefunstuff.herdr.ui.design.StatusBadge
 import com.makefunstuff.herdr.ui.theme.CodeStyle
 import com.makefunstuff.herdr.ui.theme.statusWord
 import com.makefunstuff.herdr.ui.theme.Herdr
+import com.makefunstuff.herdr.ui.design.QuietButton
 import com.makefunstuff.herdr.ui.theme.Space
 import com.makefunstuff.herdr.ui.theme.color
 
@@ -486,6 +487,8 @@ fun WaitingRow(
     showMachine: Boolean,
     busy: String?,
     space: String = "",
+    onLater: (() -> Unit)? = null,
+    deferred: Boolean = false,
     onOpen: () -> Unit,
     onGive: () -> Unit,
     onMerge: () -> Unit,
@@ -524,7 +527,10 @@ fun WaitingRow(
         is Waiting.Question -> {
             title = w.task?.title ?: w.agent.agent.subtitle ?: w.agent.agent.displayName
             key = w.task?.name
-            meta = where(w.agent, w.task, showMachine)
+            val reason = asked?.let { a ->
+                if (a.prompt?.let { com.makefunstuff.herdr.core.chat.PromptTag.of(it) } != null) "Approval" else "Question"
+            }
+            meta = listOfNotNull(reason) + where(w.agent, w.task, showMachine)
             question = asked?.question ?: "Waiting for your answer"
         }
         is Waiting.Task -> {
@@ -574,6 +580,7 @@ fun WaitingRow(
             else question?.let {
                 Text(it, style = MaterialTheme.typography.bodyMedium, color = c.muted, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = Space.xxs))
             }
+            if (onLater != null && busy == null) QuietButton(onClick = onLater) { Text(if (deferred) "Move to Needs you" else "Later") }
             if (prompt != null) FlowRow(
                 Modifier.padding(top = Space.s),
                 horizontalArrangement = Arrangement.spacedBy(Space.s),
