@@ -68,7 +68,8 @@ internal object TranscriptPages {
     /** Returns false when the host has no Python/file; caller can use the portable follower. */
     suspend fun follow(connection: MachineConnection, ref: AgentSessionRef, bytes: Int, make: () -> Transcript,
                        ready: (Window) -> Unit, update: (Window) -> Unit): Boolean = kotlinx.coroutines.coroutineScope {
-        val proc = connection.start(openCommand(ref, bytes))
+        val initialBytes = minOf(bytes, PAGE)
+        val proc = connection.start(openCommand(ref, initialBytes))
         try {
             var supported = false
             val job = launch(Dispatchers.IO) {
@@ -80,13 +81,22 @@ internal object TranscriptPages {
                 }
                 val size = header.toString().substringBefore(' ').toLongOrNull() ?: return@launch
                 val token = header.toString().substringAfter(' ')
-                val w = Window(token, (size - bytes).coerceAtLeast(0), make)
+                val w = Window(token, (size - initialBytes).coerceAtLeast(0), make)
                 supported = true
-                var remaining = minOf(size, bytes.toLong())
+                var remaining = minOf(size, initialBytes.toLong())
                 val buf = ByteArray(32768)
                 while (remaining > 0) {
                     val n = input.read(buf, 0, minOf(remaining, buf.size.toLong()).toInt()); if (n < 0) throw IOException("Short snapshot")
                     w.append(buf.copyOf(n)); remaining -= n
+                }
+                // A tool result or attachment can fill the first page. Read backwards only until
+                // there is a conversation to show, up to the previous first-load budget.
+                var loaded = minOf(size, initialBytes.toLong()).toInt()
+                while (!w.hasConversation() && w.start > 0 && loaded < bytes) {
+                    val count = minOf(w.nextCount(), bytes - loaded)
+                    if (count <= 0) break
+                    w.prepend(older(connection, token, w.start, count))
+                    loaded += count
                 }
                 ready(w)
                 while (true) {
@@ -126,6 +136,7 @@ internal object TranscriptPages {
             chunks.forEach(::feed)
             if (start == 0L || kept >= 32_000_000) { capped = start > 0; chunks.clear() }
         }
+        fun hasConversation() = transcript.items().any { it is ChatItem.User || it is ChatItem.Agent }
         fun nextCount() = minOf(start, PAGE.toLong(), (32_000_000 - kept).toLong()).coerceAtLeast(0).toInt()
         private fun feed(data: ByteArray) {
             var from = 0

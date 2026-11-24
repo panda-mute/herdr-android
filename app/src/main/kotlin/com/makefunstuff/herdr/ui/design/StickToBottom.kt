@@ -2,6 +2,7 @@ package com.makefunstuff.herdr.ui.design
 
 import androidx.compose.ui.graphics.RectangleShape
 
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -68,6 +69,7 @@ class ChatStick internal constructor(private val list: LazyListState, private va
     /** Down to the newest, as the ↓ does. Its own job: a list's update doesn't stop it, a finger does. */
     fun toEnd() {
         atEnd = true
+        if (list.firstVisibleItemIndex == 0 && list.firstVisibleItemScrollOffset == 0) return
         going++
         scope.launch {
             try {
@@ -107,8 +109,9 @@ class ChatStick internal constructor(private val list: LazyListState, private va
     @Composable
     fun Follow(messages: List<String>, content: Any? = null) {
         this.messages = messages
+        val dragging by list.interactionSource.collectIsDraggedAsState()
         LaunchedEffect(this, messages, content) {
-            val r = rules.seen(messages, atEnd)
+            val r = rules.seen(messages, atEnd && !dragging)
             rules = r.next
             if (r.toEnd) toEnd()
         }

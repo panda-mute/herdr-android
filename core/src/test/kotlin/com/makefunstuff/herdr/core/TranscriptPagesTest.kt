@@ -36,6 +36,17 @@ class TranscriptPagesTest {
         }
     }
 
+    @Test fun toolOnlyTailRequiresMoreHistoryAndKeepsStableMessageIds() {
+        val older = """{"type":"event_msg","payload":{"type":"user_message","message":"inspect"}}""" + "\n"
+        val tail = """{"type":"response_item","payload":{"type":"function_call","call_id":"tool","name":"exec_command","arguments":"{}"}}""" + "\n"
+        val w = TranscriptPages.Window("test", older.toByteArray().size.toLong(), ::CodexTranscript)
+        w.append(tail.toByteArray())
+        assertFalse(w.hasConversation())
+        w.prepend(older.toByteArray())
+        assertTrue(w.hasConversation())
+        assertEquals("u@0", w.transcript.items().filterIsInstance<ChatItem.User>().single().id)
+    }
+
     @Test fun splitUnicodeToolResultAndLiveAppendMatchFullTranscript() {
         val lines = listOf(
             """{"type":"assistant","uuid":"a","message":{"content":[{"type":"tool_use","id":"t","name":"Read","input":{"path":"甲"}}]}}""",

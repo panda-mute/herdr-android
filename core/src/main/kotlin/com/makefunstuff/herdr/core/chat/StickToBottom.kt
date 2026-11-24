@@ -2,9 +2,9 @@ package com.makefunstuff.herdr.core.chat
 
 /**
  * Where a chat stays, the same in every chat of the app (an agent's, both Coordinators'): it opens at
- * the newest message, and every new message brings the reader down, also from further up. At the end
+ * the newest message. At the end
  * it follows whatever grows there (an answer being written, a picture loading, the working line);
- * scrolled up, only a new message moves it. Sending brings the reader down too ([sent]).
+ * scrolled up, new messages are counted without moving it. Sending brings the reader down ([sent]).
  *
  * The rules alone, on message keys: the app wires them to its list (`rememberStickToBottom`).
  */
@@ -26,13 +26,18 @@ data class StickToBottom(
         val now = copy(known = before.orEmpty() + messages)
         // Opened, or the first messages loaded: at the newest.
         if (before.isNullOrEmpty()) return Seen(now, toEnd = true)
-        val new = messages.firstOrNull { it !in before }
+        // Anything inserted before the last known message is history, not a new arrival.
+        // This also covers replayed/folded rows exposed while loading an earlier page.
+        val boundary = messages.indexOfLast { it in before }
+        val history = if (boundary >= 0) messages.take(boundary + 1).filterNot { it in before }.toSet() else emptySet()
+        val retained = now.copy(since = since?.plus(history))
+        val new = messages.drop(boundary + 1).firstOrNull { it !in before }
         return when {
-            new == null -> Seen(now, toEnd = atEnd)
-            atEnd -> Seen(now, toEnd = true)
-            // Up the chat: down to the newest, a New line above the first message the reader didn't see come.
+            new == null -> Seen(retained, toEnd = atEnd)
+            atEnd -> Seen(retained, toEnd = true)
+            // Up the chat: keep reading; mark the first actual arrival.
             // (One already marked since the reader left keeps its line.)
-            else -> Seen(now.copy(unread = unread?.takeIf { u -> since != null && u !in since && u in messages } ?: new), toEnd = true)
+            else -> Seen(retained.copy(unread = unread?.takeIf { u -> since != null && u !in since && u in messages } ?: new), toEnd = false)
         }
     }
 

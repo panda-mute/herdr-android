@@ -32,10 +32,10 @@ class StickToBottomTest {
         assertNull(r.next.unread)
     }
 
-    @Test fun aNewMessageBringsYouDownFromFurtherUp() {
+    @Test fun aNewMessageLeavesTheReaderFurtherUp() {
         val up = StickToBottom().seen(three, true).next.moved(atEnd = false, three)
         val r = up.seen(three + "d" + "e", atEnd = false)
-        assertTrue(r.toEnd)
+        assertFalse(r.toEnd)
         // The New line goes above the first one that came while you read.
         assertEquals("d", r.next.unread)
     }
@@ -45,7 +45,7 @@ class StickToBottomTest {
         // "d" came while up but the jump down didn't happen yet (the reader dragged on): "e" keeps "d" as the first new.
         val once = up.seen(three + "d", atEnd = false).next
         val twice = once.seen(three + "d" + "e", atEnd = false)
-        assertTrue(twice.toEnd)
+        assertFalse(twice.toEnd)
         assertEquals("d", twice.next.unread)
     }
 
@@ -87,6 +87,28 @@ class StickToBottomTest {
         val sent = down.sent()
         assertNull(sent.unread)
         assertEquals(0, sent.fresh(three + "d"))
+    }
+
+    @Test fun prependedHistoryDoesNotJumpOrCountAsUnread() {
+        val up = StickToBottom().seen(three, true).next.moved(false, three)
+        val expanded = listOf("older1", "older2") + three
+        val loaded = up.seen(expanded, false)
+        assertFalse(loaded.toEnd)
+        assertEquals(0, loaded.next.fresh(expanded))
+        assertNull(loaded.next.unread)
+        val arriving = loaded.next.seen(expanded + "d", false)
+        assertFalse(arriving.toEnd)
+        assertEquals(1, arriving.next.fresh(expanded + "d"))
+        assertEquals("d", arriving.next.unread)
+    }
+
+    @Test fun historyAndNewReplyInOneUpdateKeepPosition() {
+        val up = StickToBottom().seen(three, true).next.moved(false, three)
+        val expanded = listOf("older") + three + "d"
+        val result = up.seen(expanded, false)
+        assertFalse(result.toEnd)
+        assertEquals("d", result.next.unread)
+        assertEquals(1, result.next.fresh(expanded))
     }
 
     @Test fun nearTheEndCountsAsAtIt() {
