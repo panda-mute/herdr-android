@@ -504,6 +504,22 @@ class QueueTest {
 }
 
 class TranscriptFollowerTest {
+    @Test
+    fun fragmentedHistoryPublishesOnceThenLiveMessagesFollow() {
+        fun message(id: String) = """{"type":"user","uuid":"$id","message":{"role":"user","content":"消息$id"}}""" + "\r\n"
+        val history = ("partial\n" + message("a") + message("b")).encodeToByteArray()
+        val input = java.io.BufferedInputStream((history + message("c").encodeToByteArray()).inputStream())
+        val fragmented = object : java.io.BufferedInputStream(input) {
+            override fun read(b: ByteArray, off: Int, len: Int) = super.read(b, off, minOf(3, len))
+        }
+        val transcript = ClaudeTranscript()
+        val snapshots = mutableListOf<List<String>>()
+        TranscriptFollower.pump(fragmented, transcript, true, history.size.toLong()) {
+            snapshots += transcript.items().filterIsInstance<ChatItem.User>().map { it.text }
+        }
+        assertEquals(listOf(listOf("消息a", "消息b"), listOf("消息a", "消息b", "消息c")), snapshots)
+    }
+
     private fun run(home: File, ref: AgentSessionRef, bytes: Int = 1_000_000, subagent: String? = null, lines: Int = 2): List<String> {
         val pb = ProcessBuilder("sh", "-c", TranscriptFollower.command(ref, bytes, subagent))
         pb.environment()["HOME"] = home.absolutePath

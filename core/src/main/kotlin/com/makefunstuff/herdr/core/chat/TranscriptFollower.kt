@@ -9,7 +9,8 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.BufferedReader
+import java.io.BufferedInputStream
+import java.io.ByteArrayOutputStream
 import java.io.IOException
 
 /**
@@ -174,12 +175,18 @@ object TranscriptFollower {
     ): Result = coroutineScope {
         val process = start(command(ref, bytes, subagent))
         try {
-            val reader = process.input.bufferedReader(Charsets.UTF_8)
-            val header = withContext(Dispatchers.IO) { reader.readLine() } ?: throw IOException("transcript stream closed")
+            val reader = process.input.buffered()
+            val header = withContext(Dispatchers.IO) { buildString {
+                while (length < 65536) {
+                    val b = reader.read()
+                    if (b == -1 || b == 10) break
+                    append(b.toChar())
+                }
+            }.takeIf { it.isNotEmpty() } } ?: throw IOException("transcript stream closed")
             if (header.startsWith(MISSING)) return@coroutineScope Result.Missing
             val size = header.removePrefix(FILE).substringBefore(' ').toLongOrNull() ?: 0
             val truncated = size > bytes
-            val job = launch(Dispatchers.IO) { pump(reader, transcript, truncated, onUpdate) }
+            val job = launch(Dispatchers.IO) { pump(reader, transcript, truncated, minOf(size, bytes.toLong()), onUpdate) }
             job.join()
             Result.Ended
         } finally {
@@ -189,22 +196,39 @@ object TranscriptFollower {
         }
     }
 
-    private fun pump(reader: BufferedReader, transcript: Transcript, truncated: Boolean, onUpdate: (Boolean) -> Unit) {
-        // tail -c starts mid-line when it cut the file; that first piece is not JSON.
-        var skipFirst = truncated
+    /** SSH packet boundaries aren't UI updates. Publish the initial tail as one snapshot, then
+     * publish complete live lines as they arrive. Count bytes, including CRLF and split UTF-8. */
+    internal fun pump(reader: BufferedInputStream, transcript: Transcript, truncated: Boolean, initialBytes: Long, onUpdate: (Boolean) -> Unit) {
+        var remaining = initialBytes
+        var initial = true
+        var skip = truncated
+        val line = ByteArrayOutputStream()
+        val chunk = ByteArray(32 * 1024)
         var published = transcript.revision
-        onUpdate(truncated)
+        fun publish() {
+            initial = false
+            published = transcript.revision
+            onUpdate(truncated)
+        }
+        if (remaining == 0L) publish()
         while (true) {
-            val line = reader.readLine() ?: break
-            if (skipFirst) {
-                skipFirst = false
-                continue
+            val count = reader.read(chunk)
+            if (count < 0) break
+            remaining -= count
+            var start = 0
+            for (i in 0 until count) {
+                if (chunk[i] != 10.toByte()) continue
+                if (!skip && line.size() + i - start <= MAX_LINE) {
+                    line.write(chunk, start, i - start)
+                    transcript.feed(line.toString("UTF-8").removeSuffix("\r"))
+                }
+                line.reset()
+                skip = false
+                start = i + 1
             }
-            if (line.length <= MAX_LINE) transcript.feed(line)
-            if (!reader.ready() && transcript.revision != published) {
-                published = transcript.revision
-                onUpdate(truncated)
-            }
+            if (line.size() + count - start > MAX_LINE) skip = true
+            if (!skip) line.write(chunk, start, count - start)
+            if (remaining <= 0 && (initial || transcript.revision != published)) publish()
         }
     }
 }

@@ -55,6 +55,10 @@ abstract class ActivityLog(private val prefix: String = "") {
     fun feed(line: String) {
         if (line.isBlank() || line[0] != '{') return
         val obj = runCatching { TranscriptJson.parseToJsonElement(line).jsonObject }.getOrNull() ?: return
+        feed(obj)
+    }
+
+    internal fun feed(obj: JsonObject) {
         runCatching { read(obj) }
     }
 

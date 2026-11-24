@@ -59,9 +59,9 @@ abstract class Transcript {
     }
 
     fun feed(line: String) {
-        activity?.feed(line)
         if (line.isBlank() || line[0] != '{') return
         val obj = runCatching { TranscriptJson.parseToJsonElement(line).jsonObject }.getOrNull() ?: return
+        activity?.feed(obj)
         runCatching { read(obj) }
     }
 
