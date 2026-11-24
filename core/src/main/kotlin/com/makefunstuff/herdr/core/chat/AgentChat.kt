@@ -37,7 +37,16 @@ class AgentChat(private val host: HostSession, val paneId: String, private val s
     enum class Source { Loading, Transcript, Screen }
 
     /** One read of the transcript, as the chat shows it. */
-    private class Read(val items: List<ChatItem>, val truncated: Boolean, val turns: List<Turn>, val use: ModelUse?, val queued: List<String>)
+    private class Read(val items: List<ChatItem>, val truncated: Boolean, val turns: List<Turn>, val use: ModelUse?, val queued: List<String>, val capped: Boolean = false) {
+        val index = ChatIndex(items, turns)
+    }
+
+    /** Prepared on the transcript reader, once per published batch rather than during composition. */
+    class ChatIndex(items: List<ChatItem>, activity: List<Turn>) {
+        val steps = ChatTurns.Steps(activity)
+        val turns = ChatTurns.of(items, steps)
+        val changes = ChatTurns.changes(turns, steps)
+    }
 
     companion object {
         private const val MAX_HISTORY_BYTES = 32_000_000
@@ -71,6 +80,7 @@ class AgentChat(private val host: HostSession, val paneId: String, private val s
 
     data class State(
         val source: Source = Source.Loading,
+        val index: ChatIndex = ChatIndex(emptyList(), emptyList()),
         val items: List<ChatItem> = emptyList(),
         /** True when only the end of a long transcript was loaded. */
         val truncated: Boolean = false,
@@ -102,12 +112,15 @@ class AgentChat(private val host: HostSession, val paneId: String, private val s
     /** The session whose transcript the chat shows now. */
     @Volatile private var shownFrom: AgentSessionRef? = null
 
+    @Volatile private var fetchPage: (() -> Unit)? = null
     private val historyBytes = MutableStateFlow(TranscriptFollower.TAIL_BYTES)
 
     fun loadEarlier() {
         val s = state.value
         if (s.source != Source.Transcript || !s.truncated || s.loadingEarlier || s.historyLimitReached) return
         _state.update { it.copy(loadingEarlier = true) }
+        val page = fetchPage
+        if (page != null) { page(); return }
         historyBytes.update { (it * 2).coerceAtMost(MAX_HISTORY_BYTES) }
     }
 
@@ -185,7 +198,7 @@ class AgentChat(private val host: HostSession, val paneId: String, private val s
             fun publish(r: Read) {
                 shownFrom = ref
                 _state.update { s ->
-                    s.copy(source = Source.Transcript, items = r.items, truncated = r.truncated, loadingEarlier = false, historyLimitReached = bytes >= MAX_HISTORY_BYTES, pending = unseen(s.pending, r.items), turns = r.turns, use = r.use, queued = r.queued)
+                    s.copy(source = Source.Transcript, index = r.index, items = r.items, truncated = r.truncated, loadingEarlier = s.loadingEarlier && fetchPage != null, historyLimitReached = r.capped || bytes >= MAX_HISTORY_BYTES, pending = unseen(s.pending, r.items), turns = r.turns, use = r.use, queued = r.queued)
                 }
             }
             // Past CATCH_UP_MS of reading, whatever the new read has is shown, once it has anything.
@@ -200,13 +213,50 @@ class AgentChat(private val host: HostSession, val paneId: String, private val s
                         waiting?.takeIf { !caught && it.items.isNotEmpty() }?.let { caught = true; publish(it) }
                     }
                 }
-                TranscriptFollower.follow(connection, ref, transcript, bytes = bytes) { truncated ->
-                    val read = Read(transcript.items(), truncated, transcript.activity?.turns().orEmpty(), transcript.use, transcript.queued)
+                fun accept(read: Read) {
                     synchronized(lock) {
                         if (!caught && (caughtUp(shown, read.items) || (late && read.items.isNotEmpty()))) caught = true
                         if (caught) publish(read) else waiting = read
                     }
                     failures = 0
+                }
+                fun acceptPage(w: TranscriptPages.Window) {
+                    val t = w.transcript
+                    accept(Read(t.items(), w.start > 0L, t.activity?.turns().orEmpty(), t.use, t.queued, w.capped))
+                }
+                val followed = coroutineScope {
+                    var paging: Job? = null
+                    try {
+                        TranscriptPages.follow(connection, ref, bytes, {
+                            Transcript.forAgent(agent)!!.also { it.activity = ActivityLog.forAgent(agent) }
+                        }, ready = { w ->
+                            val busy = java.util.concurrent.atomic.AtomicBoolean()
+                            fetchPage = request@{
+                                if (!busy.compareAndSet(false, true)) return@request
+                                paging = launch(kotlinx.coroutines.Dispatchers.IO) {
+                                    try {
+                                        val (end, count) = synchronized(w) { w.start to w.nextCount() }
+                                        if (count > 0) {
+                                            val data = TranscriptPages.older(connection, w.token, end, count)
+                                            synchronized(w) {
+                                                if (!w.capped && w.nextCount() >= count) {
+                                                    w.prepend(data); acceptPage(w)
+                                                }
+                                            }
+                                        }
+                                    } catch (e: CancellationException) { throw e } catch (_: java.io.IOException) {
+                                        // Keep the current page. The next gesture retries.
+                                    } finally {
+                                        busy.set(false); _state.update { it.copy(loadingEarlier = false) }
+                                    }
+                                }
+                            }
+                            acceptPage(w)
+                        }, update = ::acceptPage)
+                    } finally { fetchPage = null; paging?.cancel() }
+                }
+                if (followed) TranscriptFollower.Result.Ended else TranscriptFollower.follow(connection, ref, transcript, bytes = bytes) { truncated ->
+                    accept(Read(transcript.items(), truncated, transcript.activity?.turns().orEmpty(), transcript.use, transcript.queued))
                 }
             } catch (e: CancellationException) {
                 throw e

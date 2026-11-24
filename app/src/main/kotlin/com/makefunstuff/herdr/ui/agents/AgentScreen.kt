@@ -476,9 +476,9 @@ fun AgentScreen(nav: NavController, machineId: String, paneId: String) {
     // Turns folded or opened by hand stay as they were left, also once the turn settles.
     val opened = remember(machineId, paneId) { mutableStateMapOf<String, Boolean>() }
     val zone = remember { container.briefWork.zone() }
-    val turns = remember(state.items, state.turns) { ChatTurns.of(state.items, state.turns) }
-    val steps = remember(state.turns) { ChatTurns.Steps(state.turns) }
-    val changes = remember(turns, steps) { turnChanges(turns, steps) }
+    val steps = state.index.steps
+    val turns = state.index.turns
+    val changes = state.index.changes
     // The turns are timed on the machine's clock: one running ahead of the phone's shows as steps from the future.
     var ahead by remember(machineId) { mutableLongStateOf(0L) }
     LaunchedEffect(state.turns) { ahead = maxOf(ahead, ChatTurns.ahead(state.turns, container.clock())) }
@@ -510,13 +510,20 @@ fun AgentScreen(nav: NavController, machineId: String, paneId: String) {
     // Voice messages still on the phone (on their way, or not sent) come after what the agent has.
     // One whose `@path` is on its way already shows as that.
     val waitingVoice = voice.notes.filter { n -> !n.sent && state.pending.none { p -> n.remote != null && VoiceNotes.mentioned(p.text) == n.remote } }
-    val rows = remember(turns, steps, live, opened.toMap(), machineNow, onTheWay, queued, state.source, state.screen, state.truncated, state.loadingEarlier, state.historyLimitReached, state.thinking, waitingVoice) {
+    // Only the last turn can be live. A timer tick must not format every older turn again.
+    val openedTurns = opened.toMap()
+    val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
+    val settledRows = remember(turns, steps, openedTurns, today, ahead, zone) {
+        chatRows(turns.dropLast(1), steps, null, openedTurns, machineNow, changes = changes) { clock(it - ahead, now, zone) }
+    }
+    val rows = remember(settledRows, turns, steps, live, openedTurns, machineNow, onTheWay, queued, state.source, state.screen, state.truncated, state.loadingEarlier, state.historyLimitReached, state.thinking, waitingVoice) {
         buildList {
             if (state.truncated) add(ChatRow.Earlier(state.loadingEarlier, state.historyLimitReached))
             when (state.source) {
-                AgentChat.Source.Transcript -> addAll(
-                    chatRows(turns, steps, live, opened, machineNow, state.thinking, changes) { at -> clock(at - ahead, now, zone) },
-                )
+                AgentChat.Source.Transcript -> {
+                    addAll(settledRows)
+                    addAll(chatRows(turns.takeLast(1), steps, live, openedTurns, machineNow, state.thinking, changes) { clock(it - ahead, now, zone) })
+                }
                 AgentChat.Source.Screen -> {
                     add(ChatRow.Info("screen-note", "No transcript for this agent, so this is its screen"))
                     // TUIs pad with blank rows; one blank line is enough on a phone.
@@ -696,7 +703,7 @@ fun AgentScreen(nav: NavController, machineId: String, paneId: String) {
                         // The composer floats over the list's end: its height stays free under the newest entry.
                         contentPadding = PaddingValues(start = Space.screen, end = Space.screen, top = Space.m, bottom = bottom + Space.xs),
                         verticalArrangement = Arrangement.spacedBy(Space.m, Alignment.Bottom),
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier.fillMaxSize().pullEarlier(listState, "truncated", chat::loadEarlier),
                     ) {
                         if (workingLine) item(key = "working") { WorkingLine(activity) }
                         items(rows.asReversed(), key = { it.key }) { row ->

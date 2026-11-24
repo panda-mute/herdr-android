@@ -63,13 +63,23 @@ data class ToolLine(
 )
 
 object ChatTurns {
+    fun changes(turns: List<ChatTurn>, steps: Steps): Map<String, List<FileDiff>> = buildMap {
+        for (turn in turns) {
+            val diffs = turn.work.asSequence().filterIsInstance<ChatItem.Tool>()
+                .filter { it.state == ToolState.Done && (it.diffs.isNotEmpty() || steps.of(it.id).any { s -> s.diff != null }) }
+                .distinctBy { it.id }.flatMap { tool -> line(tool, steps).let { if (it.added == null) emptyList() else it.diffs } }.toList()
+            if (diffs.isNotEmpty()) put(turn.key, diffs)
+        }
+    }
+
     /**
      * Cuts [items] into turns at each message from you. [turns] is the same transcript read as timed
      * steps ([com.makefunstuff.herdr.core.activity.ActivityLog]): it gives the times, the kinds and
      * the failures, matched by the ids both readers give a message or a call.
      */
-    fun of(items: List<ChatItem>, turns: List<Turn>): List<ChatTurn> {
-        val steps = Steps(turns)
+    fun of(items: List<ChatItem>, turns: List<Turn>): List<ChatTurn> = of(items, Steps(turns))
+
+    fun of(items: List<ChatItem>, steps: Steps): List<ChatTurn> {
         val out = ArrayList<ChatTurn>()
         var user: ChatItem.User? = null
         val parts = ArrayList<ChatItem>()

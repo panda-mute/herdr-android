@@ -34,6 +34,7 @@ import com.makefunstuff.herdr.LocalPanes
 import com.makefunstuff.herdr.core.api.AgentStatus
 import com.makefunstuff.herdr.core.chat.ChatHeader
 import com.makefunstuff.herdr.core.chat.ChatOwner
+import com.makefunstuff.herdr.ui.agents.pullEarlier
 import com.makefunstuff.herdr.ui.agents.ownRows
 import com.makefunstuff.herdr.ui.agents.rememberOwnTranscript
 import androidx.compose.runtime.mutableStateOf
@@ -423,7 +424,7 @@ internal fun TaskChatScreen(
                             state = list,
                             // Newest at the bottom: it stays at its end when the keyboard opens or the message box grows.
                             reverseLayout = true,
-                            modifier = Modifier.fillMaxSize(),
+                            modifier = Modifier.fillMaxSize().pullEarlier(list, "own/truncated", own?.loadEarlier),
                             contentPadding = PaddingValues(start = Space.screen, end = Space.screen, top = Space.m, bottom = bottom + Space.xs),
                             verticalArrangement = Arrangement.spacedBy(Space.m, Alignment.Bottom),
                         ) {

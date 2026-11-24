@@ -70,6 +70,7 @@ import com.makefunstuff.herdr.core.shepherdr.ChatNotice
 import com.makefunstuff.herdr.core.api.AgentStatus
 import com.makefunstuff.herdr.core.chat.ChatHeader
 import com.makefunstuff.herdr.core.chat.ChatOwner
+import com.makefunstuff.herdr.ui.agents.pullEarlier
 import com.makefunstuff.herdr.ui.agents.ownRows
 import com.makefunstuff.herdr.ui.agents.rememberOwnTranscript
 import com.makefunstuff.herdr.core.shepherdr.ChatFind
@@ -475,7 +476,7 @@ internal fun SpaceCoordinator(nav: NavController, machineId: String, session: Ho
                             // Newest at the bottom: it stays at its end when the keyboard opens or the message box grows.
                             reverseLayout = true,
                             // A touch anywhere in the chat stops the voice at once (and does what it touched too).
-                            modifier = Modifier.fillMaxSize().then(
+                            modifier = Modifier.fillMaxSize().pullEarlier(list, "own/truncated", own?.loadEarlier).then(
                                 if (voiceHere && heard.phase == VoiceState.Phase.Speaking) Modifier.pointerInput(Unit) {
                                     awaitEachGesture { awaitFirstDown(requireUnconsumed = false); speech.hush() }
                                 } else Modifier,

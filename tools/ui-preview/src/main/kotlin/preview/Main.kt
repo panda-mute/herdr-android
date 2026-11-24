@@ -368,6 +368,16 @@ private fun ComposeUiTest.tap(node: androidx.compose.ui.test.SemanticsNodeIntera
     settle()
 }
 
+fun ComposeUiTest.pullEarlierMessages() {
+    node(hasText("Load earlier messages")).performTouchInput {
+        down(center)
+        repeat(8) { moveBy(androidx.compose.ui.geometry.Offset(0f, 12f), delayMillis = 16) }
+        up()
+    }
+    settle()
+    check(onAllNodes(hasText("Review the installation instructions.", substring = true), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty())
+}
+
 fun ComposeUiTest.longPressText(text: String) { node(hasText(text, substring = true)).performTouchInput { longClick() }; settle() }
 
 /**

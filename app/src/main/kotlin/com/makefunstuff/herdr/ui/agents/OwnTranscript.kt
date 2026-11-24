@@ -50,10 +50,10 @@ fun rememberOwnTranscript(session: HostSession, paneId: String?, status: AgentSt
         else -> null
     }
     val rows = remember(state.items, state.turns, live, opened.toMap(), state.truncated, state.loadingEarlier, state.historyLimitReached) {
-        val turns = ChatTurns.of(state.items, state.turns)
+        val turns = state.index.turns
         buildList {
             if (state.truncated) add(ChatRow.Earlier(state.loadingEarlier, state.historyLimitReached))
-            addAll(chatRows(turns, ChatTurns.Steps(state.turns), live, opened, now, state.thinking) { at -> clock(at, now, zone) })
+            addAll(chatRows(turns, state.index.steps, live, opened, now, state.thinking, state.index.changes) { at -> clock(at, now, zone) })
         }
     }
     return OwnTranscript(rows, opened, chat::loadEarlier)

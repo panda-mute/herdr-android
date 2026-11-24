@@ -58,7 +58,11 @@ abstract class ActivityLog(private val prefix: String = "") {
         feed(obj)
     }
 
-    internal fun feed(obj: JsonObject) {
+    protected var recordOffset: Long? = null
+        private set
+
+    internal fun feed(obj: JsonObject, offset: Long? = null) {
+        recordOffset = offset
         runCatching { read(obj) }
     }
 
@@ -351,29 +355,29 @@ class CodexActivity(prefix: String = "") : ActivityLog(prefix) {
                 }
                 "user_message" -> if (!itemMode) {
                     val text = payload.str("message")?.trim().orEmpty()
-                    if (text.isNotEmpty() && !isInjected(text)) turn("u${seq++}", text, at)
+                    if (text.isNotEmpty() && !isInjected(text)) turn("u${recordOffset?.let { "@$it" } ?: seq++}", text, at)
                 }
                 "agent_message" -> if (!itemMode) {
-                    payload.str("message")?.trim()?.takeIf { it.isNotEmpty() }?.let { step(Step("a${seq++}", StepKind.Message, firstLine(it), at, at, detail = it)) }
+                    payload.str("message")?.trim()?.takeIf { it.isNotEmpty() }?.let { step(Step("a${recordOffset?.let { "@$it" } ?: seq++}", StepKind.Message, firstLine(it), at, at, detail = it)) }
                 }
                 "task_complete" -> {
                     val error = payload.obj("error")?.str("message") ?: payload.str("error")
-                    if (!error.isNullOrBlank()) notice("err${seq++}", firstLine(error), at, failed = true)
+                    if (!error.isNullOrBlank()) notice("err${recordOffset?.let { "@$it" } ?: seq++}", firstLine(error), at, failed = true)
                 }
-                "turn_aborted" -> { settle(); notice("abort${seq++}", "Interrupted", at) }
+                "turn_aborted" -> { settle(); notice("abort${recordOffset?.let { "@$it" } ?: seq++}", "Interrupted", at) }
                 "exec_command_end" -> if (!itemMode) payload.str("call_id")?.let { id ->
                     val exit = payload.int("exit_code")
                     finish(id, at, exit != null && exit != 0, exit, payload.str("aggregated_output") ?: payload.str("stdout"))
                 }
             }
             "response_item" -> if (!itemMode) legacy(payload, at)
-            "compacted" -> notice("compact${seq++}", "Conversation compacted", at)
+            "compacted" -> notice("compact${recordOffset?.let { "@$it" } ?: seq++}", "Conversation compacted", at)
         }
         touch(at)
     }
 
     private fun item(item: JsonObject, start: Long, end: Long) {
-        val id = item.str("id") ?: "i${seq++}"
+        val id = item.str("id") ?: "i${recordOffset?.let { "@$it" } ?: seq++}"
         val failed = item.str("status") == "failed"
         val state = if (failed) StepState.Failed else StepState.Done
         when (item.str("type")) {

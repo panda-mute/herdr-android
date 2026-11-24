@@ -149,7 +149,7 @@ fun chatRows(
     opened: Map<String, Boolean>,
     now: Long,
     thinking: String? = null,
-    changes: Map<String, List<FileDiff>> = turnChanges(turns, steps),
+    changes: Map<String, List<FileDiff>> = ChatTurns.changes(turns, steps),
     time: (Long) -> String?,
 ): List<ChatRow> {
     val rows = mutableListOf<ChatRow>()
@@ -196,11 +196,6 @@ fun chatRows(
         }
     }
     return rows
-}
-
-internal fun turnChanges(turns: List<ChatTurn>, steps: ChatTurns.Steps) = turns.associate { turn ->
-    turn.key to turn.work.filterIsInstance<ChatItem.Tool>().filter { it.state == ToolState.Done }
-        .distinctBy { it.id }.flatMap { tool -> ChatTurns.line(tool, steps).let { if (it.added == null) emptyList() else it.diffs } }
 }
 
 /** A thought's row, and its pieces when opened by hand ([opened] by its row's key). */

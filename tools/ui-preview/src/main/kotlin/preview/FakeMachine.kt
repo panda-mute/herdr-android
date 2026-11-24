@@ -201,6 +201,7 @@ class FakeMachine(
         // A task's browser through the relay (CurlTransport.browser), where Shepherdr runs.
         if (DemoBrowser.isRelay(command)) shepherdr?.let { sh -> return stream { input, out -> DemoBrowser.relay(DemoBrowser.taskOf(command) in sh.browsers, input, out) } }
         return when {
+            "herdr-page-open" in command -> stream(keepOpen = false) { _, out -> out.println("@@unsupported") }
             "@@missing" in command -> stream { _, out ->
                 // TranscriptFollower: kind, value, agent, bytes and a subagent id (or nothing) after "follow".
                 // A subagent's own steps are kept as "<session>/agent-<id>".

@@ -58,10 +58,14 @@ abstract class Transcript {
         if (next != use) { use = next; version++ }
     }
 
-    fun feed(line: String) {
+    protected var recordOffset: Long? = null
+        private set
+
+    fun feed(line: String, offset: Long? = null) {
+        recordOffset = offset
         if (line.isBlank() || line[0] != '{') return
         val obj = runCatching { TranscriptJson.parseToJsonElement(line).jsonObject }.getOrNull() ?: return
-        activity?.feed(obj)
+        activity?.feed(obj, offset)
         runCatching { read(obj) }
     }
 
@@ -306,14 +310,14 @@ class CodexTranscript : Transcript() {
                 }
                 "user_message" -> if (!itemMode) {
                     val text = payload.str("message")?.trim().orEmpty()
-                    if (text.isNotEmpty() && !isInjected(text)) put(ChatItem.User("u${seq++}", text))
+                    if (text.isNotEmpty() && !isInjected(text)) put(ChatItem.User("u${recordOffset?.let { "@$it" } ?: seq++}", text))
                 }
                 "agent_message" -> if (!itemMode) {
-                    payload.str("message")?.trim()?.takeIf { it.isNotEmpty() }?.let { put(ChatItem.Agent("a${seq++}", it)) }
+                    payload.str("message")?.trim()?.takeIf { it.isNotEmpty() }?.let { put(ChatItem.Agent("a${recordOffset?.let { "@$it" } ?: seq++}", it)) }
                 }
                 "turn_aborted" -> {
                     settleTools()
-                    put(ChatItem.Notice("abort${seq++}", "Interrupted"))
+                    put(ChatItem.Notice("abort${recordOffset?.let { "@$it" } ?: seq++}", "Interrupted"))
                 }
                 // What the last request filled, against the window Codex itself states.
                 "token_count" -> payload.obj("info")?.let { info ->
@@ -331,12 +335,12 @@ class CodexTranscript : Transcript() {
                 if (model != null || effort != null) model(model, effort)
             }
             "response_item" -> if (!itemMode) legacyCall(payload)
-            "compacted" -> put(ChatItem.Notice("compact${seq++}", "Conversation compacted"))
+            "compacted" -> put(ChatItem.Notice("compact${recordOffset?.let { "@$it" } ?: seq++}", "Conversation compacted"))
         }
     }
 
     private fun item(item: JsonObject) {
-        val id = item.str("id") ?: "i${seq++}"
+        val id = item.str("id") ?: "i${recordOffset?.let { "@$it" } ?: seq++}"
         val failed = item.str("status") == "failed"
         val state = if (failed) ToolState.Failed else ToolState.Done
         when (item.str("type")) {
@@ -396,7 +400,7 @@ class CodexTranscript : Transcript() {
 
     private fun legacyCall(payload: JsonObject) {
         when (payload.str("type")) {
-            "reasoning" -> thought(payload.str("id") ?: "r${seq++}", reasoning(payload.arr("content")).ifBlank { reasoning(payload.arr("summary")) })
+            "reasoning" -> thought(payload.str("id") ?: "r${recordOffset?.let { "@$it" } ?: seq++}", reasoning(payload.arr("content")).ifBlank { reasoning(payload.arr("summary")) })
             "function_call", "custom_tool_call" -> {
                 val callId = payload.str("call_id") ?: return
                 val name = payload.str("name").orEmpty()

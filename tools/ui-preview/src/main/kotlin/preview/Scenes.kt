@@ -500,6 +500,7 @@ fun scenes(): List<Scene> = listOf(
     Scene("prompt-question", route = Routes.agent(DEVBOX, API_AGENT), setup = { host(DEVBOX).screens += API_AGENT to Demo.resource("screen-claude-question.txt") }),
     Scene("prompt-checks", route = Routes.agent(DEVBOX, API_AGENT), setup = { host(DEVBOX).screens += API_AGENT to Demo.resource("screen-claude-checks.txt") }),
     Scene("chat-history", route = Routes.agent(DEVBOX, APP_AGENT), setup = { longChat() }),
+    Scene("chat-history-pull", route = Routes.agent(DEVBOX, APP_AGENT), setup = { longChat() }, actions = { pullEarlierMessages(); settle() }),
     Scene("chat-history-loaded", route = Routes.agent(DEVBOX, APP_AGENT), setup = { longChat() }, actions = { tapExact("Load earlier messages"); settle() }),
     Scene("chat-codex", route = Routes.agent(DEVBOX, SITE_AGENT)),
     Scene("chat-markdown-table", route = Routes.agent(DEVBOX, SITE_AGENT), setup = {
