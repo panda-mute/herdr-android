@@ -510,9 +510,9 @@ fun AgentScreen(nav: NavController, machineId: String, paneId: String) {
     // Voice messages still on the phone (on their way, or not sent) come after what the agent has.
     // One whose `@path` is on its way already shows as that.
     val waitingVoice = voice.notes.filter { n -> !n.sent && state.pending.none { p -> n.remote != null && VoiceNotes.mentioned(p.text) == n.remote } }
-    val rows = remember(turns, steps, live, opened.toMap(), machineNow, onTheWay, queued, state.source, state.screen, state.truncated, state.thinking, waitingVoice) {
+    val rows = remember(turns, steps, live, opened.toMap(), machineNow, onTheWay, queued, state.source, state.screen, state.truncated, state.loadingEarlier, state.historyLimitReached, state.thinking, waitingVoice) {
         buildList {
-            if (state.truncated) add(ChatRow.Info("truncated", "Earlier messages aren't loaded"))
+            if (state.truncated) add(ChatRow.Earlier(state.loadingEarlier, state.historyLimitReached))
             when (state.source) {
                 AgentChat.Source.Transcript -> addAll(
                     chatRows(turns, steps, live, opened, machineNow, state.thinking, changes) { at -> clock(at - ahead, now, zone) },
@@ -702,7 +702,7 @@ fun AgentScreen(nav: NavController, machineId: String, paneId: String) {
                         items(rows.asReversed(), key = { it.key }) { row ->
                             Column(verticalArrangement = Arrangement.spacedBy(Space.m)) {
                                 if (row.key == stick.unread) NewLine()
-                                ChatRowView(row, onChanges = { opened[it.key] = !it.open }, onToggle = { head -> opened[head.turn] = !head.open }, onThought = { t -> opened[t.key] = !t.open })
+                                ChatRowView(row, onEarlier = chat::loadEarlier, onChanges = { opened[it.key] = !it.open }, onToggle = { head -> opened[head.turn] = !head.open }, onThought = { t -> opened[t.key] = !t.open })
                             }
                         }
                     } }

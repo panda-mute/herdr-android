@@ -209,7 +209,9 @@ class FakeMachine(
                 val text = transcripts[session]
                 if (text == null) out.println("@@missing") else {
                     out.println("@@file ${text.toByteArray().size} /home/demo/transcript.jsonl")
-                    out.print(text.trimEnd() + "\n")
+                    val bytes = text.toByteArray()
+                    val limit = args[3].toInt()
+                    out.print(bytes.decodeToString((bytes.size - limit).coerceAtLeast(0), bytes.size).trimEnd() + "\n")
                     out.flush()
                     // As tail -F does: what the agent writes next, until the app closes the stream.
                     val queue = later.getOrPut(session) { java.util.concurrent.LinkedBlockingQueue() }

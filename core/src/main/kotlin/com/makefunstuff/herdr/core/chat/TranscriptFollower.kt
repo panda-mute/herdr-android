@@ -159,8 +159,9 @@ object TranscriptFollower {
         ref: AgentSessionRef,
         transcript: Transcript,
         subagent: String? = null,
+        bytes: Int = TAIL_BYTES,
         onUpdate: (truncated: Boolean) -> Unit,
-    ): Result = follow({ connection.start(it) }, ref, transcript, subagent, onUpdate)
+    ): Result = follow({ connection.start(it) }, ref, transcript, subagent, bytes, onUpdate)
 
     /** [follow] with any way to start the remote command, so tests can run it locally. */
     suspend fun follow(
@@ -168,15 +169,16 @@ object TranscriptFollower {
         ref: AgentSessionRef,
         transcript: Transcript,
         subagent: String? = null,
+        bytes: Int = TAIL_BYTES,
         onUpdate: (truncated: Boolean) -> Unit,
     ): Result = coroutineScope {
-        val process = start(command(ref, subagent = subagent))
+        val process = start(command(ref, bytes, subagent))
         try {
             val reader = process.input.bufferedReader(Charsets.UTF_8)
             val header = withContext(Dispatchers.IO) { reader.readLine() } ?: throw IOException("transcript stream closed")
             if (header.startsWith(MISSING)) return@coroutineScope Result.Missing
             val size = header.removePrefix(FILE).substringBefore(' ').toLongOrNull() ?: 0
-            val truncated = size > TAIL_BYTES
+            val truncated = size > bytes
             val job = launch(Dispatchers.IO) { pump(reader, transcript, truncated, onUpdate) }
             job.join()
             Result.Ended

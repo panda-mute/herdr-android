@@ -20,12 +20,12 @@ import com.makefunstuff.herdr.ui.common.LocalContainer
  * Shepherdr couldn't find ([com.makefunstuff.herdr.core.chat.ChatOwner.readsOwn]): its conversation rather than
  * "Can't find this conversation". Null until it has read something.
  */
-class OwnTranscript(val rows: List<ChatRow>, internal val opened: MutableMap<String, Boolean>)
+class OwnTranscript(val rows: List<ChatRow>, internal val opened: MutableMap<String, Boolean>, internal val loadEarlier: () -> Unit)
 
 /** [own]'s rows, newest first, for a chat list laid out from the bottom. */
 fun LazyListScope.ownRows(own: OwnTranscript) {
     items(own.rows.asReversed(), key = { "own/" + it.key }) { row ->
-        ChatRowView(row, onChanges = { own.opened[it.key] = !it.open }, onToggle = { head -> own.opened[head.turn] = !head.open }, onThought = { t -> own.opened[t.key] = !t.open })
+        ChatRowView(row, onEarlier = own.loadEarlier, onChanges = { own.opened[it.key] = !it.open }, onToggle = { head -> own.opened[head.turn] = !head.open }, onThought = { t -> own.opened[t.key] = !t.open })
     }
 }
 
@@ -49,12 +49,12 @@ fun rememberOwnTranscript(session: HostSession, paneId: String?, status: AgentSt
         AgentStatus.Blocked -> ChatRow.Live.Blocked
         else -> null
     }
-    val rows = remember(state.items, state.turns, live, opened.toMap(), state.truncated) {
+    val rows = remember(state.items, state.turns, live, opened.toMap(), state.truncated, state.loadingEarlier, state.historyLimitReached) {
         val turns = ChatTurns.of(state.items, state.turns)
         buildList {
-            if (state.truncated) add(ChatRow.Info("truncated", "Earlier messages aren't loaded"))
+            if (state.truncated) add(ChatRow.Earlier(state.loadingEarlier, state.historyLimitReached))
             addAll(chatRows(turns, ChatTurns.Steps(state.turns), live, opened, now, state.thinking) { at -> clock(at, now, zone) })
         }
     }
-    return OwnTranscript(rows, opened)
+    return OwnTranscript(rows, opened, chat::loadEarlier)
 }

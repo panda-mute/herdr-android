@@ -107,6 +107,7 @@ sealed interface ChatRow {
     data class Diff(override val key: String, val diff: FileDiff) : ChatRow
     data class Notice(val item: ChatItem.Notice) : ChatRow { override val key get() = item.id }
     data class Screen(val text: String) : ChatRow { override val key get() = "screen" }
+    data class Earlier(val loading: Boolean, val limit: Boolean) : ChatRow { override val key = "truncated" }
     data class Info(override val key: String, val text: String) : ChatRow
     /** When a turn started: `10:05`, or `Oct 16, 09:12` on another day. */
     data class Time(override val key: String, val text: String) : ChatRow
@@ -232,7 +233,7 @@ private fun workRows(items: List<ChatItem>, steps: ChatTurns.Steps, quiet: Boole
 }
 
 @Composable
-fun ChatRowView(row: ChatRow, onToggle: (ChatRow.Head) -> Unit = {}, onThought: (ChatRow.Thought) -> Unit = {}, onChanges: (ChatRow.Changes) -> Unit = {}) {
+fun ChatRowView(row: ChatRow, onToggle: (ChatRow.Head) -> Unit = {}, onThought: (ChatRow.Thought) -> Unit = {}, onChanges: (ChatRow.Changes) -> Unit = {}, onEarlier: () -> Unit = {}) {
     when (row) {
         is ChatRow.User -> {
             val path = VoiceNotes.mentioned(row.item.text)
@@ -256,6 +257,11 @@ fun ChatRowView(row: ChatRow, onToggle: (ChatRow.Head) -> Unit = {}, onThought: 
         is ChatRow.Tools -> ToolGroup(row.tools, row.lines)
         is ChatRow.Notice -> NoticeLine(row.item.text)
         is ChatRow.Screen -> SelectionContainer { CodeBlock(row.text) }
+        is ChatRow.Earlier -> if (row.limit) NoticeLine("Showing the latest 32 MB of this conversation") else {
+            QuietButton(onClick = onEarlier, enabled = !row.loading, modifier = Modifier.fillMaxWidth()) {
+                Text(if (row.loading) "Loading earlier messages…" else "Load earlier messages")
+            }
+        }
         is ChatRow.Info -> NoticeLine(row.text)
         is ChatRow.Time -> TimeLine(row.text)
         is ChatRow.Head -> TurnHead(row) { onToggle(row) }

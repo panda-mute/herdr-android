@@ -40,6 +40,8 @@ class AgentChat(private val host: HostSession, val paneId: String, private val s
     private class Read(val items: List<ChatItem>, val truncated: Boolean, val turns: List<Turn>, val use: ModelUse?, val queued: List<String>)
 
     companion object {
+        private const val MAX_HISTORY_BYTES = 32_000_000
+
         /** The agents that draw their reasoning on screen as it streams, in italics over the editor. */
         private val STREAMS_THINKING = setOf("pi", "omp")
 
@@ -72,6 +74,8 @@ class AgentChat(private val host: HostSession, val paneId: String, private val s
         val items: List<ChatItem> = emptyList(),
         /** True when only the end of a long transcript was loaded. */
         val truncated: Boolean = false,
+        val loadingEarlier: Boolean = false,
+        val historyLimitReached: Boolean = false,
         /** The agent's recent screen text, in [Source.Screen] mode or while it is blocked. */
         val screen: String = "",
         val prompt: BlockedPrompt? = null,
@@ -97,6 +101,15 @@ class AgentChat(private val host: HostSession, val paneId: String, private val s
 
     /** The session whose transcript the chat shows now. */
     @Volatile private var shownFrom: AgentSessionRef? = null
+
+    private val historyBytes = MutableStateFlow(TranscriptFollower.TAIL_BYTES)
+
+    fun loadEarlier() {
+        val s = state.value
+        if (s.source != Source.Transcript || !s.truncated || s.loadingEarlier || s.historyLimitReached) return
+        _state.update { it.copy(loadingEarlier = true) }
+        historyBytes.update { (it * 2).coerceAtMost(MAX_HISTORY_BYTES) }
+    }
 
     private fun agent(): AgentInfo? = host.state.value.view?.agents?.firstOrNull { it.paneId == paneId }
 
@@ -147,14 +160,15 @@ class AgentChat(private val host: HostSession, val paneId: String, private val s
                     // herdr can list the agent before its session: the conversation on screen stays a
                     // while, so it doesn't flash empty.
                     if (_state.value.source == Source.Transcript) delay(SESSION_GRACE_MS)
-                    if (pair != null || host.state.value.view != null) _state.update { it.copy(source = Source.Screen) }
+                    if (pair != null || host.state.value.view != null) _state.update { it.copy(source = Source.Screen, truncated = false, loadingEarlier = false) }
                     return@collectLatest
                 }
-                followLoop(ref, kind)
+                if (shownFrom != ref) historyBytes.value = TranscriptFollower.TAIL_BYTES
+                historyBytes.collectLatest { bytes -> followLoop(ref, kind, bytes) }
             }
     }
 
-    private suspend fun followLoop(ref: AgentSessionRef, kind: String) = coroutineScope {
+    private suspend fun followLoop(ref: AgentSessionRef, kind: String, bytes: Int) = coroutineScope {
         var failures = 0
         while (true) {
             val agent = ref.agent.ifEmpty { kind }
@@ -171,7 +185,7 @@ class AgentChat(private val host: HostSession, val paneId: String, private val s
             fun publish(r: Read) {
                 shownFrom = ref
                 _state.update { s ->
-                    s.copy(source = Source.Transcript, items = r.items, truncated = r.truncated, pending = unseen(s.pending, r.items), turns = r.turns, use = r.use, queued = r.queued)
+                    s.copy(source = Source.Transcript, items = r.items, truncated = r.truncated, loadingEarlier = false, historyLimitReached = bytes >= MAX_HISTORY_BYTES, pending = unseen(s.pending, r.items), turns = r.turns, use = r.use, queued = r.queued)
                 }
             }
             // Past CATCH_UP_MS of reading, whatever the new read has is shown, once it has anything.
@@ -186,7 +200,7 @@ class AgentChat(private val host: HostSession, val paneId: String, private val s
                         waiting?.takeIf { !caught && it.items.isNotEmpty() }?.let { caught = true; publish(it) }
                     }
                 }
-                TranscriptFollower.follow(connection, ref, transcript) { truncated ->
+                TranscriptFollower.follow(connection, ref, transcript, bytes = bytes) { truncated ->
                     val read = Read(transcript.items(), truncated, transcript.activity?.turns().orEmpty(), transcript.use, transcript.queued)
                     synchronized(lock) {
                         if (!caught && (caughtUp(shown, read.items) || (late && read.items.isNotEmpty()))) caught = true
@@ -202,7 +216,7 @@ class AgentChat(private val host: HostSession, val paneId: String, private val s
                 giveUp?.cancel()
             }
             if (result == TranscriptFollower.Result.Missing) {
-                _state.update { it.copy(source = Source.Screen) }
+                _state.update { it.copy(source = Source.Screen, truncated = false, loadingEarlier = false) }
                 // The file may appear once the agent writes its first turn.
                 delay(5_000)
                 continue

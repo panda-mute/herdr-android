@@ -499,6 +499,8 @@ fun scenes(): List<Scene> = listOf(
     // Claude's own questions: one with descriptions and a recommended pick, and a form of three with a multiple choice.
     Scene("prompt-question", route = Routes.agent(DEVBOX, API_AGENT), setup = { host(DEVBOX).screens += API_AGENT to Demo.resource("screen-claude-question.txt") }),
     Scene("prompt-checks", route = Routes.agent(DEVBOX, API_AGENT), setup = { host(DEVBOX).screens += API_AGENT to Demo.resource("screen-claude-checks.txt") }),
+    Scene("chat-history", route = Routes.agent(DEVBOX, APP_AGENT), setup = { longChat() }),
+    Scene("chat-history-loaded", route = Routes.agent(DEVBOX, APP_AGENT), setup = { longChat() }, actions = { tapExact("Load earlier messages"); settle() }),
     Scene("chat-codex", route = Routes.agent(DEVBOX, SITE_AGENT)),
     Scene("chat-markdown-table", route = Routes.agent(DEVBOX, SITE_AGENT), setup = {
         host(DEVBOX).transcripts += Demo.SITE_SESSION to Demo.resource("codex-table.jsonl")
@@ -1088,3 +1090,9 @@ fun scenes(): List<Scene> = listOf(
     Scene("real-artifacts", route = Routes.ARTIFACTS_TAB, setup = { real() }, space = "${DEVBOX}/herdr-android"),
     Scene("real-settings", route = Routes.SETTINGS, setup = { real() }),
 )
+
+private fun SceneData.longChat() {
+    val early = """{"type":"user","uuid":"early","message":{"role":"user","content":"Review the installation instructions."}}"""
+    val recent = """{"type":"assistant","uuid":"recent","message":{"role":"assistant","content":[{"type":"text","text":"The installation instructions are ready."}]}}"""
+    host(DEVBOX).transcripts += Demo.APP_SESSION to (early + "\n" + " ".repeat(2_000_100) + "\n" + recent + "\n")
+}
