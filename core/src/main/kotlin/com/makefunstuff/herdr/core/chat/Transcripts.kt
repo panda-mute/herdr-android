@@ -108,6 +108,7 @@ abstract class Transcript {
         fun forAgent(agent: String): Transcript? = when (agent) {
             "claude" -> ClaudeTranscript()
             "codex" -> CodexTranscript()
+            "agy", "antigravity", "antigravity-cli", "antigravity_cli" -> AgyTranscript()
             "pi", "omp" -> PiTranscript()
             else -> null
         }

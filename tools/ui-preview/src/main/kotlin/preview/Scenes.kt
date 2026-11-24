@@ -502,6 +502,11 @@ fun scenes(): List<Scene> = listOf(
     Scene("chat-history", route = Routes.agent(DEVBOX, APP_AGENT), setup = { longChat() }),
     Scene("chat-history-pull", route = Routes.agent(DEVBOX, APP_AGENT), setup = { longChat() }, actions = { pullEarlierMessages(); settle() }),
     Scene("chat-history-loaded", route = Routes.agent(DEVBOX, APP_AGENT), setup = { longChat() }, actions = { tapExact("Load earlier messages"); settle() }),
+    Scene("chat-agy", route = Routes.agent(DEVBOX, SITE_AGENT), setup = {
+        val h = host(DEVBOX)
+        h.snapshot = Json.parseToJsonElement(h.snapshot.toString().replace("codex", "agy")).jsonObject
+        h.transcripts += Demo.SITE_SESSION to Demo.resource("agy.jsonl")
+    }),
     Scene("chat-codex", route = Routes.agent(DEVBOX, SITE_AGENT)),
     Scene("chat-markdown-table", route = Routes.agent(DEVBOX, SITE_AGENT), setup = {
         host(DEVBOX).transcripts += Demo.SITE_SESSION to Demo.resource("codex-table.jsonl")

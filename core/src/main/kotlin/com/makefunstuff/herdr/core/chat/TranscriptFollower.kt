@@ -46,6 +46,18 @@ object TranscriptFollower {
         if [ "${'$'}kind" = path ]; then
           f="${'$'}value"
           case "${'$'}f" in "~/"*) f="${'$'}HOME/${'$'}{f#\~/}" ;; esac
+        elif [ "${'$'}kind" = pane ] && [ "${'$'}agent" = agy ]; then
+          for proc in /proc/[0-9]*; do
+            [ "${'$'}(cat "${'$'}proc/comm" 2>/dev/null)" = agy ] || continue
+            tr '\000' '\n' < "${'$'}proc/environ" 2>/dev/null | grep -Fx "HERDR_PANE_ID=${'$'}value" >/dev/null || continue
+            log=${'$'}(readlink "${'$'}proc/fd/1" 2>/dev/null)
+            case "${'$'}log" in */antigravity-cli/log/cli-*.log)
+              id=${'$'}(sed -n 's/.*cascade_id:\([0-9a-f-]*\).*/\1/p' "${'$'}log" | tail -n 1)
+              [ -n "${'$'}id" ] || continue
+              candidate="${'$'}HOME/.gemini/antigravity-cli/brain/${'$'}id/.system_generated/logs/transcript.jsonl"
+              [ -f "${'$'}candidate" ] && f="${'$'}candidate" && break ;;
+            esac
+          done
         elif [ "${'$'}kind" = pid ]; then
           case "${'$'}(uname -s 2>/dev/null)" in
             MINGW*|MSYS*|CYGWIN*)
@@ -76,6 +88,9 @@ object TranscriptFollower {
                 [ -n "${'$'}id" ] || continue
                 for c in "${'$'}d"/projects/*/"${'$'}id".jsonl; do [ -f "${'$'}c" ] && f="${'$'}c" && break; done
                 break ;;
+              agy|antigravity|antigravity-cli|antigravity_cli)
+                f=${'$'}(for x in /proc/"${'$'}p"/fd/*; do readlink "${'$'}x"; done 2>/dev/null | grep '/brain/[^/]*/.system_generated/logs/transcript\.jsonl${'$'}' | head -n 1)
+                [ -n "${'$'}f" ] && break ;;
               codex)
                 if [ -d "/proc/${'$'}p/fd" ]; then
                   f=${'$'}(for x in /proc/"${'$'}p"/fd/*; do readlink "${'$'}x"; done 2>/dev/null | grep '/rollout-.*\.jsonl${'$'}' | head -n 1)
@@ -88,6 +103,10 @@ object TranscriptFollower {
         else
           case "${'$'}agent" in
             claude) for c in "${'$'}{CLAUDE_CONFIG_DIR:-${'$'}HOME/.claude}"/projects/*/"${'$'}value".jsonl; do [ -f "${'$'}c" ] && f="${'$'}c" && break; done ;;
+            agy|antigravity|antigravity-cli|antigravity_cli)
+              case "${'$'}value" in ''|*[!a-zA-Z0-9_-]*) ;; *)
+                f="${'$'}HOME/.gemini/antigravity-cli/brain/${'$'}value/.system_generated/logs/transcript.jsonl" ;;
+              esac ;;
             ${CODEX}
             pi) for c in "${'$'}HOME"/.pi/agent/sessions/*/*_"${'$'}value".jsonl; do [ -f "${'$'}c" ] && f="${'$'}c" && break; done ;;
             omp) for c in "${'$'}HOME"/.omp/agent/sessions/*/*_"${'$'}value".jsonl; do [ -f "${'$'}c" ] && f="${'$'}c" && break; done ;;

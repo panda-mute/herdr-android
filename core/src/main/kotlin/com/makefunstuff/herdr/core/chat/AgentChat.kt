@@ -161,7 +161,7 @@ class AgentChat(private val host: HostSession, val paneId: String, private val s
 
     private suspend fun followTranscript() {
         host.state
-            .map { s -> s.view?.agents?.firstOrNull { it.paneId == paneId }?.let { it.agent to it.agentSession } }
+            .map { s -> s.view?.agents?.firstOrNull { it.paneId == paneId }?.let { it.agent to (it.agentSession ?: if (it.agent == "agy") AgentSessionRef("agy", "pane", paneId) else null) } }
             .distinctUntilChanged()
             .collectLatest { pair ->
                 val kind = pair?.first

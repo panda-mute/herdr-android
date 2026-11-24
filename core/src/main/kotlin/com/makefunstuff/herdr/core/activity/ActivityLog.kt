@@ -150,6 +150,7 @@ abstract class ActivityLog(private val prefix: String = "") {
         fun forAgent(agent: String, prefix: String = ""): ActivityLog? = when (agent.substringBefore('/')) {
             "claude" -> ClaudeActivity(prefix)
             "codex" -> CodexActivity(prefix)
+            "agy", "antigravity", "antigravity-cli", "antigravity_cli" -> AgyActivity(prefix)
             "pi", "omp" -> PiActivity(prefix)
             else -> null
         }

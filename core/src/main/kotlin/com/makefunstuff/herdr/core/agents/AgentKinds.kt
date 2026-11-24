@@ -18,7 +18,7 @@ object AgentKinds {
     /** Other names for a kind: what its program or its status report calls it. */
     private val ALIASES = mapOf(
         "claude-code" to "claude", "pi-coding-agent" to "pi", "github-copilot" to "copilot", "cursor-agent" to "cursor",
-        "kiro-cli" to "kiro", "antigravity" to "agy", "antigravity-cli" to "agy", "qoder" to "qodercli",
+        "kiro-cli" to "kiro", "antigravity" to "agy", "antigravity-cli" to "agy", "antigravity_cli" to "agy", "qoder" to "qodercli",
         "kilo-code" to "kilo", "kilocode" to "kilo", "open-code" to "opencode", "open_code" to "opencode",
         "qwen-code" to "qwen", "gemini-cli" to "gemini", "kimi-cli" to "kimi", "grok-cli" to "grok",
     )

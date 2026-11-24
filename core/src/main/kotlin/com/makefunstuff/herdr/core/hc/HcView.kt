@@ -109,7 +109,7 @@ object HcMapping {
     private const val TASK_SPACE = "herdr.task.space"
 
     /** The agents whose transcript is found from their process (Shepherdr 3.1's chat finds the same two). */
-    private val BY_PID = setOf("claude", "codex")
+    private val BY_PID = setOf("claude", "codex", "agy")
 
     /**
      * The hc address of a pane id from [snapshot], or null when it isn't one of herdr-core's: `t7`
