@@ -1,0 +1,11 @@
+Create file
+────────────────────────────────────────────────────────────
+/tmp/test.txt  +1
+  1  +  TEST
+
+Allow creation of this file?
+> 1. Yes, allow creation
+  2. No, deny creation
+
+  ↑/↓ Navigate · f full diff
+esc to cancel                                Gemini 4 Neon · high

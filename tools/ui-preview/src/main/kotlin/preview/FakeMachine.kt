@@ -111,6 +111,7 @@ class FakeMachine(
     // ---- shell commands -------------------------------------------------------------------------
 
     fun run(command: String, stdin: String = ""): CommandResult {
+        if (command == com.makefunstuff.herdr.core.chat.AgySettings.COMMAND) return ok("gemini-4-neon-high\tGemini 4 Neon (High)\nclaude-sonnet-5-5-high\tClaude Sonnet (High)\n")
         // herdr-core's probe (HcDetection): its socket and core, or nothing where none runs.
         if ("core.lock" in command) return FakeCore.probe(core, coreSessions)
         shepherdr?.run(command, stdin)?.let { return it }

@@ -14,6 +14,8 @@ data class ModelUse(
     val window: Long? = null,
     /** True when [window] is the model's usual size rather than one the transcript states. */
     val windowAssumed: Boolean = false,
+    val outputTokens: Long? = null,
+    val cacheReadTokens: Long? = null,
 ) {
     /** How full the context is, 0–100; null without a window. */
     val percent: Int? get() = window?.takeIf { it > 0 && used > 0 }?.let { ((used * 100.0) / it).roundToInt().coerceIn(0, 100) }

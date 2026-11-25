@@ -195,10 +195,11 @@ class AgentChat(private val host: HostSession, val paneId: String, private val s
             var caught = shown.isEmpty()
             // The read so far, taken on the reading thread; shown once it has caught up.
             var waiting: Read? = null
+            var modelMetadata: ModelUse? = null
             fun publish(r: Read) {
                 shownFrom = ref
                 _state.update { s ->
-                    s.copy(source = Source.Transcript, index = r.index, items = r.items, truncated = r.truncated, loadingEarlier = s.loadingEarlier && fetchPage != null, historyLimitReached = r.capped || bytes >= MAX_HISTORY_BYTES, pending = unseen(s.pending, r.items), turns = r.turns, use = r.use, queued = r.queued)
+                    s.copy(source = Source.Transcript, index = r.index, items = r.items, truncated = r.truncated, loadingEarlier = s.loadingEarlier && fetchPage != null, historyLimitReached = r.capped || bytes >= MAX_HISTORY_BYTES, pending = unseen(s.pending, r.items), turns = r.turns, use = r.use?.let { it.copy(model = it.model ?: modelMetadata?.model, effort = it.effort ?: modelMetadata?.effort) } ?: modelMetadata, queued = r.queued)
                 }
             }
             // Past CATCH_UP_MS of reading, whatever the new read has is shown, once it has anything.
@@ -252,6 +253,17 @@ class AgentChat(private val host: HostSession, val paneId: String, private val s
                                 }
                             }
                             acceptPage(w)
+                            if (agent == "codex" && w.transcript.use?.model == null) launch {
+                                try {
+                                    val metadata = CodexTranscript().also { t ->
+                                        connection.run(TranscriptPages.modelCommand(w.token), 20).stdout.lineSequence().forEach(t::feed)
+                                    }.use
+                                    synchronized(w) {
+                                        modelMetadata = metadata
+                                        acceptPage(w)
+                                    }
+                                } catch (e: CancellationException) { throw e } catch (_: Exception) { }
+                            }
                         }, update = ::acceptPage)
                     } finally { fetchPage = null; paging?.cancel() }
                 }
@@ -286,6 +298,7 @@ class AgentChat(private val host: HostSession, val paneId: String, private val s
             val status = agent?.agentStatus ?: host.state.value.view?.pane(paneId)?.agentStatus ?: AgentStatus.Unknown
             val source = _state.value.source
             val blocked = status == AgentStatus.Blocked
+            val agy = AgySettings.supports(agent?.agent)
             // pi and omp stream their thoughts only to the screen: read it while they work.
             val streams = status == AgentStatus.Working && source == Source.Transcript && agent?.agent in STREAMS_THINKING
             if (streams) {
@@ -300,15 +313,15 @@ class AgentChat(private val host: HostSession, val paneId: String, private val s
             } else if (_state.value.thinking != null) {
                 _state.update { it.copy(thinking = null) }
             }
-            if (blocked || source == Source.Screen) {
+            if (blocked || agy || source == Source.Screen) {
                 try {
                     val api = host.awaitAgent(paneId, 10_000)
-                    val visible = if (blocked) api.read(paneId, lines = 80, visible = true) else null
+                    val visible = if (blocked || agy) api.read(paneId, lines = 80, visible = true) else null
                     val recent = if (source == Source.Screen) api.read(paneId, lines = 200, visible = false) else null
                     _state.update { s ->
                         s.copy(
                             screen = (recent ?: visible ?: s.screen).trimEnd(),
-                            prompt = visible?.let { BlockedPrompt.parse(it) }?.let { AskedQuestions.fill(it, s.items) },
+                            prompt = visible?.let { if (agy) AgySettings.prompt(it) else BlockedPrompt.parse(it) }?.let { AskedQuestions.fill(it, s.items) },
                             pending = if (source == Source.Screen && recent != null) SentMatch.unconfirmed(s.pending) { p -> SentMatch.slid(p, SentMatch.countOnScreen(p.text, recent), System.currentTimeMillis()) } else s.pending,
                         )
                     }
@@ -320,7 +333,7 @@ class AgentChat(private val host: HostSession, val paneId: String, private val s
                 _state.update { it.copy(prompt = null) }
             }
             val interval = when {
-                    blocked -> 1_200L
+                    blocked || agy -> 1_200L
                     source == Source.Screen && status == AgentStatus.Working -> 1_500L
                     streams -> 1_000L
                     source == Source.Screen -> 3_000L

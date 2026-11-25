@@ -319,6 +319,11 @@ fun ModelSheet(
     /** For Codex: its catalog's models, null while they are read. */
     codexModels: List<com.makefunstuff.herdr.core.chat.CodexModels.Model>? = null,
     codex: Boolean = false,
+    agy: Boolean = false,
+    agyModels: List<com.makefunstuff.herdr.core.chat.AgySettings.Model>? = null,
+    onModes: (() -> Unit)? = null,
+    agyModelError: String? = null,
+    onAgyModels: (() -> Unit)? = null,
     /** Opens the model menu, to restart it on another model, level or mode. */
     onChange: (() -> Unit)? = null,
 ) {
@@ -328,7 +333,8 @@ fun ModelSheet(
     HerdrSheet(onDismissRequest = onDismiss) {
         SheetTitle(pill.title, subtitle = agent)
         if (onSwitch != null) {
-            if (codex) SwitchCodexModel(use, codexModels, switchNote, onSwitch) else SwitchModel(use, switchNote, onSwitch)
+            if (agy) SwitchAgyModel(use, agyModels, switchNote, onSwitch, onModes, agyModelError, onAgyModels)
+            else if (codex) SwitchCodexModel(use, codexModels, switchNote, onSwitch) else SwitchModel(use, switchNote, onSwitch)
         }
         Column(Modifier.padding(horizontal = Space.xl), verticalArrangement = Arrangement.spacedBy(Space.xs)) {
             if (percent != null) {
@@ -348,6 +354,8 @@ fun ModelSheet(
                 InfoLine("Last request", "${ModelUse.tokens(use.used)} tokens")
                 use.window?.let { w -> InfoLine("Window", ModelUse.tokens(w) + if (use.windowAssumed) " (usual size)" else "") }
             }
+            use?.outputTokens?.let { InfoLine("Output", "${ModelUse.tokens(it)} tokens") }
+            use?.cacheReadTokens?.let { InfoLine("Cached input", "${ModelUse.tokens(it)} tokens") }
             use?.effort?.let { InfoLine("Reasoning", it.replaceFirstChar { ch -> ch.uppercase() }) }
             use?.model?.let { InfoLine("Model id", it, mono = true) }
             stateLabel?.let { InfoLine("State", it) }
@@ -543,4 +551,31 @@ fun RestartProgress(phase: com.makefunstuff.herdr.core.chat.AgentRestart.Phase, 
         text = { com.makefunstuff.herdr.ui.design.LoadingState(words) },
         confirmButton = {},
     )
+}
+
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun SwitchAgyModel(
+    use: ModelUse?, models: List<com.makefunstuff.herdr.core.chat.AgySettings.Model>?, note: String?,
+    onSwitch: (String) -> Unit, onModes: (() -> Unit)?, error: String?, onModels: (() -> Unit)?,
+) {
+    val c = Herdr.colors
+    Column(Modifier.fillMaxWidth().padding(horizontal = Space.xl).padding(bottom = Space.m), verticalArrangement = Arrangement.spacedBy(Space.xs)) {
+        Text("Model", style = MaterialTheme.typography.labelLarge, color = c.muted)
+        when {
+            models == null -> Text("Reading its models…", color = c.muted)
+            models.isEmpty() -> Text(error ?: "Couldn't read agy's models. Close and reopen to retry.", color = c.muted)
+            else -> androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(Space.xs), verticalArrangement = Arrangement.spacedBy(Space.xs)) {
+                models.forEach { m ->
+                    HerdrChip(m.name, selected = m.id == use?.model, onClick = {
+                        if (note == null) onSwitch(com.makefunstuff.herdr.core.chat.AgySettings.modelCommand(m.id))
+                    })
+                }
+            }
+        }
+        onModels?.let { action -> HerdrChip("Choose in current session…", selected = false, onClick = { if (note == null) action() }) }
+        onModes?.let { action -> HerdrChip("Execution mode…", selected = false, onClick = { if (note == null) action() }) }
+        Text(note ?: "Model changes also apply to new sessions. Execution modes come from this CLI's available settings.",
+            style = MaterialTheme.typography.bodySmall, color = if (note != null) c.notice else c.muted)
+    }
 }

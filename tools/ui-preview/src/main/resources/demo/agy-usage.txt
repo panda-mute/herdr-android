@@ -1,0 +1,10 @@
+└ Models & Quota
+GEMINI MODELS
+  Weekly Limit Remaining
+    [█████████░] 89.91%
+    Refreshes in 6d 0h 2m
+  Five Hour Limit Remaining
+    [█████████░] 89.50%
+    Refreshes in 3h 23m
+  (1–8 of 8 lines)
+↑/↓ Scroll · pgup/pgdown Page · esc Close

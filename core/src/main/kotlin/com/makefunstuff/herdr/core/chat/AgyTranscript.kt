@@ -3,6 +3,7 @@ package com.makefunstuff.herdr.core.chat
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.longOrNull
 
 /** Antigravity CLI's public, append-only step transcript, not transcript_full or chunk copies. */
 class AgyTranscript : Transcript() {
@@ -18,6 +19,8 @@ class AgyTranscript : Transcript() {
                 if (text.isNotBlank() && obj.str("source") == "USER_EXPLICIT") put(ChatItem.User(key, text))
             }
             "PLANNER_RESPONSE" -> {
+                fun count(key: String) = (obj[key] as? JsonPrimitive)?.longOrNull?.takeIf { it >= 0 }
+                count("input_tokens")?.let { requestUsage(it, count("output_tokens"), count("cache_read_tokens")) }
                 obj.str("thinking")?.let { thought("$key/thinking", it) }
                 if (content.isNotBlank()) put(ChatItem.Agent(key, content))
                 val calls = obj.arr("tool_calls").orEmpty().mapIndexedNotNull { i, element ->

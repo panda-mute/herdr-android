@@ -26,7 +26,7 @@ object AgentSettings {
         Choice("high", "High"), Choice("xhigh", "Extra high"), Choice("max", "Max"),
     )
 
-    fun canSwitch(agent: String?): Boolean = agent == "claude" || agent == "codex"
+    fun canSwitch(agent: String?): Boolean = agent == "claude" || agent == "codex" || AgySettings.supports(agent)
 
     fun modelCommand(model: String): String {
         require(CLAUDE_MODELS.any { it.value == model }) { "not a model: $model" }

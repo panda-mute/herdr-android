@@ -36,6 +36,27 @@ class TranscriptPagesTest {
         }
     }
 
+    @Test fun modelOutsideInitialPageIsReadWithoutChatHistory() {
+        val dir = kotlin.io.path.createTempDirectory().toFile()
+        val file = File(dir, "rollout.jsonl")
+        file.writeText("""{"type":"turn_context","payload":{"model":"old"}}
+{"type":"turn_context","payload":{"model":"gpt-test","effort":"high"}}
+""" + "x".repeat(600_000) + "\n")
+        try {
+            val tokenProcess = ProcessBuilder("python3", "-c", "import os,json,base64,sys; p=sys.argv[1]; s=os.stat(p); print(base64.urlsafe_b64encode(json.dumps([[p,s.st_dev,s.st_ino,s.st_size,0]]).encode()).decode())", file.path).start()
+            val token = tokenProcess.inputStream.bufferedReader().readText().trim()
+            assertEquals(0, tokenProcess.waitFor())
+            val read = ProcessBuilder("sh", "-c", TranscriptPages.modelCommand(token)).start()
+            val result = read.inputStream.bufferedReader().readText()
+            assertEquals(0, read.waitFor())
+            assertTrue(result.length < 300)
+            val t = CodexTranscript().also { it.feed(result.trim()) }
+            assertEquals("gpt-test", t.use?.model)
+            assertEquals("high", t.use?.effort)
+            assertTrue(t.items().isEmpty())
+        } finally { dir.deleteRecursively() }
+    }
+
     @Test fun toolOnlyTailRequiresMoreHistoryAndKeepsStableMessageIds() {
         val older = """{"type":"event_msg","payload":{"type":"user_message","message":"inspect"}}""" + "\n"
         val tail = """{"type":"response_item","payload":{"type":"function_call","call_id":"tool","name":"exec_command","arguments":"{}"}}""" + "\n"

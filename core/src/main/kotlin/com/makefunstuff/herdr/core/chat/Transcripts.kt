@@ -58,6 +58,13 @@ abstract class Transcript {
         if (next != use) { use = next; version++ }
     }
 
+    /** Explicit request counts without guessing a provider's context window. */
+    protected fun requestUsage(input: Long, output: Long?, cached: Long?) {
+        val next = (use ?: ModelUse()).copy(used = input, window = null, windowAssumed = false,
+            outputTokens = output, cacheReadTokens = cached)
+        if (next != use) { use = next; version++ }
+    }
+
     protected var recordOffset: Long? = null
         private set
 

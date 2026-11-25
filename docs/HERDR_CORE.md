@@ -84,3 +84,20 @@ User requests, planner replies, reasoning, model names and tool calls appear in 
 System metadata is omitted. A GENERIC result is linked only when exactly one tool call
 is pending, since this log does not provide a tool-call ID for those results. Multiple
 pending calls retain their unknown/running state rather than being marked successful.
+
+### agy settings and approvals
+
+The phone reads `agy models` over SSH for model IDs. When that process cannot access
+agy's login, **Choose in current session…** uses the running CLI's `/model` picker.
+Model changes can update agy's default for subsequent sessions. The transcript's
+model label reflects the last recorded response until another response is written.
+
+**Execution mode…** reads the actual `/config` Agent Mode picker; auto appears only
+when the installed CLI offers it. There is no `/mode` command in agy 1.5.17.
+**Usage and limits** reads `/usage` in the current signed-in session. Request input,
+output and cache-read token counts come separately from the transcript; the phone
+does not infer a quota or context-window size from those counts.
+
+agy's visible approval menus are polled while its chat is open, including when
+classic herdr reports idle or working rather than blocked. Before sending an answer,
+the phone rechecks the question and choices against the current visible menu.

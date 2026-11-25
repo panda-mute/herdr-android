@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -141,7 +142,7 @@ fun AgentScreen(nav: NavController, machineId: String, paneId: String) {
     val onCore = HcMapping.address(paneId) != null
     val agent = snapshot?.agents?.firstOrNull { it.paneId == paneId }
     val pane = snapshot?.pane(paneId)
-    val status = agent?.agentStatus ?: pane?.agentStatus ?: AgentStatus.Unknown
+    val reportedStatus = agent?.agentStatus ?: pane?.agentStatus ?: AgentStatus.Unknown
 
     // What the agent is working on: herdr's title for it, or the title the agent gives its terminal.
     val activity = agent?.let { it.title?.takeIf { t -> t.isNotBlank() } ?: it.terminalTitle?.takeIf { t -> t.isNotBlank() } }
@@ -204,6 +205,8 @@ fun AgentScreen(nav: NavController, machineId: String, paneId: String) {
         onDispose { chat.close() }
     }
     val state by chat.state.collectAsStateWithLifecycle()
+    val status = if (com.makefunstuff.herdr.core.chat.AgySettings.supports(agent?.agent) && state.prompt != null)
+        AgentStatus.Blocked else reportedStatus
 
     // Kept per chat across navigation, rotation and restarts; cleared only once the message is sent.
     var draft by rememberDraft(DraftStore.agent(machineId, paneId))
@@ -751,7 +754,71 @@ fun AgentScreen(nav: NavController, machineId: String, paneId: String) {
             onActivity = if (inBubble || onCore) null else ({ menu = false; nav.navigate(Routes.activity(machineId, pane = paneId)) }),
         )
     }
+    var agyModes by remember { mutableStateOf<com.makefunstuff.herdr.core.chat.BlockedPrompt?>(null) }
+    var agyModelPicker by remember { mutableStateOf(false) }
+    var agyUsage by remember { mutableStateOf<String?>(null) }
+    var agyBusy by remember { mutableStateOf(false) }
+    fun agyAction(action: suspend () -> Unit) {
+        if (agyBusy) return
+        agyBusy = true
+        scope.launch {
+            try { action() } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (e: Exception) { context.toast(e.message ?: "Couldn't open agy settings") }
+            finally { agyBusy = false }
+        }
+    }
+    agyModes?.let { modes ->
+        fun closeModes() {
+            agyModes = null
+            agyAction {
+                val api = session.awaitAgent(paneId)
+                if (com.makefunstuff.herdr.core.chat.AgentInput.promptNow(api, paneId)?.same(modes) == true) {
+                    api.keys(paneId, listOf("esc"), false)
+                    if (!agyModelPicker) {
+                        kotlinx.coroutines.delay(150)
+                        api.keys(paneId, listOf("esc"), false)
+                    }
+                }
+            }
+        }
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { if (!agyBusy) closeModes() },
+            title = { Text(if (agyModelPicker) "Model" else "Execution mode") },
+            text = { Column(Modifier.verticalScroll(rememberScrollState())) {
+                Text(if (agyModelPicker) "Choose a model from the signed-in session. The CLI chooses the effort supported by that model." else "Choose from the modes available on this machine. Auto approves edits and runs commands under agy's approval policy.")
+                modes.options.forEachIndexed { index, option ->
+                    androidx.compose.material3.TextButton(enabled = !agyBusy, onClick = {
+                        agyAction {
+                            val api = session.awaitAgent(paneId)
+                            com.makefunstuff.herdr.core.chat.AgentInput.choose(api, paneId, modes, index, false)
+                            kotlinx.coroutines.delay(200)
+                            val screen = api.read(paneId, 160, true)
+                            if (screen.contains("Settings") && screen.contains("Agent Mode")) api.keys(paneId, listOf("esc"), false)
+                            agyModes = null
+                        }
+                    }) { Text(option.label) }
+                }
+            } },
+            confirmButton = { androidx.compose.material3.TextButton(enabled = !agyBusy, onClick = { closeModes() }) { Text("Cancel") } },
+        )
+    }
+    agyUsage?.let { usage ->
+        androidx.compose.material3.AlertDialog(onDismissRequest = { agyUsage = null }, title = { Text("agy usage") },
+            text = { androidx.compose.foundation.lazy.LazyColumn { item { Text(usage) } } },
+            confirmButton = { androidx.compose.material3.TextButton(onClick = { agyUsage = null }) { Text("Close") } })
+    }
     if (modelSheet) pill?.let { p ->
+        val agy = com.makefunstuff.herdr.core.chat.AgySettings.supports(kind)
+        var agyModels by remember(machineId) { mutableStateOf<List<com.makefunstuff.herdr.core.chat.AgySettings.Model>?>(null) }
+        var agyModelError by remember { mutableStateOf<String?>(null) }
+        if (agy) LaunchedEffect(machineId) {
+            agyModels = try {
+                val result = session.awaitConnection().run(com.makefunstuff.herdr.core.chat.AgySettings.COMMAND, 20)
+                com.makefunstuff.herdr.core.chat.AgySettings.models(result.stdout).also {
+                    if (it.isEmpty()) agyModelError = result.stderr.trim().takeLast(300).ifBlank { "No models returned (exit ${result.exitStatus})." }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { agyModelError = e.message; emptyList() }
+        }
         val latest by container.usage.latest.collectAsStateWithLifecycle()
         // Codex's catalog, read from the machine once the sheet opens (empty when it can't be read).
         var codexModels by remember(machineId) { mutableStateOf<List<com.makefunstuff.herdr.core.chat.CodexModels.Model>?>(null) }
@@ -766,7 +833,11 @@ fun AgentScreen(nav: NavController, machineId: String, paneId: String) {
             stateLabel = agent?.stateLabels?.get(agent.agentStatusRaw)?.takeIf { it != agent.agentStatusRaw },
             reported = agent?.tokens.orEmpty().filterKeys { it != "model" && it != "context" },
             limit = left?.let { "${it.provider.name}: ${it.words}" },
-            onUsage = if (inBubble) null else ({ modelSheet = false; nav.navigate(Routes.usage(machineId)) }),
+            onUsage = if (agy) ({
+                if (!agyBusy && status != AgentStatus.Working && status != AgentStatus.Blocked && host.online) {
+                    agyAction { agyUsage = com.makefunstuff.herdr.core.chat.AgySettings.usage(session.awaitAgent(paneId), paneId); modelSheet = false }
+                } else context.toast("Wait until agy is ready.")
+            }) else if (inBubble) null else ({ modelSheet = false; nav.navigate(Routes.usage(machineId)) }),
             onDismiss = { modelSheet = false },
             onSwitch = if (com.makefunstuff.herdr.core.chat.AgentSettings.canSwitch(kind) && !onCore) ({ command ->
                 modelSheet = false
@@ -777,13 +848,28 @@ fun AgentScreen(nav: NavController, machineId: String, paneId: String) {
                 }
             }) else null,
             switchNote = when {
+                agyBusy -> "Reading agy settings…"
                 !host.online -> "Not connected"
                 status == AgentStatus.Blocked -> "It's asking something: answer it first."
+                agy && status == AgentStatus.Working -> "Wait until agy finishes its turn."
                 kind == "codex" && status == AgentStatus.Working -> "Codex switches between turns: wait until it's done."
                 else -> null
             },
             codexModels = codexModels,
             codex = kind == "codex",
+            agy = agy,
+            agyModels = agyModels,
+            agyModelError = agyModelError,
+            onAgyModels = if (agy) ({ agyAction {
+                agyModelPicker = true
+                agyModes = com.makefunstuff.herdr.core.chat.AgySettings.openModels(session.awaitAgent(paneId), paneId)
+                modelSheet = false
+            } }) else null,
+            onModes = if (agy) ({ agyAction {
+                agyModelPicker = false
+                agyModes = com.makefunstuff.herdr.core.chat.AgySettings.openModes(session.awaitAgent(paneId), paneId)
+                modelSheet = false
+            } }) else null,
             onChange = tab?.takeIf { (_, t) -> TabMenus.Row.Model in TabMenus.rows(t) && !inBubble }?.let { (space, t) ->
                 { modelSheet = false; tabMenu.show(TabMenuOpen(machineId, space, t, TabMenus.Row.Model)) }
             },

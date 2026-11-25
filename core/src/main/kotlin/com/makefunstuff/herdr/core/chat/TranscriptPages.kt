@@ -57,6 +57,36 @@ internal object TranscriptPages {
     fun pageCommand(token: String, end: Long, count: Int): String =
         "python3 -c ${quote(script)} page $count ${quote(token)} $end # herdr-page-read"
 
+    /** Read only Codex's newest model record, without transferring older chat/tool output. */
+    fun modelCommand(token: String): String {
+        val scan = """
+            import sys,json,base64,os
+            files=json.loads(base64.urlsafe_b64decode(sys.argv[1]))
+            for path,dev,ino,n,sep in reversed(files):
+                with open(path,'rb') as f:
+                    st=os.fstat(f.fileno())
+                    if (dev,ino)!=(st.st_dev,st.st_ino) or st.st_size<n: sys.exit(2)
+                    end=n; rest=b''
+                    while end:
+                        start=max(0,end-65536); f.seek(start)
+                        parts=(f.read(end-start)+rest).split(b'\n')
+                        rest=parts.pop(0) if start else b''
+                        for line in reversed(parts):
+                            if b'"turn_context"' not in line and b'"session_meta"' not in line: continue
+                            try: obj=json.loads(line)
+                            except (ValueError,UnicodeError): continue
+                            if obj.get('type') not in ('turn_context','session_meta'): continue
+                            p=obj.get('payload',{}); settings=(p.get('collaboration_mode') or {}).get('settings') or {}
+                            model=p.get('model') or settings.get('model')
+                            if model:
+                                print(json.dumps({'type':'turn_context','payload':{'model':model,'effort':p.get('effort',p.get('reasoning_effort',settings.get('reasoning_effort')))}}))
+                                sys.exit(0)
+                        end=start
+                        if len(rest)>4000000: rest=b''
+        """.trimIndent()
+        return "python3 -c ${quote(scan)} ${quote(token)} # herdr-model-metadata"
+    }
+
     suspend fun older(connection: MachineConnection, token: String, end: Long, count: Int): ByteArray = withContext(Dispatchers.IO) {
         connection.start(pageCommand(token, end, count)).use { p ->
             val data = p.input.readBytes()

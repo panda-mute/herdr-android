@@ -507,6 +507,66 @@ fun scenes(): List<Scene> = listOf(
         h.snapshot = Json.parseToJsonElement(h.snapshot.toString().replace("codex", "agy")).jsonObject
         h.transcripts += Demo.SITE_SESSION to Demo.resource("agy.jsonl")
     }),
+    Scene("chat-agy-model", route = Routes.agent(DEVBOX, SITE_AGENT), setup = {
+        val h = host(DEVBOX)
+        h.snapshot = Json.parseToJsonElement(h.snapshot.toString().replace("codex", "agy")).jsonObject
+        h.transcripts += Demo.SITE_SESSION to Demo.resource("agy.jsonl")
+    }, actions = { tapLabel("Model gemini-4-neon-high"); settle() }),
+    Scene("chat-agy-approval", route = Routes.agent(DEVBOX, SITE_AGENT), setup = {
+        val h = host(DEVBOX)
+        h.snapshot = Json.parseToJsonElement(h.snapshot.toString().replace("codex", "agy")).jsonObject
+        h.transcripts += Demo.SITE_SESSION to Demo.resource("agy.jsonl")
+        h.screens += SITE_AGENT to Demo.resource("agy-approval.txt")
+    }),
+    Scene("chat-agy-modes", route = Routes.agent(DEVBOX, SITE_AGENT), setup = {
+        val h = host(DEVBOX)
+        h.snapshot = Json.parseToJsonElement(h.snapshot.toString().replace("codex", "agy")).jsonObject
+        h.transcripts += Demo.SITE_SESSION to Demo.resource("agy.jsonl")
+        h.on("pane.send_text") { params ->
+            val command = params["text"]?.jsonPrimitive?.content
+            if (command == "/config") h.screens += SITE_AGENT to "Settings\n> Agent Mode                    default"
+            if (command == "/usage") h.screens += SITE_AGENT to Demo.resource("agy-usage.txt")
+            obj()
+        }
+        var settingsEnter = 0
+        h.on("pane.send_keys") {
+            if (h.screens[SITE_AGENT]?.contains("Settings") == true && ++settingsEnter >= 2) h.screens += SITE_AGENT to Demo.resource("agy-modes.txt")
+            obj()
+        }
+    }, actions = { tapLabel("Model gemini-4-neon-high"); tapText("Execution mode…"); settle() }),
+    Scene("chat-agy-session-model", route = Routes.agent(DEVBOX, SITE_AGENT), setup = {
+        val h = host(DEVBOX)
+        h.snapshot = Json.parseToJsonElement(h.snapshot.toString().replace("codex", "agy")).jsonObject
+        h.transcripts += Demo.SITE_SESSION to Demo.resource("agy.jsonl")
+        h.on("pane.send_text") { params ->
+            val command = params["text"]?.jsonPrimitive?.content
+            if (command == "/model") h.screens += SITE_AGENT to "Switch Model\n\n> Gemini 4 Neon (current)\n  Claude Sonnet 5.5\n\nKeyboard: ↑/↓ Navigate  ←/→ Effort  enter Select  esc Go Back"
+            if (command == "/config") h.screens += SITE_AGENT to "Settings\n> Agent Mode                    default"
+            if (command == "/usage") h.screens += SITE_AGENT to Demo.resource("agy-usage.txt")
+            obj()
+        }
+        var settingsEnter = 0
+        h.on("pane.send_keys") {
+            if (h.screens[SITE_AGENT]?.contains("Settings") == true && ++settingsEnter >= 2) h.screens += SITE_AGENT to Demo.resource("agy-modes.txt")
+            obj()
+        }
+    }, actions = { tapLabel("Model gemini-4-neon-high"); tapText("Choose in current session…"); settle() }),
+    Scene("chat-agy-usage", route = Routes.agent(DEVBOX, SITE_AGENT), setup = {
+        val h = host(DEVBOX)
+        h.snapshot = Json.parseToJsonElement(h.snapshot.toString().replace("codex", "agy")).jsonObject
+        h.transcripts += Demo.SITE_SESSION to Demo.resource("agy.jsonl")
+        h.on("pane.send_text") { params ->
+            val command = params["text"]?.jsonPrimitive?.content
+            if (command == "/config") h.screens += SITE_AGENT to "Settings\n> Agent Mode                    default"
+            if (command == "/usage") h.screens += SITE_AGENT to Demo.resource("agy-usage.txt")
+            obj()
+        }
+        var settingsEnter = 0
+        h.on("pane.send_keys") {
+            if (h.screens[SITE_AGENT]?.contains("Settings") == true && ++settingsEnter >= 2) h.screens += SITE_AGENT to Demo.resource("agy-modes.txt")
+            obj()
+        }
+    }, actions = { tapLabel("Model gemini-4-neon-high"); tapText("Usage and limits"); settle() }),
     Scene("chat-codex", route = Routes.agent(DEVBOX, SITE_AGENT)),
     Scene("chat-markdown-table", route = Routes.agent(DEVBOX, SITE_AGENT), setup = {
         host(DEVBOX).transcripts += Demo.SITE_SESSION to Demo.resource("codex-table.jsonl")

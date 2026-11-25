@@ -1,0 +1,9 @@
+Settings
+  Agent Mode
+  > default (current)
+    accept-edits
+    auto
+    plan
+  Animation Speed               medium
+
+Keyboard: ↑/↓ Navigate  enter Save  esc Cancel
