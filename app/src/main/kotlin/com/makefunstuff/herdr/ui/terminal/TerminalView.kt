@@ -315,9 +315,8 @@ class TerminalView(context: Context) : View(context) {
     override fun onCheckIsTextEditor(): Boolean = true
 
     override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection {
-        // Plain text without suggestions: a password field would switch Chinese, Japanese and other
-        // keyboards to English only.
-        outAttrs.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+        // Plain text lets the keyboard use the user's languages and suggestion preferences.
+        outAttrs.inputType = InputType.TYPE_CLASS_TEXT
         outAttrs.imeOptions = EditorInfo.IME_FLAG_NO_EXTRACT_UI or EditorInfo.IME_FLAG_NO_FULLSCREEN or EditorInfo.IME_ACTION_NONE
         outAttrs.initialSelStart = composing.length
         outAttrs.initialSelEnd = composing.length
